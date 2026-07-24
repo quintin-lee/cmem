@@ -25,64 +25,53 @@
         +------------------+   +-------------------+   +--------------------+
 ```
 
-### 1. 第一级：Slab Allocator (小对象 $\le 512$ Bytes)
-- **规格分级**：8B, 16B, 32B, 64B, 128B, 256B, 512B 共 7 个 Size Class。
-- **页面对齐**：按 16KB 页对齐分配 Slab Page，内部 Slot 以链表组织。
-- **性能**：$O(1)$ 分配与释放，消除小对象的外部碎片，高 CPU 缓存命中率。
+---
 
-### 2. 第二级：TLSF Allocator (中等对象 512 Bytes ~ 4MB)
-- **算法原理**：Two-Level Segregated Fit (双层隔离适合算法)。
-- **硬件加速**：利用 CPU 位扫描指令 `__builtin_clz` (Count Leading Zeros) / `__builtin_ctz` 进行 2 级 Bitmask 快速查找。
-- **碎片整理**：利用 Boundary Tags (边界标记)，在 `mp_free` 时 $O(1)$ 实时与前后物理相邻的空闲块合并（Immediate Coalescing）。
-- **动态扩容**：支持多 Sub-Pool 链式扩展。
+## 🔍 内存泄漏与异常诊断引擎 (Diagnostics Engine)
 
-### 3. 第三级：Direct OS Allocator (大对象 > 4MB)
-- **回退机制**：针对特大内存请求，直接回退至 OS 系统分配，统一纳入内存池生命周期与统计追踪。
+专门针对 C/C++ 常见内存问题（内存泄漏、缓冲区溢出、野指针/Use-After-Free、重复释放）设计了完善的诊断引擎：
+
+### 1. 泄漏源头追溯与调用栈记录 (Location & Callstack Tracking)
+- **代码源头追踪**：开启 `MP_FLAG_TRACK_LOCATIONS` 标志后，自动记录内存申请的文件名 (`__FILE__`)、行号 (`__LINE__`) 及函数名 (`__func__`)。
+- **调用栈捕获**：基于 `backtrace()` 自动捕获内存分配时的函数调用栈 Symbol 帧。
+
+### 2. 详细泄露分析报告生成与导出 (`mp_analyze_leaks` & `mp_export_leak_report`)
+- 自动生成格式化的结构化报告，精确指示泄露块的内存地址、字节大小、所属分配层级（Slab/TLSF/OS）、源码代码行及调用栈。
+- 支持直接导出为文本报告文件 (`leak_report.txt`)。
+
+### 3. 堆完整性主动审计 (`mp_audit_heap`)
+- 遍历所有活动内存块，主动检查 Header 幻数及 Redzone 金丝雀 (`MP_CANARY_BYTE`) 校验码，实时检测缓冲区上溢/踩内存问题。
+
+### 4. 释放后内存毒化 (UAF Protection via Poisoning)
+- 开启 `MP_FLAG_POISON_ON_FREE` 标志后，释放内存时自动将 Payload 填充为 `0xDD` 毒化模式，防止释放后读写（Use-After-Free）破坏逻辑。
 
 ---
 
 ## ✨ 核心高级特性 (Features)
 
-1. **静态内存缓冲区模式 (Static Buffer Arena)**：通过 [mp_create_from_buffer](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h#L97) 直接在预先分配的静态字节数组中初始化内存池，零 OS `malloc` 依赖，完美契合嵌入式/裸机（Bare-metal）环境。
-2. **自定义系统分配器注入 (Custom Backing Allocator)**：通过 [mp_create_custom](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h#L88) 注入共享内存（`/dev/shm`）、大页内存（HugePages）或自定义 Virtual Memory 虚表。
-3. **实时 Event 剖析回调 (`mp_set_event_callback`)**：注册内存分配/释放/溢出事件回调函数，支持对接 Profiler 或分布式链路追踪（Tracy / Valgrind）。
-4. **线程本地缓存 (Thread-Local Cache)**：开启 `MP_FLAG_THREAD_LOCAL_CACHE` 标志后，每个线程拥有独立无锁的 Slab 槽位缓存，小对象分配彻底无锁化。
-5. **Arena 批量快速重置 (`mp_reset`)**：针对 Request/Frame 作用域，提供 $O(1)$ 批量清空恢复能力，无需逐个 `free`。
-6. **C++11 RAII 与 STL Allocator 支持**：提供 [include/memory_pool.hpp](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.hpp)，无缝对接 `std::vector` 与 `std::unordered_map`。
-7. **JSON 监控导出 (`mp_dump_json_stats`)**：导出 JSON 格式的指标数据，方便接入 Prometheus/Grafana 等监控系统。
-8. **内存对齐与防越界 (Canary Redzone)**：支持 `mp_aligned_alloc` 与 Canary 溢出标记。
+1. **静态内存缓冲区模式 (Static Buffer Arena)**：通过 [mp_create_from_buffer](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h#L97) 直接在预先分配的静态字节数组中初始化内存池，零 OS `malloc` 依赖。
+2. **自定义系统分配器注入 (Custom Backing Allocator)**：通过 [mp_create_custom](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h#L88) 注入共享内存（`/dev/shm`）、大页内存（HugePages）或自定义虚表。
+3. **实时 Profiler 事件回调 (`mp_set_event_callback`)**：捕获 `ALLOC`、`FREE`、`REALLOC`、`DOUBLE_FREE`、`CANARY_CORRUPTION` 事件。
+4. **线程本地缓存 (Thread-Local Cache)**：开启 `MP_FLAG_THREAD_LOCAL_CACHE` 后小对象分配无锁化。
+5. **Arena 批量快速重置 (`mp_reset`)**：$O(1)$ 批量清空恢复能力。
+6. **C++11 RAII 与 STL Allocator 支持**：提供 [include/memory_pool.hpp](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.hpp)。
+7. **JSON 监控导出 (`mp_dump_json_stats`)**：导出 JSON 格式监控数据。
 
 ---
 
-## 🛠️ 公共 API 说明 (Public API)
-
-C 头文件：[include/memory_pool.h](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h)  
-C++ 头文件：[include/memory_pool.hpp](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.hpp)
+## 🛠️ 诊断与泄漏分析 API (Diagnostics API)
 
 | 函数 / 类 API | 说明 |
 | :--- | :--- |
-| `mp_create(initial_cap, flags)` | 创建并初始化内存池实例 |
-| `mp_create_custom(initial_cap, flags, sys_alloc)` | 使用自定义底层系统分配器创建内存池 |
-| `mp_create_from_buffer(buffer, size, flags)` | 在静态内存缓冲区中创建内存池（零 OS `malloc`） |
-| `mp_destroy(pool)` | 销毁内存池并释放归还所有系统资源 |
-| `mp_reset(pool)` | $O(1)$ 批量重置内存池，清空活动分配并保留已申请系统页 |
-| `mp_set_event_callback(pool, cb, user_data)` | 注册分配/释放/溢出剖析事件回调 |
-| `mp_alloc(pool, size)` | 从内存池分配 `size` 字节内存 |
-| `mp_calloc(pool, num, size)` | 分配内存并自动清零 |
-| `mp_realloc(pool, ptr, new_size)`| 重新调整内存块大小 |
-| `mp_aligned_alloc(pool, align, size)` | 分配指定边界对齐的内存 |
-| `mp_free(pool, ptr)` | 将内存块释放归还至内存池 |
-| `mp_get_stats(pool, &stats)` | 获取当前内存池统计数据与碎片率 |
-| `mp_dump_json_stats(pool, buf, len)` | 导出 JSON 格式监控指标 |
-| `mp_check_leaks(pool)` | 检查是否存在未释放的内存泄漏 |
-| `mpool::MemoryPool` | C++ RAII 内存池包装类 |
-| `mpool::allocator<T>` | 兼容 STL 容器（`std::vector` 等）的 C++ 分配器 |
+| `mp_alloc_loc(pool, size, file, line, func)` | 带代码位置追踪的内存分配接口 |
+| `mp_audit_heap(pool)` | 主动遍历堆内存，检测 Redzone Canary 越界踩内存 |
+| `mp_analyze_leaks(pool, buf, max_len)` | 生成结构化内存泄漏分析报告（含文件行号与调用栈） |
+| `mp_export_leak_report(pool, filepath)` | 将内存泄漏分析报告导出至文本文件 |
+| `mp_check_leaks(pool)` | 运行时检查是否存在未释放内存泄漏 |
 
 ---
 
 ## 🚀 编译与运行 (Build & Test)
-
-### 使用 Makefile
 
 ```bash
 # 1. 编译并运行 C 单元测试 (含 ASan / UBSan 检查)
@@ -94,26 +83,29 @@ make test_cpp
 # 3. 编译并运行性能 Benchmark 压测
 make bench
 
-# 4. 编译并运行示例程序 (Basic Profiler & Static Embedded Demo)
+# 4. 编译并运行示例程序 (基础剖析 / 静态 Buffer / 泄漏分析报告导出)
 make examples
 
-# 5. 运行全部目标
+# 5. 编译运行全部
 make all
 ```
 
 ---
 
-## 📊 性能测试结果 (Benchmarks)
+## 📊 泄漏分析报告输出示例 (Leak Report Example)
 
-在 Linux x86_64 环境下（使用 GCC `-O3` 优化）：
+```
+=================== DETAILED MEMORY LEAK ANALYSIS REPORT ===================
+  Total Managed System Memory: 1085336 bytes (1059.90 KB)
+  Active Leaked Allocations  : 1 blocks
+  Total Leaked Payload Bytes : 128 bytes (0.12 KB)
+============================================================================
 
-- **小对象分配 (32B ~ 256B x 1,000,000 次操作)**：
-  - 系统 `malloc`/`free`：~0.461 秒 (4.33 Mops/sec)
-  - Memory Pool (Slab + TLS Cache)：~0.404 秒 (4.95 Mops/sec) —— **提升 ~1.14x**
-- **中型动态分配 (1KB - 64KB x 100,000 次操作)**：
-  - 系统 `malloc`/`free`：~0.587 秒
-  - Memory Pool (TLSF)：~0.484 秒 —— **提升 ~1.21x**
-- **Arena 批量重置 (`mp_reset` x 1000 轮操作)**：
-  - 逐个 `mp_free` 循环：~0.0339 秒
-  - Arena `mp_reset` 批量重置：~0.0223 秒 —— **提升 ~1.52x**
-- **内存泄漏与异常校验**：所有测试目标在开启 AddressSanitizer / UndefinedBehaviorSanitizer 校验下通过 **100% 零泄漏与零异常**。
+[Leak #1] Address: 0x5620096dc0c0 | Payload Size: 128 bytes | Tier: SLAB
+  Source Location : examples/example_leak_analysis.c:13 (function 'do_leaky_work')
+  Callstack Frames:
+    #0 ./build/example_leak_analysis(+0x348b) [0x56200790548b]
+    #1 ./build/example_leak_analysis(+0x45d6) [0x5620079065d6]
+    #2 ./build/example_leak_analysis(+0x11d9) [0x5620079031d9]
+    #3 /usr/lib/libc.so.6(+0x27741) [0x7fa5cf027741]
+```
