@@ -1,6 +1,6 @@
 /**
  * @file memory_pool.c
- * @brief Universal Tiered Memory Manager Implementation (Slab + TLSF + Direct OS + Diagnostics & Leak Profiling).
+ * @brief Universal Tiered Memory Manager Implementation (Slab + TLSF + OS + Child Arenas + HTML Dashboard).
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -120,6 +120,12 @@ typedef struct tlsf_pool {
 struct memory_pool {
     mp_flags_t flags;
     pthread_mutex_t lock;
+    char arena_name[64];
+
+    // Parent-Child Hierarchical Arena Tree
+    struct memory_pool* parent;
+    struct memory_pool* first_child;
+    struct memory_pool* next_sibling;
 
     // Custom system allocator vtable
     bool has_custom_sys_alloc;
@@ -574,11 +580,29 @@ memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags) {
     return mp_create_custom(initial_capacity, flags, NULL);
 }
 
+memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags, const char* arena_name) {
+    memory_pool_t* child = mp_create(initial_capacity, flags);
+    if (!child) return NULL;
+
+    child->parent = parent;
+    if (arena_name) snprintf(child->arena_name, sizeof(child->arena_name), "%s", arena_name);
+    else snprintf(child->arena_name, sizeof(child->arena_name), "ChildArena");
+
+    if (parent) {
+        pool_lock(parent);
+        child->next_sibling = parent->first_child;
+        parent->first_child = child;
+        pool_unlock(parent);
+    }
+    return child;
+}
+
 memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator) {
     memory_pool_t* pool = (memory_pool_t*)calloc(1, sizeof(memory_pool_t));
     if (!pool) return NULL;
 
     pool->flags = flags;
+    snprintf(pool->arena_name, sizeof(pool->arena_name), "RootArena");
     if (sys_allocator) {
         pool->has_custom_sys_alloc = true;
         pool->sys_allocator = *sys_allocator;
@@ -616,6 +640,7 @@ memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_
     memory_pool_t* pool = (memory_pool_t*)aligned_addr;
     memset(pool, 0, sizeof(memory_pool_t));
     pool->flags = (mp_flags_t)(flags | MP_FLAG_STATIC_BUFFER);
+    snprintf(pool->arena_name, sizeof(pool->arena_name), "StaticBufferArena");
 
     slab_init(pool);
 
@@ -631,6 +656,14 @@ memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_
 
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
+
+    // Recursively destroy linked child arenas
+    memory_pool_t* child = pool->first_child;
+    while (child) {
+        memory_pool_t* next = child->next_sibling;
+        mp_destroy(child);
+        child = next;
+    }
 
     if (!(pool->flags & MP_FLAG_STATIC_BUFFER)) {
         for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
@@ -666,6 +699,13 @@ void mp_destroy(memory_pool_t* pool) {
 void mp_reset(memory_pool_t* pool) {
     if (!pool) return;
     pool_lock(pool);
+
+    // Recursively reset child pools
+    memory_pool_t* child = pool->first_child;
+    while (child) {
+        mp_reset(child);
+        child = child->next_sibling;
+    }
 
     pool->stats.active_bytes = 0;
     pool->stats.active_allocations = 0;
@@ -919,7 +959,6 @@ void mp_free(memory_pool_t* pool, void* ptr) {
         return;
     }
 
-    // UAF Poisoning protection
     if (pool->flags & MP_FLAG_POISON_ON_FREE) {
         memset(ptr, MP_POISON_BYTE, header->requested_size);
     }
@@ -1025,7 +1064,7 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     return (void*)aligned_addr;
 }
 
-/* --- Heap Integrity & Leak Analysis Diagnostics --- */
+/* --- Heap Integrity, Leak Analysis & HTML Dashboard --- */
 
 bool mp_audit_heap(memory_pool_t* pool) {
     if (!pool) return true;
@@ -1143,6 +1182,99 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath) {
     return true;
 }
 
+bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
+    if (!pool || !filepath) return false;
+    FILE* f = fopen(filepath, "w");
+    if (!f) return false;
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+
+    fprintf(f, "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+               "<meta charset=\"UTF-8\">\n"
+               "<title>Memory Pool Profile & Leak Analysis Dashboard</title>\n"
+               "<style>\n"
+               "  body { font-family: 'Inter', system-ui, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 2rem; }\n"
+               "  .container { max-width: 1100px; margin: 0 auto; }\n"
+               "  h1 { color: #38bdf8; font-size: 2rem; border-bottom: 2px solid #334155; padding-bottom: 0.5rem; }\n"
+               "  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1.5rem 0; }\n"
+               "  .card { background: #1e293b; padding: 1.2rem; border-radius: 10px; border: 1fr solid #334155; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }\n"
+               "  .card h3 { margin: 0; font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; }\n"
+               "  .card .val { font-size: 1.6rem; font-weight: bold; color: #38bdf8; margin-top: 0.4rem; }\n"
+               "  .progress-bar { background: #334155; height: 24px; border-radius: 12px; overflow: hidden; display: flex; margin: 1.5rem 0; }\n"
+               "  .bar-slab { background: #10b981; text-align: center; font-size: 0.8rem; line-height: 24px; color: #fff; }\n"
+               "  .bar-tlsf { background: #6366f1; text-align: center; font-size: 0.8rem; line-height: 24px; color: #fff; }\n"
+               "  .bar-os { background: #f59e0b; text-align: center; font-size: 0.8rem; line-height: 24px; color: #fff; }\n"
+               "  table { width: 100%%; border-collapse: collapse; background: #1e293b; border-radius: 8px; overflow: hidden; margin-top: 1rem; }\n"
+               "  th, td { padding: 0.8rem 1rem; text-align: left; border-bottom: 1px solid #334155; }\n"
+               "  th { background: #334155; color: #cbd5e1; font-weight: 600; }\n"
+               "  tr:hover { background: #334155; }\n"
+               "  .badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }\n"
+               "  .badge-slab { background: #064e3b; color: #34d399; }\n"
+               "  .badge-tlsf { background: #312e81; color: #818cf8; }\n"
+               "  .badge-os { background: #78350f; color: #fbbf24; }\n"
+               "</style>\n</head>\n<body>\n"
+               "<div class=\"container\">\n"
+               "  <h1>Memory Pool Visual Profiler & Leak Analysis</h1>\n"
+               "  <div class=\"cards\">\n"
+               "    <div class=\"card\"><h3>Total Reserved</h3><div class=\"val\">%.2f KB</div></div>\n"
+               "    <div class=\"card\"><h3>Active Payload</h3><div class=\"val\">%.2f KB</div></div>\n"
+               "    <div class=\"card\"><h3>Active Blocks</h3><div class=\"val\">%zu</div></div>\n"
+               "    <div class=\"card\"><h3>Fragmentation</h3><div class=\"val\">%.1f%%</div></div>\n"
+               "  </div>\n",
+               stats.total_pool_size / 1024.0, stats.active_bytes / 1024.0, stats.active_allocations, stats.fragmentation_ratio * 100.0
+    );
+
+    size_t total_alloc = stats.slab_allocated_bytes + stats.tlsf_allocated_bytes + stats.os_allocated_bytes;
+    size_t tot = (total_alloc > 0) ? total_alloc : 1;
+    double p_slab = (stats.slab_allocated_bytes * 100.0) / tot;
+    double p_tlsf = (stats.tlsf_allocated_bytes * 100.0) / tot;
+    double p_os   = (stats.os_allocated_bytes * 100.0) / tot;
+
+    fprintf(f, "  <h2>Allocation Tier Distribution</h2>\n"
+               "  <div class=\"progress-bar\">\n"
+               "    <div class=\"bar-slab\" style=\"width: %.1f%%;\">Slab (%.1f%%)</div>\n"
+               "    <div class=\"bar-tlsf\" style=\"width: %.1f%%;\">TLSF (%.1f%%)</div>\n"
+               "    <div class=\"bar-os\" style=\"width: %.1f%%;\">OS (%.1f%%)</div>\n"
+               "  </div>\n",
+               p_slab, p_slab, p_tlsf, p_tlsf, p_os, p_os
+    );
+
+    fprintf(f, "  <h2>Active Memory Allocations & Leak Inventory (%zu Blocks)</h2>\n"
+               "  <table>\n"
+               "    <thead><tr><th>#</th><th>Address</th><th>Size</th><th>Tier</th><th>Source Location</th><th>Function</th></tr></thead>\n"
+               "    <tbody>\n",
+               stats.active_allocations
+    );
+
+    pool_lock(pool);
+    mp_block_header_t* curr = pool->active_head;
+    size_t idx = 1;
+
+    while (curr) {
+        void* payload = (void*)((uint8_t*)curr + sizeof(mp_block_header_t));
+        const char* badge_cls = (curr->alloc_type == ALLOC_TYPE_SLAB) ? "badge-slab" :
+                               ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "badge-tlsf" : "badge-os");
+        const char* tier_name = (curr->alloc_type == ALLOC_TYPE_SLAB) ? "SLAB" :
+                               ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "OS");
+
+        fprintf(f, "      <tr><td>%zu</td><td><code>%p</code></td><td>%zu B</td>"
+                   "<td><span class=\"badge %s\">%s</span></td><td>%s:%d</td><td><code>%s</code></td></tr>\n",
+                   idx++, payload, curr->requested_size, badge_cls, tier_name,
+                   curr->alloc_file ? curr->alloc_file : "-", curr->alloc_line,
+                   curr->alloc_func ? curr->alloc_func : "-"
+        );
+        curr = curr->next;
+    }
+    pool_unlock(pool);
+
+    fprintf(f, "    </tbody>\n  </table>\n</div>\n</body>\n</html>\n");
+    fclose(f);
+
+    printf("[MEMORY_POOL DIAGNOSTICS] Interactive HTML Profiler Report exported to: %s\n", filepath);
+    return true;
+}
+
 void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     if (!pool || !stats) return;
     pool_lock(pool);
@@ -1157,7 +1289,7 @@ void mp_dump_info(memory_pool_t* pool) {
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
-    printf("\n================ MEMORY POOL DIAGNOSTICS DUMP ================\n");
+    printf("\n================ MEMORY POOL DIAGNOSTICS DUMP [%s] ================\n", pool->arena_name);
     printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n", stats.total_pool_size, stats.total_pool_size / 1024.0);
     printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n", stats.active_allocations, stats.active_bytes, stats.active_bytes / 1024.0);
     printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", stats.peak_bytes, stats.peak_bytes / 1024.0);
@@ -1170,6 +1302,28 @@ void mp_dump_info(memory_pool_t* pool) {
     printf("==============================================================\n\n");
 }
 
+static void print_arena_node(memory_pool_t* pool, int indent) {
+    if (!pool) return;
+    for (int i = 0; i < indent; i++) printf("  ");
+    printf("|- [Arena: %s] Active Bytes: %zu B, Active Allocations: %zu\n",
+           pool->arena_name, pool->stats.active_bytes, pool->stats.active_allocations);
+
+    memory_pool_t* child = pool->first_child;
+    while (child) {
+        print_arena_node(child, indent + 1);
+        child = child->next_sibling;
+    }
+}
+
+void mp_dump_tree_info(memory_pool_t* pool) {
+    if (!pool) return;
+    pool_lock(pool);
+    printf("\n================ HIERARCHICAL ARENA TREE DUMP ================\n");
+    print_arena_node(pool, 0);
+    printf("==============================================================\n\n");
+    pool_unlock(pool);
+}
+
 size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
     if (!pool || !buf || max_len == 0) return 0;
     mp_stats_t stats;
@@ -1177,6 +1331,7 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
 
     int len = snprintf(buf, max_len,
         "{\n"
+        "  \"arena_name\": \"%s\",\n"
         "  \"total_pool_size\": %zu,\n"
         "  \"active_bytes\": %zu,\n"
         "  \"peak_bytes\": %zu,\n"
@@ -1188,6 +1343,7 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
         "  \"os_allocated_bytes\": %zu,\n"
         "  \"fragmentation_ratio\": %.4f\n"
         "}",
+        pool->arena_name,
         stats.total_pool_size, stats.active_bytes, stats.peak_bytes,
         stats.active_allocations, stats.total_alloc_ops, stats.total_free_ops,
         stats.slab_allocated_bytes, stats.tlsf_allocated_bytes, stats.os_allocated_bytes,
@@ -1204,13 +1360,13 @@ bool mp_check_leaks(memory_pool_t* pool) {
     bool clean = (pool->stats.active_allocations == 0);
     if (!clean) {
         char report[4096];
-        pool_unlock(pool); // Avoid deadlock inside mp_analyze_leaks
+        pool_unlock(pool);
         mp_analyze_leaks(pool, report, sizeof(report));
         fprintf(stderr, "%s\n", report);
         return false;
     }
 
-    printf("[MEMORY_POOL HEALTH] No memory leaks detected. All memory safely freed!\n");
+    printf("[MEMORY_POOL HEALTH] No memory leaks detected in [%s]. All memory safely freed!\n", pool->arena_name);
     pool_unlock(pool);
     return true;
 }

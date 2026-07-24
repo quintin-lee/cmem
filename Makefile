@@ -33,11 +33,13 @@ examples: $(SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic
 	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded
 	$(CC) $(CFLAGS) $(SRC) examples/example_leak_analysis.c -o $(BUILD_DIR)/example_leak_analysis
+	$(CC) $(CFLAGS) $(SRC) examples/example_arena_tree.c -o $(BUILD_DIR)/example_arena_tree
 	./$(BUILD_DIR)/example_basic
 	./$(BUILD_DIR)/example_embedded
 	./$(BUILD_DIR)/example_leak_analysis
+	./$(BUILD_DIR)/example_arena_tree
 
 clean:
-	rm -rf $(BUILD_DIR) leak_report.txt
+	rm -rf $(BUILD_DIR) leak_report.txt test_report.html memory_profile.html
 
 .PHONY: all test test_cpp bench examples clean

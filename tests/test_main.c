@@ -107,25 +107,44 @@ void test_leak_analysis_and_heap_audit() {
     void* valid_ptr = mp_alloc_loc(pool, 64, __FILE__, __LINE__, __func__);
     assert(valid_ptr != NULL);
 
-    // Test Heap Audit
     assert(mp_audit_heap(pool) == true);
 
-    // Test UAF Poisoning
     uint8_t* poison_test = (uint8_t*)valid_ptr;
     mp_free(pool, valid_ptr);
     assert(poison_test[0] == 0xDD && poison_test[63] == 0xDD);
 
-    // Analyze Leak
     char report[2048];
     size_t report_len = mp_analyze_leaks(pool, report, sizeof(report));
     assert(report_len > 0);
     assert(strstr(report, "Source Location") != NULL);
 
-    // Cleanup leak
     mp_free(pool, leak_ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_leak_analysis_and_heap_audit");
+}
+
+void test_child_arenas_and_html_export() {
+    printf("\n--- Test 8: Child Arenas & Visual HTML Report Export ---\n");
+    memory_pool_t* root = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
+    memory_pool_t* child1 = mp_create_child(root, 512 * 1024, MP_FLAG_DEFAULT, "TestChildArena1");
+
+    void* p1 = mp_alloc_loc(root, 128, __FILE__, __LINE__, __func__);
+    void* p2 = mp_alloc_loc(child1, 256, __FILE__, __LINE__, __func__);
+
+    assert(p1 != NULL && p2 != NULL);
+
+    mp_dump_tree_info(root);
+    assert(mp_export_html_report(root, "test_report.html") == true);
+
+    mp_free(root, p1);
+    mp_free(child1, p2);
+
+    assert(mp_check_leaks(root) == true);
+    assert(mp_check_leaks(child1) == true);
+
+    mp_destroy(root);
+    TEST_PASS("test_child_arenas_and_html_export");
 }
 
 void test_arena_reset_and_json() {
@@ -225,6 +244,7 @@ int main() {
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
     test_leak_analysis_and_heap_audit();
+    test_child_arenas_and_html_export();
     test_arena_reset_and_json();
     test_static_buffer_and_callbacks();
     test_multithread_safety();

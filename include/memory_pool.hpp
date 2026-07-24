@@ -26,6 +26,13 @@ public:
         }
     }
 
+    MemoryPool(MemoryPool& parent, size_t initial_capacity, mp_flags_t flags, const std::string& name)
+        : pool_(mp_create_child(parent.get_raw_pool(), initial_capacity, flags, name.c_str())) {
+        if (!pool_) {
+            throw std::runtime_error("Failed to create child memory pool instance.");
+        }
+    }
+
     ~MemoryPool() {
         if (pool_) {
             mp_destroy(pool_);
@@ -90,6 +97,10 @@ public:
         return mp_export_leak_report(pool_, filepath.c_str());
     }
 
+    bool export_html_report(const std::string& filepath) const {
+        return mp_export_html_report(pool_, filepath.c_str());
+    }
+
     mp_stats_t get_stats() const {
         mp_stats_t stats;
         mp_get_stats(pool_, &stats);
@@ -98,6 +109,10 @@ public:
 
     void dump_info() const {
         mp_dump_info(pool_);
+    }
+
+    void dump_tree_info() const {
+        mp_dump_tree_info(pool_);
     }
 
     bool check_leaks() const {

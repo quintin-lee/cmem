@@ -7,6 +7,7 @@
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - Arena Fast Reset (O(1) batch deallocation for request-scoped lifetime)
+ *  - Hierarchical Child Arenas (Parent-Child nested memory contexts)
  *  - Static Buffer Mode (Zero OS malloc dependency for embedded / bare-metal)
  *  - Custom Backing Allocator injection (Shared Memory, HugePages)
  *  - Real-time Profiling & Event Callback Hooks
@@ -15,6 +16,7 @@
  *      * Heap integrity auditing (Canary redzone verification)
  *      * Memory poisoning (Use-After-Free protection)
  *      * Structured leak analysis report export
+ *      * Interactive visual HTML dashboard report exporter
  */
 
 #ifndef MEMORY_POOL_H
@@ -95,6 +97,16 @@ typedef struct {
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
 
 /**
+ * @brief Creates a child memory pool linked to a parent pool.
+ * @param parent Pointer to parent memory pool.
+ * @param initial_capacity Initial capacity in bytes.
+ * @param flags Bitwise OR of mp_flags_t.
+ * @param arena_name Human-readable name for the child arena context.
+ * @return Pointer to created child memory_pool_t, or NULL on failure.
+ */
+memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags, const char* arena_name);
+
+/**
  * @brief Creates a memory pool instance using a custom backing allocator (e.g. Shared Memory / HugePages).
  * @param initial_capacity Initial capacity in bytes.
  * @param flags Bitwise OR of mp_flags_t.
@@ -113,13 +125,13 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const
 memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_t flags);
 
 /**
- * @brief Destroys the memory pool and frees all associated system resources.
+ * @brief Destroys the memory pool and recursively destroys all linked child arenas.
  * @param pool Memory pool pointer.
  */
 void mp_destroy(memory_pool_t* pool);
 
 /**
- * @brief Resets the memory pool, instantly clearing all active allocations while preserving reserved memory blocks.
+ * @brief Resets the memory pool and all linked child arenas.
  * @param pool Memory pool pointer.
  */
 void mp_reset(memory_pool_t* pool);
@@ -181,6 +193,14 @@ size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len);
 bool mp_export_leak_report(memory_pool_t* pool, const char* filepath);
 
 /**
+ * @brief Exports an interactive visual HTML report containing dashboard metrics, tier breakdown, and leak table.
+ * @param pool Memory pool pointer.
+ * @param filepath Output HTML file path.
+ * @return True on success, False on failure.
+ */
+bool mp_export_html_report(memory_pool_t* pool, const char* filepath);
+
+/**
  * @brief Retrieves current statistical metrics of the memory pool.
  * @param pool Memory pool pointer.
  * @param stats Pointer to output mp_stats_t struct.
@@ -192,6 +212,12 @@ void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats);
  * @param pool Memory pool pointer.
  */
 void mp_dump_info(memory_pool_t* pool);
+
+/**
+ * @brief Dumps memory pool tree hierarchy to stdout.
+ * @param pool Memory pool pointer.
+ */
+void mp_dump_tree_info(memory_pool_t* pool);
 
 /**
  * @brief Dumps memory pool stats into JSON format buffer for telemetry monitoring.

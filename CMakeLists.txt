@@ -27,3 +27,6 @@ target_link_libraries(example_embedded PRIVATE memory_pool pthread)
 
 add_executable(example_leak_analysis examples/example_leak_analysis.c)
 target_link_libraries(example_leak_analysis PRIVATE memory_pool pthread)
+
+add_executable(example_arena_tree examples/example_arena_tree.c)
+target_link_libraries(example_arena_tree PRIVATE memory_pool pthread)
