@@ -10,7 +10,11 @@
  *  - Static Buffer Mode (Zero OS malloc dependency for embedded / bare-metal)
  *  - Custom Backing Allocator injection (Shared Memory, HugePages)
  *  - Real-time Profiling & Event Callback Hooks
- *  - Memory diagnostic tools: Leak detection, JSON statistics, canary redzone
+ *  - Advanced Memory Diagnostics:
+ *      * Leak source tracking (File, Line, Function & Backtrace)
+ *      * Heap integrity auditing (Canary redzone verification)
+ *      * Memory poisoning (Use-After-Free protection)
+ *      * Structured leak analysis report export
  */
 
 #ifndef MEMORY_POOL_H
@@ -33,7 +37,9 @@ typedef enum {
     MP_FLAG_DEBUG_CANARY       = (1 << 1), /**< Add magic canary bytes for buffer overflow checks */
     MP_FLAG_ZERO_ON_ALLOC      = (1 << 2), /**< Automatically zero memory upon allocation */
     MP_FLAG_THREAD_LOCAL_CACHE = (1 << 3), /**< Enable thread-local cache for lock-free small allocs */
-    MP_FLAG_STATIC_BUFFER      = (1 << 4)  /**< Static buffer mode (no OS memory allocation/free) */
+    MP_FLAG_STATIC_BUFFER      = (1 << 4), /**< Static buffer mode (no OS memory allocation/free) */
+    MP_FLAG_TRACK_LOCATIONS    = (1 << 5), /**< Record file, line, function & backtrace for allocs */
+    MP_FLAG_POISON_ON_FREE     = (1 << 6)  /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
 } mp_flags_t;
 
 /**
@@ -44,6 +50,7 @@ typedef enum {
     MP_EVENT_FREE,
     MP_EVENT_REALLOC,
     MP_EVENT_CANARY_CORRUPTION,
+    MP_EVENT_DOUBLE_FREE,
     MP_EVENT_RESET
 } mp_event_type_t;
 
@@ -126,46 +133,52 @@ void mp_reset(memory_pool_t* pool);
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data);
 
 /**
- * @brief Allocates memory block of specified size.
- * @param pool Memory pool pointer.
- * @param size Allocation size in bytes.
- * @return Pointer to allocated memory block, or NULL on failure.
+ * @brief Allocates memory block with location tracking.
+ */
+void* mp_alloc_loc(memory_pool_t* pool, size_t size, const char* file, int line, const char* func);
+
+/**
+ * @brief Allocates zeroed memory block with location tracking.
+ */
+void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* file, int line, const char* func);
+
+/**
+ * @brief Reallocates memory block with location tracking.
+ */
+void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char* file, int line, const char* func);
+
+/**
+ * @brief Standard allocation wrappers.
  */
 void* mp_alloc(memory_pool_t* pool, size_t size);
-
-/**
- * @brief Allocates memory for an array of num elements of size bytes each and clears it to zero.
- * @param pool Memory pool pointer.
- * @param num Number of elements.
- * @param size Size of each element.
- * @return Pointer to allocated memory block, or NULL on failure.
- */
 void* mp_calloc(memory_pool_t* pool, size_t num, size_t size);
-
-/**
- * @brief Reallocates memory block to a new size.
- * @param pool Memory pool pointer.
- * @param ptr Pointer to existing memory block (or NULL).
- * @param new_size New allocation size in bytes.
- * @return Pointer to reallocated memory block, or NULL on failure.
- */
 void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size);
-
-/**
- * @brief Allocates aligned memory block.
- * @param pool Memory pool pointer.
- * @param alignment Alignment boundary (must be power of two and multiple of sizeof(void*)).
- * @param size Allocation size in bytes.
- * @return Pointer to aligned allocated memory block, or NULL on failure.
- */
 void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size);
+void mp_free(memory_pool_t* pool, void* ptr);
 
 /**
- * @brief Frees memory block back to the memory pool.
+ * @brief Audits heap integrity by checking header magics and canary redzones of all active allocations.
  * @param pool Memory pool pointer.
- * @param ptr Pointer to memory block previously allocated by mp_alloc/calloc/realloc/aligned_alloc.
+ * @return True if heap is healthy, False if buffer overflow or corruption detected.
  */
-void mp_free(memory_pool_t* pool, void* ptr);
+bool mp_audit_heap(memory_pool_t* pool);
+
+/**
+ * @brief Generates a detailed memory leak analysis report including file, line, function and backtrace for each leak.
+ * @param pool Memory pool pointer.
+ * @param report_buf Output character buffer.
+ * @param max_len Maximum buffer length.
+ * @return Length of report text.
+ */
+size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len);
+
+/**
+ * @brief Exports memory leak analysis report to a text file.
+ * @param pool Memory pool pointer.
+ * @param filepath Output file path.
+ * @return True on success, False on failure.
+ */
+bool mp_export_leak_report(memory_pool_t* pool, const char* filepath);
 
 /**
  * @brief Retrieves current statistical metrics of the memory pool.
@@ -195,6 +208,12 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len);
  * @return True if clean (no leaks), False if memory leaks exist.
  */
 bool mp_check_leaks(memory_pool_t* pool);
+
+#ifdef MP_ENABLE_LOCATION_MACROS
+#define mp_alloc(pool, sz) mp_alloc_loc(pool, sz, __FILE__, __LINE__, __func__)
+#define mp_calloc(pool, num, sz) mp_calloc_loc(pool, num, sz, __FILE__, __LINE__, __func__)
+#define mp_realloc(pool, ptr, sz) mp_realloc_loc(pool, ptr, sz, __FILE__, __LINE__, __func__)
+#endif
 
 #ifdef __cplusplus
 }

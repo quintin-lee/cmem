@@ -24,3 +24,6 @@ target_link_libraries(example_basic PRIVATE memory_pool pthread)
 
 add_executable(example_embedded examples/example_embedded.c)
 target_link_libraries(example_embedded PRIVATE memory_pool pthread)
+
+add_executable(example_leak_analysis examples/example_leak_analysis.c)
+target_link_libraries(example_leak_analysis PRIVATE memory_pool pthread)

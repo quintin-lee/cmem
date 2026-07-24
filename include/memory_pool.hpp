@@ -32,11 +32,9 @@ public:
         }
     }
 
-    // Disable copy
     MemoryPool(const MemoryPool&) = delete;
     MemoryPool& operator=(const MemoryPool&) = delete;
 
-    // Enable move
     MemoryPool(MemoryPool&& other) noexcept : pool_(other.pool_) {
         other.pool_ = nullptr;
     }
@@ -52,6 +50,10 @@ public:
 
     void* alloc(size_t size) {
         return mp_alloc(pool_, size);
+    }
+
+    void* alloc_loc(size_t size, const char* file, int line, const char* func) {
+        return mp_alloc_loc(pool_, size, file, line, func);
     }
 
     void* calloc(size_t num, size_t size) {
@@ -72,6 +74,20 @@ public:
 
     void reset() {
         mp_reset(pool_);
+    }
+
+    bool audit_heap() const {
+        return mp_audit_heap(pool_);
+    }
+
+    std::string analyze_leaks() const {
+        char buffer[16384];
+        size_t len = mp_analyze_leaks(pool_, buffer, sizeof(buffer));
+        return std::string(buffer, len);
+    }
+
+    bool export_leak_report(const std::string& filepath) const {
+        return mp_export_leak_report(pool_, filepath.c_str());
     }
 
     mp_stats_t get_stats() const {

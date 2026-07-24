@@ -1,6 +1,6 @@
 /**
  * @file memory_pool.c
- * @brief Universal Tiered Memory Manager Implementation (Slab + TLSF + Direct OS + Thread Cache + Arena Reset + Static Buffer + Event Profiler).
+ * @brief Universal Tiered Memory Manager Implementation (Slab + TLSF + Direct OS + Diagnostics & Leak Profiling).
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -12,15 +12,18 @@
 #include <pthread.h>
 #include <assert.h>
 #include <stdint.h>
+#include <execinfo.h>
 
 #define MP_MAGIC_HEAD 0x4D504F4F  // "MPOO" in ASCII
 #define MP_CANARY_BYTE 0xDE
+#define MP_POISON_BYTE 0xDD
 
 #define SLAB_CLASS_COUNT 7
 static const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
 #define SLAB_MAX_SIZE 512
 #define SLAB_PAGE_SIZE (16 * 1024) // 16 KB per slab page
 #define TLS_CACHE_MAX_SLOTS 64
+#define MAX_BACKTRACE_FRAMES 8
 
 /* TLSF Allocator Constants */
 #define TLSF_SL_SHIFT 4
@@ -49,6 +52,14 @@ typedef struct mp_block_header {
     size_t   usable_size;
     void*    raw_base;       // Base address from system/slab allocation
     void*    subpool;        // Pointer to owning sub-pool (e.g. tlsf_pool_t*)
+
+    // Debug location tracking
+    const char* alloc_file;
+    int alloc_line;
+    const char* alloc_func;
+    void* backtrace_addrs[MAX_BACKTRACE_FRAMES];
+    int backtrace_depth;
+
     struct mp_block_header* prev;
     struct mp_block_header* next;
 } mp_block_header_t;
@@ -163,7 +174,7 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
 }
 
 static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size) {
-    if (pool->flags & MP_FLAG_STATIC_BUFFER) return; // Do not free static buffer pages
+    if (pool->flags & MP_FLAG_STATIC_BUFFER) return;
     if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_free) {
         pool->sys_allocator.sys_free(ptr, size, pool->sys_allocator.user_data);
         return;
@@ -281,6 +292,10 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
     header->usable_size = sc->slot_size;
     header->raw_base = slot;
     header->subpool = NULL;
+    header->alloc_file = NULL;
+    header->alloc_line = 0;
+    header->alloc_func = NULL;
+    header->backtrace_depth = 0;
 
     void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
 
@@ -450,7 +465,7 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size) {
     }
 
     if (!block) {
-        if (pool->flags & MP_FLAG_STATIC_BUFFER) return NULL; // Dynamic expansion disabled in static buffer mode
+        if (pool->flags & MP_FLAG_STATIC_BUFFER) return NULL;
         size_t expand_sz = (total_needed * 2 > 4 * 1024 * 1024) ? total_needed * 2 : 4 * 1024 * 1024;
         tlsf_pool_t* new_p = tlsf_create_pool_custom(pool, expand_sz, NULL);
         if (!new_p) return NULL;
@@ -496,6 +511,10 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size) {
     header->usable_size = total_needed - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
     header->raw_base = block;
     header->subpool = tpool;
+    header->alloc_file = NULL;
+    header->alloc_line = 0;
+    header->alloc_func = NULL;
+    header->backtrace_depth = 0;
 
     void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
 
@@ -734,6 +753,48 @@ static void active_list_remove(memory_pool_t* pool, mp_block_header_t* header) {
     if (header->next) header->next->prev = header->prev;
 }
 
+void* mp_alloc_loc(memory_pool_t* pool, size_t size, const char* file, int line, const char* func) {
+    void* ptr = mp_alloc(pool, size);
+    if (ptr) {
+        mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+        header->alloc_file = file;
+        header->alloc_line = line;
+        header->alloc_func = func;
+        if (pool->flags & MP_FLAG_TRACK_LOCATIONS) {
+            header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
+        }
+    }
+    return ptr;
+}
+
+void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* file, int line, const char* func) {
+    void* ptr = mp_calloc(pool, num, size);
+    if (ptr) {
+        mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+        header->alloc_file = file;
+        header->alloc_line = line;
+        header->alloc_func = func;
+        if (pool->flags & MP_FLAG_TRACK_LOCATIONS) {
+            header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
+        }
+    }
+    return ptr;
+}
+
+void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char* file, int line, const char* func) {
+    void* new_ptr = mp_realloc(pool, ptr, new_size);
+    if (new_ptr) {
+        mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)new_ptr - sizeof(mp_block_header_t));
+        header->alloc_file = file;
+        header->alloc_line = line;
+        header->alloc_func = func;
+        if (pool->flags & MP_FLAG_TRACK_LOCATIONS) {
+            header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
+        }
+    }
+    return new_ptr;
+}
+
 void* mp_alloc(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
@@ -755,6 +816,10 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
             header->requested_size = size;
             header->usable_size = kSlabSizes[class_idx];
             header->raw_base = slot;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
 
             void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
             if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(payload, 0, size);
@@ -797,6 +862,10 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
             header->requested_size = size;
             header->usable_size = size;
             header->raw_base = raw_mem;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
 
             ptr = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
 
@@ -846,7 +915,13 @@ void mp_free(memory_pool_t* pool, void* ptr) {
 
     if (header->magic != MP_MAGIC_HEAD) {
         fprintf(stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
+        trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
         return;
+    }
+
+    // UAF Poisoning protection
+    if (pool->flags & MP_FLAG_POISON_ON_FREE) {
+        memset(ptr, MP_POISON_BYTE, header->requested_size);
     }
 
     if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && header->alloc_type == ALLOC_TYPE_SLAB) {
@@ -950,6 +1025,124 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     return (void*)aligned_addr;
 }
 
+/* --- Heap Integrity & Leak Analysis Diagnostics --- */
+
+bool mp_audit_heap(memory_pool_t* pool) {
+    if (!pool) return true;
+    pool_lock(pool);
+
+    bool healthy = true;
+    mp_block_header_t* curr = pool->active_head;
+
+    while (curr) {
+        void* payload = (void*)((uint8_t*)curr + sizeof(mp_block_header_t));
+
+        if (curr->magic != MP_MAGIC_HEAD) {
+            fprintf(stderr, "[HEAP AUDIT ERROR] Corrupted header magic at %p! (Found: 0x%X, Expected: 0x%X)\n",
+                    payload, curr->magic, MP_MAGIC_HEAD);
+            healthy = false;
+        }
+
+        if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+            uint8_t* canary = (uint8_t*)payload + curr->requested_size;
+            if (*canary != MP_CANARY_BYTE) {
+                fprintf(stderr, "[HEAP AUDIT ERROR] Redzone canary corruption at %p! (Size: %zu, Source: %s:%d in %s)\n",
+                        payload, curr->requested_size,
+                        curr->alloc_file ? curr->alloc_file : "unknown",
+                        curr->alloc_line,
+                        curr->alloc_func ? curr->alloc_func : "unknown");
+                healthy = false;
+            }
+        }
+        curr = curr->next;
+    }
+
+    if (healthy) {
+        printf("[HEAP AUDIT HEALTH] Heap integrity check passed cleanly! All active blocks valid.\n");
+    }
+
+    pool_unlock(pool);
+    return healthy;
+}
+
+size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len) {
+    if (!pool || !report_buf || max_len == 0) return 0;
+    pool_lock(pool);
+
+    size_t offset = 0;
+    offset += snprintf(report_buf + offset, max_len - offset,
+        "=================== DETAILED MEMORY LEAK ANALYSIS REPORT ===================\n"
+        "  Total Managed System Memory: %zu bytes (%.2f KB)\n"
+        "  Active Leaked Allocations  : %zu blocks\n"
+        "  Total Leaked Payload Bytes : %zu bytes (%.2f KB)\n"
+        "============================================================================\n",
+        pool->stats.total_pool_size, pool->stats.total_pool_size / 1024.0,
+        pool->stats.active_allocations,
+        pool->stats.active_bytes, pool->stats.active_bytes / 1024.0
+    );
+
+    if (pool->stats.active_allocations == 0) {
+        offset += snprintf(report_buf + offset, max_len - offset, "  No memory leaks detected! Clean execution.\n");
+        pool_unlock(pool);
+        return offset;
+    }
+
+    mp_block_header_t* curr = pool->active_head;
+    size_t idx = 1;
+
+    while (curr && offset < max_len) {
+        void* payload = (void*)((uint8_t*)curr + sizeof(mp_block_header_t));
+        const char* tier_str = (curr->alloc_type == ALLOC_TYPE_SLAB) ? "SLAB" :
+                               ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
+
+        offset += snprintf(report_buf + offset, max_len - offset,
+            "\n[Leak #%zu] Address: %p | Payload Size: %zu bytes | Tier: %s\n",
+            idx++, payload, curr->requested_size, tier_str
+        );
+
+        if (curr->alloc_file) {
+            offset += snprintf(report_buf + offset, max_len - offset,
+                "  Source Location : %s:%d (function '%s')\n",
+                curr->alloc_file, curr->alloc_line, curr->alloc_func ? curr->alloc_func : "unknown"
+            );
+        } else {
+            offset += snprintf(report_buf + offset, max_len - offset,
+                "  Source Location : (Location tracking disabled, enable MP_FLAG_TRACK_LOCATIONS)\n"
+            );
+        }
+
+        if (curr->backtrace_depth > 0) {
+            char** symbols = backtrace_symbols(curr->backtrace_addrs, curr->backtrace_depth);
+            offset += snprintf(report_buf + offset, max_len - offset, "  Callstack Frames:\n");
+            for (int f = 0; f < curr->backtrace_depth && offset < max_len; f++) {
+                offset += snprintf(report_buf + offset, max_len - offset,
+                    "    #%d %s\n", f, symbols ? symbols[f] : "unknown"
+                );
+            }
+            if (symbols) free(symbols);
+        }
+
+        curr = curr->next;
+    }
+
+    pool_unlock(pool);
+    return offset;
+}
+
+bool mp_export_leak_report(memory_pool_t* pool, const char* filepath) {
+    if (!pool || !filepath) return false;
+    char buffer[16384];
+    size_t report_len = mp_analyze_leaks(pool, buffer, sizeof(buffer));
+
+    FILE* f = fopen(filepath, "w");
+    if (!f) return false;
+
+    fwrite(buffer, 1, report_len, f);
+    fclose(f);
+    printf("[MEMORY_POOL DIAGNOSTICS] Detailed memory leak report exported to: %s\n", filepath);
+    return true;
+}
+
 void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     if (!pool || !stats) return;
     pool_lock(pool);
@@ -1010,19 +1203,14 @@ bool mp_check_leaks(memory_pool_t* pool) {
 
     bool clean = (pool->stats.active_allocations == 0);
     if (!clean) {
-        fprintf(stderr, "[MEMORY_POOL LEAK DETECTED] %zu active allocations leaked!\n", pool->stats.active_allocations);
-        mp_block_header_t* curr = pool->active_head;
-        while (curr) {
-            fprintf(stderr, "  - Leaked pointer: %p, size: %zu bytes, tier: %s\n",
-                    (void*)((uint8_t*)curr + sizeof(mp_block_header_t)),
-                    curr->requested_size,
-                    curr->alloc_type == ALLOC_TYPE_SLAB ? "SLAB" : (curr->alloc_type == ALLOC_TYPE_TLSF ? "TLSF" : "OS"));
-            curr = curr->next;
-        }
-    } else {
-        printf("[MEMORY_POOL HEALTH] No memory leaks detected. All memory safely freed!\n");
+        char report[4096];
+        pool_unlock(pool); // Avoid deadlock inside mp_analyze_leaks
+        mp_analyze_leaks(pool, report, sizeof(report));
+        fprintf(stderr, "%s\n", report);
+        return false;
     }
 
+    printf("[MEMORY_POOL HEALTH] No memory leaks detected. All memory safely freed!\n");
     pool_unlock(pool);
-    return clean;
+    return true;
 }

@@ -1,0 +1,15 @@
+=================== DETAILED MEMORY LEAK ANALYSIS REPORT ===================
+  Total Managed System Memory: 1085336 bytes (1059.90 KB)
+  Active Leaked Allocations  : 1 blocks
+  Total Leaked Payload Bytes : 128 bytes (0.12 KB)
+============================================================================
+
+[Leak #1] Address: 0x5620096dc0c0 | Payload Size: 128 bytes | Tier: SLAB
+  Source Location : examples/example_leak_analysis.c:13 (function 'do_leaky_work')
+  Callstack Frames:
+    #0 ./build/example_leak_analysis(+0x348b) [0x56200790548b]
+    #1 ./build/example_leak_analysis(+0x45d6) [0x5620079065d6]
+    #2 ./build/example_leak_analysis(+0x11d9) [0x5620079031d9]
+    #3 /usr/lib/libc.so.6(+0x27741) [0x7fa5cf027741]
+    #4 /usr/lib/libc.so.6(__libc_start_main+0x89) [0x7fa5cf027879]
+    #5 ./build/example_leak_analysis(+0x12b5) [0x5620079032b5]

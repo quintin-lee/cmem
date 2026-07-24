@@ -32,10 +32,12 @@ bench: $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
 examples: $(SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic
 	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded
+	$(CC) $(CFLAGS) $(SRC) examples/example_leak_analysis.c -o $(BUILD_DIR)/example_leak_analysis
 	./$(BUILD_DIR)/example_basic
 	./$(BUILD_DIR)/example_embedded
+	./$(BUILD_DIR)/example_leak_analysis
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) leak_report.txt
 
 .PHONY: all test test_cpp bench examples clean

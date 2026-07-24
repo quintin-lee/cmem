@@ -97,6 +97,37 @@ void test_realloc_and_aligned() {
     TEST_PASS("test_realloc_and_aligned");
 }
 
+void test_leak_analysis_and_heap_audit() {
+    printf("\n--- Test 7: Leak Analysis Report & Heap Audit ---\n");
+    memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS | MP_FLAG_POISON_ON_FREE);
+
+    void* leak_ptr = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    assert(leak_ptr != NULL);
+
+    void* valid_ptr = mp_alloc_loc(pool, 64, __FILE__, __LINE__, __func__);
+    assert(valid_ptr != NULL);
+
+    // Test Heap Audit
+    assert(mp_audit_heap(pool) == true);
+
+    // Test UAF Poisoning
+    uint8_t* poison_test = (uint8_t*)valid_ptr;
+    mp_free(pool, valid_ptr);
+    assert(poison_test[0] == 0xDD && poison_test[63] == 0xDD);
+
+    // Analyze Leak
+    char report[2048];
+    size_t report_len = mp_analyze_leaks(pool, report, sizeof(report));
+    assert(report_len > 0);
+    assert(strstr(report, "Source Location") != NULL);
+
+    // Cleanup leak
+    mp_free(pool, leak_ptr);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_leak_analysis_and_heap_audit");
+}
+
 void test_arena_reset_and_json() {
     printf("\n--- Test 5: Fast Arena Reset & JSON Exporter ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
@@ -193,6 +224,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
+    test_leak_analysis_and_heap_audit();
     test_arena_reset_and_json();
     test_static_buffer_and_callbacks();
     test_multithread_safety();
