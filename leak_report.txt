@@ -4,12 +4,12 @@
   Total Leaked Payload Bytes : 128 bytes (0.12 KB)
 ============================================================================
 
-[Leak #1] Address: 0x55e2806f00c0 | Payload Size: 128 bytes | Tier: SLAB
-  Source Location : examples/example_leak_analysis.c:13 (function 'do_leaky_work')
+[Leak #1] Address: 0x55bf51be40c0 | Payload Size: 128 bytes | Tier: SLAB
+  Source Location : examples/example_leak_analysis.c:12 (function 'do_leaky_work')
   Callstack Frames:
-    #0 ./build/example_leak_analysis(+0x3b6b) [0x55e270c4ab6b]
-    #1 ./build/example_leak_analysis(+0x5696) [0x55e270c4c696]
-    #2 ./build/example_leak_analysis(+0x11d9) [0x55e270c481d9]
-    #3 /usr/lib/libc.so.6(+0x27741) [0x7fdd88427741]
-    #4 /usr/lib/libc.so.6(__libc_start_main+0x89) [0x7fdd88427879]
-    #5 ./build/example_leak_analysis(+0x12b5) [0x55e270c482b5]
+    #0 ./build/example_leak_analysis(+0x3b6b) [0x55bf36d3fb6b]
+    #1 ./build/example_leak_analysis(+0x5696) [0x55bf36d41696]
+    #2 ./build/example_leak_analysis(+0x11d9) [0x55bf36d3d1d9]
+    #3 /usr/lib/libc.so.6(+0x27741) [0x7f891ec27741]
+    #4 /usr/lib/libc.so.6(__libc_start_main+0x89) [0x7f891ec27879]
+    #5 ./build/example_leak_analysis(+0x12b5) [0x55bf36d3d2b5]

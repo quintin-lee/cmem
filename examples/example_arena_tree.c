@@ -1,9 +1,9 @@
 /**
  * @file example_arena_tree.c
- * @brief Hierarchical Parent-Child Arena Trees and HTML Dashboard Exporter Example.
+ * @brief Hierarchical Parent-Child Arena Trees and HTML Dashboard Exporter Example for cmem.
  */
 
-#include "memory_pool.h"
+#include "cmem.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -11,11 +11,9 @@
 int main() {
     printf("=== Example 4: Hierarchical Child Arenas & HTML Profiler Dashboard ===\n\n");
 
-    // 1. Create Root Engine Memory Pool
     memory_pool_t* root_pool = mp_create(2 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_TRACK_LOCATIONS);
     assert(root_pool != NULL);
 
-    // 2. Create Child Arenas (Scene Arena, AST Arena, Network Arena)
     memory_pool_t* scene_arena = mp_create_child(root_pool, 1024 * 1024, MP_FLAG_DEFAULT, "SceneNodeArena");
     memory_pool_t* ast_arena   = mp_create_child(root_pool, 512 * 1024,  MP_FLAG_DEFAULT, "ASTCompilerArena");
     memory_pool_t* net_arena   = mp_create_child(root_pool, 512 * 1024,  MP_FLAG_DEFAULT, "NetworkPacketArena");
@@ -35,7 +33,6 @@ int main() {
     printf("3. Exporting Interactive Visual HTML Dashboard Report ('memory_profile.html')...\n");
     mp_export_html_report(root_pool, "memory_profile.html");
 
-    // Clean up: Destroying root_pool automatically cleans up all child arenas!
     mp_destroy(root_pool);
 
     printf("\nHierarchical Arena Example Completed Successfully!\n");

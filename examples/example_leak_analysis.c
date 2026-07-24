@@ -1,15 +1,14 @@
 /**
  * @file example_leak_analysis.c
- * @brief Memory Leak Analysis, Source Location Tracking, and Heap Audit Example.
+ * @brief Memory Leak Analysis, Source Location Tracking, and Heap Audit Example for cmem.
  */
 
-#include "memory_pool.h"
+#include "cmem.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 void do_leaky_work(memory_pool_t* pool) {
-    // Allocate blocks with location tracking
     void* leaked_buf = mp_alloc_loc(pool, 128, __FILE__, __LINE__, __func__);
     void* normal_buf = mp_alloc_loc(pool, 64,  __FILE__, __LINE__, __func__);
 
@@ -17,13 +16,11 @@ void do_leaky_work(memory_pool_t* pool) {
     strcpy((char*)normal_buf, "This buffer will be properly freed.");
 
     mp_free(pool, normal_buf);
-    // Intentionally NOT freeing leaked_buf to demonstrate leak analysis!
 }
 
 int main() {
     printf("=== Example 3: Memory Leak Analysis & Heap Audit Demo ===\n\n");
 
-    // Create pool with Debug Canary, Location Tracking, and UAF Poisoning
     memory_pool_t* pool = mp_create(1024 * 1024,
         MP_FLAG_THREAD_SAFE | MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS | MP_FLAG_POISON_ON_FREE);
 
@@ -44,8 +41,7 @@ int main() {
     printf("4. Exporting Leak Report to File ('leak_report.txt')...\n");
     mp_export_leak_report(pool, "leak_report.txt");
 
-    // Clean up
-    mp_reset(pool); // Clear leaks
+    mp_reset(pool);
     mp_destroy(pool);
 
     printf("\nLeak Analysis Example Completed Successfully!\n");

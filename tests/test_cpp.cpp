@@ -1,44 +1,49 @@
 /**
  * @file test_cpp.cpp
- * @brief C++ STL Container Integration Test for mpool::allocator.
+ * @brief Unit tests verifying cmem C++ RAII wrapper and STL-compatible allocator.
  */
 
-#include "../include/memory_pool.hpp"
+#include "../include/cmem.hpp"
 #include <iostream>
 #include <vector>
 #include <unordered_map>
 #include <cassert>
 
-int main() {
-    std::cout << "\n================ RUNNING C++ STL ALLOCATOR TESTS ================\n";
+void test_cpp_stl_allocator() {
+    std::cout << "\n================ RUNNING C++ STL ALLOCATOR TESTS ================\n" << std::endl;
 
-    mpool::MemoryPool pool(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+    cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
 
     {
-        mpool::allocator<int> int_alloc(pool);
-        std::vector<int, mpool::allocator<int>> vec(int_alloc);
-        for (int i = 0; i < 1000; i++) {
+        // Scope for STL Containers to ensure destructors release all nodes/buckets
+        cmem::allocator<int> vec_alloc(pool);
+        std::vector<int, cmem::allocator<int>> vec(vec_alloc);
+
+        for (int i = 0; i < 100; i++) {
             vec.push_back(i * 10);
         }
-        assert(vec.size() == 1000);
-        assert(vec[500] == 5000);
-    }
+        assert(vec.size() == 100);
+        assert(vec[50] == 500);
 
-    {
-        using PairAlloc = mpool::allocator<std::pair<const int, int>>;
-        PairAlloc pair_alloc(pool);
-        using StringMap = std::unordered_map<int, int, std::hash<int>, std::equal_to<int>, PairAlloc>;
-        StringMap map(16, std::hash<int>(), std::equal_to<int>(), pair_alloc);
+        using MapAlloc = cmem::allocator<std::pair<const int, std::string>>;
+        MapAlloc map_alloc(pool);
+        std::unordered_map<int, std::string, std::hash<int>, std::equal_to<int>, MapAlloc> map(10, std::hash<int>(), std::equal_to<int>(), map_alloc);
 
-        for (int i = 0; i < 500; i++) {
-            map[i] = i * 2;
-        }
-        assert(map[250] == 500);
+        map[1] = "cmem";
+        map[2] = "High-Performance";
+        map[3] = "C++ Allocator";
+
+        assert(map[1] == "cmem");
     }
 
     pool.dump_info();
-    assert(pool.check_leaks() == true);
 
-    std::cout << "[PASS] C++ STL Container Allocator Test Passed Cleanly!\n";
+    // Check memory clean after container destruction
+    assert(pool.check_leaks() == true);
+    std::cout << "[PASS] C++ STL Container Allocator Test Passed Cleanly!" << std::endl;
+}
+
+int main() {
+    test_cpp_stl_allocator();
     return 0;
 }

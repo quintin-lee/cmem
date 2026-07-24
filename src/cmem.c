@@ -1,11 +1,11 @@
 /**
- * @file memory_pool.c
- * @brief Universal Tiered Memory Manager Implementation (Slab + TLSF + OS + Child Arenas + HTML Dashboard).
+ * @file cmem.c
+ * @brief cmem - Universal Tiered Memory Manager Implementation (Slab + TLSF + OS + Child Arenas + Diagnostics).
  */
 
 #define _POSIX_C_SOURCE 200809L
 
-#include "memory_pool.h"
+#include "cmem.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -657,7 +657,6 @@ memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
 
-    // Recursively destroy linked child arenas
     memory_pool_t* child = pool->first_child;
     while (child) {
         memory_pool_t* next = child->next_sibling;
@@ -700,7 +699,6 @@ void mp_reset(memory_pool_t* pool) {
     if (!pool) return;
     pool_lock(pool);
 
-    // Recursively reset child pools
     memory_pool_t* child = pool->first_child;
     while (child) {
         mp_reset(child);
@@ -1192,13 +1190,13 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
 
     fprintf(f, "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
                "<meta charset=\"UTF-8\">\n"
-               "<title>Memory Pool Profile & Leak Analysis Dashboard</title>\n"
+               "<title>cmem Profile & Leak Analysis Dashboard</title>\n"
                "<style>\n"
                "  body { font-family: 'Inter', system-ui, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 2rem; }\n"
                "  .container { max-width: 1100px; margin: 0 auto; }\n"
                "  h1 { color: #38bdf8; font-size: 2rem; border-bottom: 2px solid #334155; padding-bottom: 0.5rem; }\n"
                "  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1.5rem 0; }\n"
-               "  .card { background: #1e293b; padding: 1.2rem; border-radius: 10px; border: 1fr solid #334155; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }\n"
+               "  .card { background: #1e293b; padding: 1.2rem; border-radius: 10px; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }\n"
                "  .card h3 { margin: 0; font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; }\n"
                "  .card .val { font-size: 1.6rem; font-weight: bold; color: #38bdf8; margin-top: 0.4rem; }\n"
                "  .progress-bar { background: #334155; height: 24px; border-radius: 12px; overflow: hidden; display: flex; margin: 1.5rem 0; }\n"
@@ -1215,7 +1213,7 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
                "  .badge-os { background: #78350f; color: #fbbf24; }\n"
                "</style>\n</head>\n<body>\n"
                "<div class=\"container\">\n"
-               "  <h1>Memory Pool Visual Profiler & Leak Analysis</h1>\n"
+               "  <h1>cmem Visual Profiler & Leak Analysis Dashboard</h1>\n"
                "  <div class=\"cards\">\n"
                "    <div class=\"card\"><h3>Total Reserved</h3><div class=\"val\">%.2f KB</div></div>\n"
                "    <div class=\"card\"><h3>Active Payload</h3><div class=\"val\">%.2f KB</div></div>\n"
@@ -1271,7 +1269,7 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
     fprintf(f, "    </tbody>\n  </table>\n</div>\n</body>\n</html>\n");
     fclose(f);
 
-    printf("[MEMORY_POOL DIAGNOSTICS] Interactive HTML Profiler Report exported to: %s\n", filepath);
+    printf("[CMEM DIAGNOSTICS] Interactive HTML Profiler Report exported to: %s\n", filepath);
     return true;
 }
 
@@ -1289,7 +1287,7 @@ void mp_dump_info(memory_pool_t* pool) {
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
-    printf("\n================ MEMORY POOL DIAGNOSTICS DUMP [%s] ================\n", pool->arena_name);
+    printf("\n================ CMEM DIAGNOSTICS DUMP [%s] ================\n", pool->arena_name);
     printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n", stats.total_pool_size, stats.total_pool_size / 1024.0);
     printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n", stats.active_allocations, stats.active_bytes, stats.active_bytes / 1024.0);
     printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", stats.peak_bytes, stats.peak_bytes / 1024.0);
@@ -1318,9 +1316,9 @@ static void print_arena_node(memory_pool_t* pool, int indent) {
 void mp_dump_tree_info(memory_pool_t* pool) {
     if (!pool) return;
     pool_lock(pool);
-    printf("\n================ HIERARCHICAL ARENA TREE DUMP ================\n");
+    printf("\n================ CMEM ARENA TREE DUMP ================\n");
     print_arena_node(pool, 0);
-    printf("==============================================================\n\n");
+    printf("======================================================\n\n");
     pool_unlock(pool);
 }
 
@@ -1366,7 +1364,7 @@ bool mp_check_leaks(memory_pool_t* pool) {
         return false;
     }
 
-    printf("[MEMORY_POOL HEALTH] No memory leaks detected in [%s]. All memory safely freed!\n", pool->arena_name);
+    printf("[CMEM HEALTH] No memory leaks detected in [%s]. All memory safely freed!\n", pool->arena_name);
     pool_unlock(pool);
     return true;
 }

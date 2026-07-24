@@ -1,9 +1,9 @@
 /**
  * @file test_main.c
- * @brief Comprehensive Unit Tests for the C Memory Pool Manager.
+ * @brief Comprehensive Unit Tests for cmem Memory Manager.
  */
 
-#include "../include/memory_pool.h"
+#include "../include/cmem.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,10 +80,10 @@ void test_realloc_and_aligned() {
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
 
     char* str = (char*)mp_alloc(pool, 32);
-    strcpy(str, "Hello Antigravity Memory Pool!");
+    strcpy(str, "Hello cmem Memory Pool!");
 
     str = (char*)mp_realloc(pool, str, 100);
-    assert(strcmp(str, "Hello Antigravity Memory Pool!") == 0);
+    assert(strcmp(str, "Hello cmem Memory Pool!") == 0);
 
     void* aligned_ptr = mp_aligned_alloc(pool, 64, 256);
     assert(aligned_ptr != NULL);
@@ -239,7 +239,7 @@ void test_multithread_safety() {
 }
 
 int main() {
-    printf("================ RUNNING MEMORY POOL UNIT TESTS ================\n");
+    printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
@@ -248,6 +248,6 @@ int main() {
     test_arena_reset_and_json();
     test_static_buffer_and_callbacks();
     test_multithread_safety();
-    printf("\nALL UNIT TESTS PASSED SUCCESSFULLY!\n");
+    printf("\nALL CMEM UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
 }

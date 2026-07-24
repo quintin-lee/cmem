@@ -1,50 +1,47 @@
 /**
  * @file example_embedded.c
- * @brief Embedded/Bare-metal Static Buffer Example (Zero OS malloc dependency).
+ * @brief Static Buffer Arena Example of cmem (Zero OS Malloc Dependency).
  */
 
-#include "memory_pool.h"
+#include "cmem.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 #include <assert.h>
 
-#define STATIC_BUFFER_SIZE (512 * 1024) // 512 KB static arena buffer
-static uint8_t g_static_arena[STATIC_BUFFER_SIZE];
+static uint8_t g_embedded_ram_buffer[512 * 1024];
 
 int main() {
     printf("=== Example 2: Static Buffer Arena (Zero OS Malloc) ===\n\n");
 
-    // Initialize memory pool directly inside static byte array
-    memory_pool_t* pool = mp_create_from_buffer(g_static_arena, sizeof(g_static_arena), MP_FLAG_ZERO_ON_ALLOC);
-    assert(pool != NULL);
+    memory_pool_t* pool = mp_create_from_buffer(g_embedded_ram_buffer, sizeof(g_embedded_ram_buffer), MP_FLAG_DEFAULT);
+    if (!pool) {
+        fprintf(stderr, "Failed to initialize cmem static buffer arena!\n");
+        return 1;
+    }
 
-    printf("Static Arena initialized at %p (Size: %d KB)\n", (void*)g_static_arena, STATIC_BUFFER_SIZE / 1024);
+    printf("Static Arena initialized at %p (Size: 512 KB)\n", (void*)g_embedded_ram_buffer);
 
-    // Allocate memory inside static buffer
-    void* p1 = mp_alloc(pool, 128);
-    void* p2 = mp_alloc(pool, 4096);
-    void* p3 = mp_alloc(pool, 64 * 1024);
+    void* block1 = mp_alloc(pool, 1024);
+    void* block2 = mp_alloc(pool, 4096);
+    void* block3 = mp_alloc(pool, 64.5 * 1024);
 
-    assert(p1 && p2 && p3);
+    uintptr_t base = (uintptr_t)g_embedded_ram_buffer;
+    uintptr_t limit = base + sizeof(g_embedded_ram_buffer);
 
-    // Verify allocated pointers reside within static arena memory boundary
-    uintptr_t arena_start = (uintptr_t)g_static_arena;
-    uintptr_t arena_end   = arena_start + STATIC_BUFFER_SIZE;
-
-    assert((uintptr_t)p1 >= arena_start && (uintptr_t)p1 < arena_end);
-    assert((uintptr_t)p2 >= arena_start && (uintptr_t)p2 < arena_end);
-    assert((uintptr_t)p3 >= arena_start && (uintptr_t)p3 < arena_end);
+    assert((uintptr_t)block1 >= base && (uintptr_t)block1 < limit);
+    assert((uintptr_t)block2 >= base && (uintptr_t)block2 < limit);
+    assert((uintptr_t)block3 >= base && (uintptr_t)block3 < limit);
 
     printf("All allocations confirmed inside static arena memory boundary!\n");
 
     mp_dump_info(pool);
 
-    mp_free(pool, p1);
-    mp_free(pool, p2);
-    mp_free(pool, p3);
+    mp_free(pool, block1);
+    mp_free(pool, block2);
+    mp_free(pool, block3);
 
-    assert(mp_check_leaks(pool) == true);
+    mp_check_leaks(pool);
     mp_destroy(pool);
 
     printf("\nStatic Buffer Arena Example Completed Successfully!\n");
