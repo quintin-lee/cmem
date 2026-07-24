@@ -11,7 +11,6 @@
 #include <pthread.h>
 
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
-#define TEST_FAIL(name) printf("[FAIL] %s\n", name)
 
 void test_slab_small_allocs() {
     printf("\n--- Test 1: Slab Allocations (Small Objects <= 512B) ---\n");
@@ -22,7 +21,6 @@ void test_slab_small_allocs() {
     for (int i = 0; i < 100; i++) {
         ptrs[i] = mp_alloc(pool, 16 + (i % 64));
         assert(ptrs[i] != NULL);
-        // Verify zero-on-alloc flag
         uint8_t* byte_ptr = (uint8_t*)ptrs[i];
         assert(byte_ptr[0] == 0 && byte_ptr[15] == 0);
     }
@@ -52,13 +50,12 @@ void test_tlsf_medium_allocs() {
 
     assert(p1 && p2 && p3);
 
-    // Test writing data
     memset(p1, 0xAA, 1024);
     memset(p2, 0xBB, 64 * 1024);
     memset(p3, 0xCC, 512 * 1024);
 
-    mp_free(pool, p2); // Free middle chunk to test TLSF coalescing
-    void* p4 = mp_alloc(pool, 32 * 1024); // Allocate smaller chunk inside freed space
+    mp_free(pool, p2);
+    void* p4 = mp_alloc(pool, 32 * 1024);
     assert(p4 != NULL);
 
     mp_free(pool, p1);
@@ -80,7 +77,6 @@ void test_realloc_and_aligned() {
     str = (char*)mp_realloc(pool, str, 100);
     assert(strcmp(str, "Hello Antigravity Memory Pool!") == 0);
 
-    // Aligned alloc test (64-byte alignment for AVX-512)
     void* aligned_ptr = mp_aligned_alloc(pool, 64, 256);
     assert(aligned_ptr != NULL);
     assert(((uintptr_t)aligned_ptr % 64) == 0);
@@ -91,6 +87,36 @@ void test_realloc_and_aligned() {
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_realloc_and_aligned");
+}
+
+void test_arena_reset_and_json() {
+    printf("\n--- Test 5: Fast Arena Reset & JSON Exporter ---\n");
+    memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
+
+    for (int i = 0; i < 50; i++) {
+        mp_alloc(pool, 128 + i * 16);
+    }
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 50);
+
+    // Test JSON export
+    char json_buf[512];
+    size_t json_len = mp_dump_json_stats(pool, json_buf, sizeof(json_buf));
+    assert(json_len > 0);
+    assert(strstr(json_buf, "\"active_allocations\": 50") != NULL);
+    printf("Generated JSON Telemetry:\n%s\n", json_buf);
+
+    // Perform Fast Reset
+    mp_reset(pool);
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+    assert(stats.active_bytes == 0);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("test_arena_reset_and_json");
 }
 
 #define THREAD_COUNT 4
@@ -114,8 +140,8 @@ void* thread_worker(void* arg) {
 }
 
 void test_multithread_safety() {
-    printf("\n--- Test 4: Multithreaded Concurrent Safety ---\n");
-    memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+    printf("\n--- Test 4: Multithreaded Concurrent Safety & Thread-Local Cache ---\n");
+    memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
     assert(pool != NULL);
 
     pthread_t threads[THREAD_COUNT];
@@ -138,6 +164,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
+    test_arena_reset_and_json();
     test_multithread_safety();
     printf("\nALL UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;

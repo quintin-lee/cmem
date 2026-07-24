@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdint.h>
+#include <pthread.h>
 
 #define NUM_OPERATIONS 1000000
 
@@ -33,8 +34,8 @@ void bench_small_allocations() {
     }
     double t_system = get_time_sec() - t0;
 
-    // 2. Custom Memory Pool (Slab Tier)
-    memory_pool_t* pool = mp_create(4 * 1024 * 1024, MP_FLAG_DEFAULT);
+    // 2. Custom Memory Pool (Slab Tier + TLS Cache)
+    memory_pool_t* pool = mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
     t0 = get_time_sec();
     for (int i = 0; i < NUM_OPERATIONS; i++) {
         size_t sz = 32 + (i % 224);
@@ -89,9 +90,44 @@ void bench_medium_allocations() {
     free(ptrs);
 }
 
+void bench_arena_reset() {
+    printf("--- Benchmark 3: Fast Arena Reset (mp_reset x 1000 rounds of 500 allocs) ---\n");
+    memory_pool_t* pool = mp_create(4 * 1024 * 1024, MP_FLAG_DEFAULT);
+    void* ptrs[500];
+
+    // Standard Free loop time
+    double t0 = get_time_sec();
+    for (int r = 0; r < 1000; r++) {
+        for (int i = 0; i < 500; i++) {
+            ptrs[i] = mp_alloc(pool, 64 + (i % 128));
+        }
+        for (int i = 0; i < 500; i++) {
+            mp_free(pool, ptrs[i]);
+        }
+    }
+    double t_free_loop = get_time_sec() - t0;
+
+    // Arena Reset time
+    t0 = get_time_sec();
+    for (int r = 0; r < 1000; r++) {
+        for (int i = 0; i < 500; i++) {
+            ptrs[i] = mp_alloc(pool, 64 + (i % 128));
+        }
+        mp_reset(pool); // Instant O(1) batch reset!
+    }
+    double t_reset = get_time_sec() - t0;
+
+    printf("  Individual Free Loop Time : %.5f sec\n", t_free_loop);
+    printf("  Arena mp_reset Batch Time : %.5f sec\n", t_reset);
+    printf("  Speedup                   : %.2fx faster!\n\n", t_free_loop / t_reset);
+
+    mp_destroy(pool);
+}
+
 int main() {
     printf("================ MEMORY POOL PERFORMANCE BENCHMARK ================\n\n");
     bench_small_allocations();
     bench_medium_allocations();
+    bench_arena_reset();
     return 0;
 }

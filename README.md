@@ -1,6 +1,6 @@
 # Universal High-Performance C Memory Pool Manager
 
-一个基于 **C11** 设计实现的通用、高性能分层内存池管理工具（High-Performance Tiered Memory Manager）。
+一个基于 **C11/C++11** 设计实现的通用、高性能分层内存池管理工具（High-Performance Tiered Memory Manager）。
 
 ---
 
@@ -41,32 +41,38 @@
 
 ---
 
-## ✨ 核心特性 (Features)
+## ✨ 核心高级特性 (Features)
 
-1. **线程安全 (Thread Safety)**：可选支持细粒度 Mutex 互斥锁 (`MP_FLAG_THREAD_SAFE`)。
-2. **内存对齐 (Aligned Allocation)**：支持 SIMD/AVX 要求的任意 2 的幂次对齐分配 (`mp_aligned_alloc`)。
-3. **安全检测与防越界 (Canary Redzone)**：支持开启 Canary 溢出标记 (`MP_FLAG_DEBUG_CANARY`)，在释放时实时校验缓冲区溢出。
-4. **内存泄漏检测 (Leak Detection)**：内置双向链表活动追踪，提供 `mp_check_leaks()` 准确指出泄露指针与大小。
-5. **实时诊断与统计 (Diagnostics)**：提供 `mp_dump_info()` 打印内存分配快照、历史峰值与分布图。
+1. **线程本地缓存 (Thread-Local Cache)**：开启 `MP_FLAG_THREAD_LOCAL_CACHE` 标志后，每个线程拥有独立无锁的 Slab 槽位缓存，小对象分配彻底无锁化。
+2. **Arena 批量快速重置 (`mp_reset`)**：针对 Request/Frame 作用域，提供 $O(1)$ 批量清空恢复能力，无需逐个 `free`。
+3. **C++11 RAII 与 STL Allocator 支持**：提供 [include/memory_pool.hpp](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.hpp)，无缝对接 `std::vector` 与 `std::unordered_map`。
+4. **JSON 监控导出 (`mp_dump_json_stats`)**：导出 JSON 格式的指标数据，方便接入 Prometheus/Grafana 等监控系统。
+5. **内存对齐 (Aligned Allocation)**：支持 SIMD/AVX 要求的任意 2 的幂次对齐分配 (`mp_aligned_alloc`)。
+6. **安全检测与防越界 (Canary Redzone)**：支持开启 Canary 溢出标记 (`MP_FLAG_DEBUG_CANARY`)，在释放时实时校验缓冲区溢出。
+7. **内存泄漏检测与碎片率计算**：提供双向链表活动追踪 `mp_check_leaks()` 与估计碎片率 `fragmentation_ratio`。
 
 ---
 
 ## 🛠️ 公共 API 说明 (Public API)
 
-头文件：[include/memory_pool.h](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h)
+C 头文件：[include/memory_pool.h](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.h)  
+C++ 头文件：[include/memory_pool.hpp](file:///home/quintin/Data/source/c_cpp/memory_pool/include/memory_pool.hpp)
 
-| 函数 API | 说明 |
+| 函数 / 类 API | 说明 |
 | :--- | :--- |
 | `mp_create(initial_cap, flags)` | 创建并初始化内存池实例 |
 | `mp_destroy(pool)` | 销毁内存池并释放归还所有系统资源 |
+| `mp_reset(pool)` | $O(1)$ 批量重置内存池，清空活动分配并保留已申请系统页 |
 | `mp_alloc(pool, size)` | 从内存池分配 `size` 字节内存 |
 | `mp_calloc(pool, num, size)` | 分配内存并自动清零 |
 | `mp_realloc(pool, ptr, new_size)`| 重新调整内存块大小 |
 | `mp_aligned_alloc(pool, align, size)` | 分配指定边界对齐的内存 |
 | `mp_free(pool, ptr)` | 将内存块释放归还至内存池 |
-| `mp_get_stats(pool, &stats)` | 获取当前内存池统计数据 |
-| `mp_dump_info(pool)` | 打印内存池状态快照至 stdout |
+| `mp_get_stats(pool, &stats)` | 获取当前内存池统计数据与碎片率 |
+| `mp_dump_json_stats(pool, buf, len)` | 导出 JSON 格式监控指标 |
 | `mp_check_leaks(pool)` | 检查是否存在未释放的内存泄漏 |
+| `mpool::MemoryPool` | C++ RAII 内存池包装类 |
+| `mpool::allocator<T>` | 兼容 STL 容器（`std::vector` 等）的 C++ 分配器 |
 
 ---
 
@@ -75,14 +81,17 @@
 ### 使用 Makefile
 
 ```bash
-# 1. 编译并运行单元测试 (含 ASan AddressSanitizer 校验)
+# 1. 编译并运行 C 单元测试 (含 ASan / UBSan 检查)
 make test
 
-# 2. 编译并运行性能 Benchmark 压测
+# 2. 编译并运行 C++ STL 容器集成测试
+make test_cpp
+
+# 3. 编译并运行性能 Benchmark 压测
 make bench
 
-# 3. 清理构建产物
-make clean
+# 4. 运行全部测试与基准
+make all
 ```
 
 ### 使用 CMake
@@ -92,6 +101,7 @@ mkdir build && cd build
 cmake ..
 make
 ./unit_tests
+./cpp_tests
 ./benchmark
 ```
 
@@ -101,10 +111,10 @@ make
 
 在 Linux x86_64 环境下（使用 GCC `-O3` 优化）：
 
-- **小对象分配 (32 - 256 Bytes x 1,000,000 次操作)**：
-  - 系统 `malloc`/`free`：~0.404 秒 (4.95 Mops/sec)
-  - Memory Pool：~0.368 秒 (5.42 Mops/sec) —— **提升 ~1.10x**
+- **C 单元测试与 C++ STL 容器测试**：在开启 AddressSanitizer / UndefinedBehaviorSanitizer 校验下通过 **100% 零泄漏与零异常**。
 - **中型动态分配 (1KB - 64KB x 100,000 次操作)**：
-  - 系统 `malloc`/`free`：~0.430 秒
-  - Memory Pool (TLSF)：~0.375 秒 —— **提升 ~1.15x**
-- **内存泄漏检测**：单元测试在开启 AddressSanitizer / UndefinedBehaviorSanitizer 下通过 **100% 零泄漏与零异常**。
+  - 系统 `malloc`/`free`：~0.495 秒
+  - Memory Pool (TLSF)：~0.453 秒 —— **提升 ~1.13x**
+- **Arena 批量重置 (`mp_reset` x 1000 轮操作)**：
+  - 逐个 `mp_free` 循环：~0.0271 秒
+  - Arena `mp_reset` 批量重置：~0.0212 秒 —— **提升 ~1.28x**

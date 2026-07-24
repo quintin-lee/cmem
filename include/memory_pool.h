@@ -5,8 +5,9 @@
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
  *  - O(1) Allocation and Free performance
- *  - Dynamic expansion & thread-safety options
- *  - Memory diagnostic tools: Leak detection, memory stats, redzone canary
+ *  - Thread-Local Caching (Lock-Free fast path for small objects)
+ *  - Arena Fast Reset (O(1) batch deallocation for request-scoped lifetime)
+ *  - Memory diagnostic tools: Leak detection, JSON statistics, canary redzone
  */
 
 #ifndef MEMORY_POOL_H
@@ -24,10 +25,11 @@ extern "C" {
  * Configuration flags for memory pool behavior.
  */
 typedef enum {
-    MP_FLAG_DEFAULT       = 0,
-    MP_FLAG_THREAD_SAFE   = (1 << 0), /**< Enable thread safety via mutex locks */
-    MP_FLAG_DEBUG_CANARY  = (1 << 1), /**< Add magic canary bytes for buffer overflow checks */
-    MP_FLAG_ZERO_ON_ALLOC = (1 << 2)  /**< Automatically zero memory upon allocation */
+    MP_FLAG_DEFAULT            = 0,
+    MP_FLAG_THREAD_SAFE        = (1 << 0), /**< Enable thread safety via mutex locks */
+    MP_FLAG_DEBUG_CANARY       = (1 << 1), /**< Add magic canary bytes for buffer overflow checks */
+    MP_FLAG_ZERO_ON_ALLOC      = (1 << 2), /**< Automatically zero memory upon allocation */
+    MP_FLAG_THREAD_LOCAL_CACHE = (1 << 3)  /**< Enable thread-local cache for lock-free small allocs */
 } mp_flags_t;
 
 /**
@@ -43,6 +45,7 @@ typedef struct {
     size_t slab_allocated_bytes;  /**< Payload bytes in small-object Slab allocator */
     size_t tlsf_allocated_bytes;  /**< Payload bytes in medium-object TLSF allocator */
     size_t os_allocated_bytes;    /**< Payload bytes in direct OS fallback allocator */
+    double fragmentation_ratio;   /**< Estimated memory fragmentation ratio (0.0 to 1.0) */
 } mp_stats_t;
 
 typedef struct memory_pool memory_pool_t;
@@ -60,6 +63,12 @@ memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
  * @param pool Memory pool pointer.
  */
 void mp_destroy(memory_pool_t* pool);
+
+/**
+ * @brief Resets the memory pool, instantly clearing all active allocations while preserving reserved system memory blocks.
+ * @param pool Memory pool pointer.
+ */
+void mp_reset(memory_pool_t* pool);
 
 /**
  * @brief Allocates memory block of specified size.
@@ -115,6 +124,15 @@ void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats);
  * @param pool Memory pool pointer.
  */
 void mp_dump_info(memory_pool_t* pool);
+
+/**
+ * @brief Dumps memory pool stats into JSON format buffer for telemetry monitoring.
+ * @param pool Memory pool pointer.
+ * @param buf Output character buffer.
+ * @param max_len Maximum length of buffer.
+ * @return Number of characters written.
+ */
+size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len);
 
 /**
  * @brief Checks if there are any un-freed memory allocations (memory leaks).

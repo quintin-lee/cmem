@@ -1,3 +1,8 @@
+/**
+ * @file memory_pool.c
+ * @brief Universal Tiered Memory Manager Implementation (Slab + TLSF + Direct OS + Thread Cache + Arena Reset).
+ */
+
 #define _POSIX_C_SOURCE 200809L
 
 #include "memory_pool.h"
@@ -15,6 +20,7 @@
 static const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
 #define SLAB_MAX_SIZE 512
 #define SLAB_PAGE_SIZE (16 * 1024) // 16 KB per slab page
+#define TLS_CACHE_MAX_SLOTS 64
 
 /* TLSF Allocator Constants */
 #define TLSF_SL_SHIFT 4
@@ -67,6 +73,20 @@ typedef struct {
     mp_slab_page_t* partial_pages; // Pages with available free slots
     mp_slab_page_t* full_pages;    // Completely allocated pages
 } mp_slab_class_t;
+
+/* --- TLS Cache Struct for Lock-Free Small Allocations --- */
+typedef struct {
+    mp_slab_slot_t* slots[SLAB_CLASS_COUNT];
+    uint16_t counts[SLAB_CLASS_COUNT];
+} thread_cache_t;
+
+#ifdef __cplusplus
+#define MP_THREAD_LOCAL thread_local
+#else
+#define MP_THREAD_LOCAL _Thread_local
+#endif
+
+static MP_THREAD_LOCAL thread_cache_t tls_cache = {{0}, {0}};
 
 /* --- TLSF Structs --- */
 typedef struct tlsf_block {
@@ -157,7 +177,6 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx) 
     size_t slot_payload_size = kSlabSizes[class_idx];
     size_t header_overhead = sizeof(mp_block_header_t);
     size_t total_slot_size = header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-    // Align total slot size to 8 bytes
     total_slot_size = (total_slot_size + 7) & ~7;
 
     void* raw_mem = NULL;
@@ -199,18 +218,15 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
         page = slab_create_page(pool, class_idx);
         if (!page) return NULL;
 
-        // Insert into partial pages list
         page->next = sc->partial_pages;
         if (sc->partial_pages) sc->partial_pages->prev = page;
         sc->partial_pages = page;
     }
 
-    // Pop from free_list
     mp_slab_slot_t* slot = page->free_list;
     page->free_list = slot->next;
     page->free_count--;
 
-    // Move to full_pages if no free slots left
     if (page->free_count == 0) {
         sc->partial_pages = page->next;
         if (page->next) page->next->prev = NULL;
@@ -221,7 +237,6 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
         sc->full_pages = page;
     }
 
-    // Initialize block header
     mp_block_header_t* header = (mp_block_header_t*)slot;
     header->magic = MP_MAGIC_HEAD;
     header->alloc_type = ALLOC_TYPE_SLAB;
@@ -230,6 +245,7 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
     header->requested_size = req_size;
     header->usable_size = sc->slot_size;
     header->raw_base = slot;
+    header->subpool = NULL;
 
     void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
 
@@ -250,14 +266,12 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
     uint8_t class_idx = header->slab_class;
     mp_slab_class_t* sc = &pool->slab_classes[class_idx];
 
-    // Find page header from raw_base pointer offset
     uintptr_t ptr_val = (uintptr_t)header->raw_base;
     uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
     mp_slab_page_t* page = (mp_slab_page_t*)page_base;
 
     bool was_full = (page->free_count == 0);
 
-    // Push slot back onto page free list
     mp_slab_slot_t* slot = (mp_slab_slot_t*)header->raw_base;
     slot->next = page->free_list;
     page->free_list = slot;
@@ -266,18 +280,15 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
     pool->stats.slab_allocated_bytes -= sc->slot_size;
 
     if (was_full) {
-        // Remove from full_pages list
         if (page->prev) page->prev->next = page->next;
         else sc->full_pages = page->next;
         if (page->next) page->next->prev = page->prev;
 
-        // Add to partial_pages list
         page->next = sc->partial_pages;
         page->prev = NULL;
         if (sc->partial_pages) sc->partial_pages->prev = page;
         sc->partial_pages = page;
     } else if (page->free_count == page->total_slots && sc->partial_pages != page) {
-        // Free slab page if completely idle (keep at least one active page)
         if (page->prev) page->prev->next = page->next;
         else sc->partial_pages = page->next;
         if (page->next) page->next->prev = page->prev;
@@ -298,19 +309,16 @@ static tlsf_pool_t* tlsf_create_pool(size_t size) {
     tpool->raw_area = (void*)((uint8_t*)raw_mem + sizeof(tlsf_pool_t));
     tpool->raw_size = size;
 
-    // Create initial free block
     tlsf_block_t* block = (tlsf_block_t*)tpool->raw_area;
     block->size_and_flags = (size - sizeof(tlsf_block_t)) | BLOCK_STATE_FREE;
     block->prev_physical = NULL;
     block->next_free = NULL;
     block->prev_free = NULL;
 
-    // Sentinel block at the end of pool
     tlsf_block_t* sentinel = (tlsf_block_t*)((uint8_t*)block + (block->size_and_flags & BLOCK_SIZE_MASK));
-    sentinel->size_and_flags = 0; // Size 0 marks end
+    sentinel->size_and_flags = 0;
     sentinel->prev_physical = block;
 
-    // Insert initial block into TLSF bitmaps & lists
     int fl, sl;
     tlsf_mapping_insert(block->size_and_flags & BLOCK_SIZE_MASK, &fl, &sl);
     tpool->fl_bitmap |= (1U << fl);
@@ -423,14 +431,12 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size) {
     size_t remaining = current_size - total_needed;
 
     if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
-        // Split block
         block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
 
         tlsf_block_t* split_block = (tlsf_block_t*)((uint8_t*)block + total_needed);
         split_block->size_and_flags = remaining | BLOCK_STATE_FREE;
         split_block->prev_physical = block;
 
-        // Update next physical block's prev_physical
         tlsf_block_t* next_phys = (tlsf_block_t*)((uint8_t*)split_block + remaining);
         next_phys->prev_physical = split_block;
         next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
@@ -476,7 +482,6 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     block->size_and_flags |= BLOCK_STATE_FREE;
 
-    // Coalesce with next block if free
     tlsf_block_t* next_phys = (tlsf_block_t*)((uint8_t*)block + size);
     if (next_phys->size_and_flags & BLOCK_STATE_FREE) {
         tlsf_remove_free_block(tpool, next_phys);
@@ -487,7 +492,6 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
         after_next->prev_physical = block;
     }
 
-    // Coalesce with prev block if free
     if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
         tlsf_block_t* prev_phys = block->prev_physical;
         if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
@@ -501,7 +505,6 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
         }
     }
 
-    // Mark next block's PREV_FREE flag
     next_phys = (tlsf_block_t*)((uint8_t*)block + (block->size_and_flags & BLOCK_SIZE_MASK));
     next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
 
@@ -533,7 +536,6 @@ memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags) {
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
 
-    // Free all slab pages
     for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
         mp_slab_page_t* curr = pool->slab_classes[i].partial_pages;
         while (curr) {
@@ -549,7 +551,6 @@ void mp_destroy(memory_pool_t* pool) {
         }
     }
 
-    // Free all TLSF pools
     tlsf_pool_t* tcurr = pool->tlsf_root;
     while (tcurr) {
         tlsf_pool_t* tnext = tcurr->next;
@@ -562,6 +563,76 @@ void mp_destroy(memory_pool_t* pool) {
     }
 
     free(pool);
+}
+
+void mp_reset(memory_pool_t* pool) {
+    if (!pool) return;
+    pool_lock(pool);
+
+    // Reset active stats
+    pool->stats.active_bytes = 0;
+    pool->stats.active_allocations = 0;
+    pool->stats.slab_allocated_bytes = 0;
+    pool->stats.tlsf_allocated_bytes = 0;
+    pool->stats.os_allocated_bytes = 0;
+    pool->active_head = NULL;
+
+    // Reset Slab classes
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* page = sc->partial_pages;
+
+        // Move all full pages back to partial pages list and reset freelists
+        while (sc->full_pages) {
+            mp_slab_page_t* p = sc->full_pages;
+            sc->full_pages = p->next;
+            p->next = sc->partial_pages;
+            if (sc->partial_pages) sc->partial_pages->prev = p;
+            p->prev = NULL;
+            sc->partial_pages = p;
+        }
+
+        page = sc->partial_pages;
+        size_t slot_payload_size = kSlabSizes[c];
+        size_t header_overhead = sizeof(mp_block_header_t);
+        size_t total_slot_size = header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+        total_slot_size = (total_slot_size + 7) & ~7;
+
+        while (page) {
+            page->free_count = page->total_slots;
+            uint8_t* ptr = (uint8_t*)page->page_raw_mem + sizeof(mp_slab_page_t);
+            page->free_list = (mp_slab_slot_t*)ptr;
+
+            for (uint16_t i = 0; i < page->total_slots; i++) {
+                mp_slab_slot_t* slot = (mp_slab_slot_t*)(ptr + i * total_slot_size);
+                slot->next = (i < page->total_slots - 1) ? (mp_slab_slot_t*)(ptr + (i + 1) * total_slot_size) : NULL;
+            }
+            page = page->next;
+        }
+    }
+
+    // Reset TLSF pools
+    tlsf_pool_t* tcurr = pool->tlsf_root;
+    while (tcurr) {
+        memset(tcurr->sl_bitmap, 0, sizeof(tcurr->sl_bitmap));
+        tcurr->fl_bitmap = 0;
+        memset(tcurr->blocks, 0, sizeof(tcurr->blocks));
+
+        tlsf_block_t* block = (tlsf_block_t*)tcurr->raw_area;
+        block->size_and_flags = (tcurr->raw_size - sizeof(tlsf_block_t)) | BLOCK_STATE_FREE;
+        block->prev_physical = NULL;
+        block->next_free = NULL;
+        block->prev_free = NULL;
+
+        tlsf_block_t* sentinel = (tlsf_block_t*)((uint8_t*)block + (block->size_and_flags & BLOCK_SIZE_MASK));
+        sentinel->size_and_flags = 0;
+        sentinel->prev_physical = block;
+
+        tlsf_insert_free_block(tcurr, block);
+        tcurr = tcurr->next;
+    }
+
+    pool_unlock(pool);
 }
 
 static void active_list_add(memory_pool_t* pool, mp_block_header_t* header) {
@@ -582,11 +653,47 @@ static void active_list_remove(memory_pool_t* pool, mp_block_header_t* header) {
 void* mp_alloc(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
+    // Fast-path Thread-Local Cache check
+    if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && size <= SLAB_MAX_SIZE) {
+        uint8_t class_idx = 0;
+        while (class_idx < SLAB_CLASS_COUNT && kSlabSizes[class_idx] < size) {
+            class_idx++;
+        }
+        if (tls_cache.counts[class_idx] > 0) {
+            mp_slab_slot_t* slot = tls_cache.slots[class_idx];
+            tls_cache.slots[class_idx] = slot->next;
+            tls_cache.counts[class_idx]--;
+
+            mp_block_header_t* header = (mp_block_header_t*)slot;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_SLAB;
+            header->slab_class = class_idx;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = kSlabSizes[class_idx];
+            header->raw_base = slot;
+
+            void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
+            if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(payload, 0, size);
+
+            pool_lock(pool);
+            active_list_add(pool, header);
+            pool->stats.active_bytes += size;
+            if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                pool->stats.peak_bytes = pool->stats.active_bytes;
+            }
+            pool->stats.active_allocations++;
+            pool->stats.total_alloc_ops++;
+            pool_unlock(pool);
+
+            return payload;
+        }
+    }
+
     pool_lock(pool);
     void* ptr = NULL;
 
     if (size <= SLAB_MAX_SIZE) {
-        // Find suitable slab size class index
         uint8_t class_idx = 0;
         while (class_idx < SLAB_CLASS_COUNT && kSlabSizes[class_idx] < size) {
             class_idx++;
@@ -595,7 +702,6 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
     } else if (size <= TLSF_MAX_SIZE) {
         ptr = tlsf_alloc(pool, size);
     } else {
-        // Direct OS Fallback for huge allocations
         size_t total_sz = size + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
         void* raw_mem = malloc(total_sz);
         if (raw_mem) {
@@ -650,18 +756,34 @@ void* mp_calloc(memory_pool_t* pool, size_t num, size_t size) {
 void mp_free(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr) return;
 
-    pool_lock(pool);
-
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
 
-    // Validate magic signature
     if (header->magic != MP_MAGIC_HEAD) {
         fprintf(stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
-        pool_unlock(pool);
         return;
     }
 
-    // Verify debug canary if enabled
+    // Fast-path TLS Cache check for freeing small Slab items
+    if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && header->alloc_type == ALLOC_TYPE_SLAB) {
+        uint8_t class_idx = header->slab_class;
+        if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
+            pool_lock(pool);
+            active_list_remove(pool, header);
+            pool->stats.active_bytes -= header->requested_size;
+            pool->stats.active_allocations--;
+            pool->stats.total_free_ops++;
+            pool_unlock(pool);
+
+            mp_slab_slot_t* slot = (mp_slab_slot_t*)header->raw_base;
+            slot->next = tls_cache.slots[class_idx];
+            tls_cache.slots[class_idx] = slot;
+            tls_cache.counts[class_idx]++;
+            return;
+        }
+    }
+
+    pool_lock(pool);
+
     if (pool->flags & MP_FLAG_DEBUG_CANARY) {
         uint8_t* canary = (uint8_t*)ptr + header->requested_size;
         if (*canary != MP_CANARY_BYTE) {
@@ -698,12 +820,10 @@ void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size) {
     if (header->magic != MP_MAGIC_HEAD) return NULL;
 
     if (new_size <= header->usable_size) {
-        // Can fit in existing slot
         header->requested_size = new_size;
         return ptr;
     }
 
-    // Allocate new block and copy contents
     void* new_ptr = mp_alloc(pool, new_size);
     if (new_ptr) {
         memcpy(new_ptr, ptr, header->requested_size);
@@ -745,25 +865,54 @@ void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     if (!pool || !stats) return;
     pool_lock(pool);
     *stats = pool->stats;
+    size_t total_sys = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
+    stats->fragmentation_ratio = 1.0 - ((double)pool->stats.active_bytes / (double)total_sys);
     pool_unlock(pool);
 }
 
 void mp_dump_info(memory_pool_t* pool) {
     if (!pool) return;
-    pool_lock(pool);
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
 
     printf("\n================ MEMORY POOL DIAGNOSTICS DUMP ================\n");
-    printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n", pool->stats.total_pool_size, pool->stats.total_pool_size / 1024.0);
-    printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n", pool->stats.active_allocations, pool->stats.active_bytes, pool->stats.active_bytes / 1024.0);
-    printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", pool->stats.peak_bytes, pool->stats.peak_bytes / 1024.0);
-    printf("  Cumulative Stats            : %zu Allocations, %zu Frees\n", pool->stats.total_alloc_ops, pool->stats.total_free_ops);
+    printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n", stats.total_pool_size, stats.total_pool_size / 1024.0);
+    printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n", stats.active_allocations, stats.active_bytes, stats.active_bytes / 1024.0);
+    printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", stats.peak_bytes, stats.peak_bytes / 1024.0);
+    printf("  Estimated Fragmentation     : %.2f%%\n", stats.fragmentation_ratio * 100.0);
+    printf("  Cumulative Stats            : %zu Allocations, %zu Frees\n", stats.total_alloc_ops, stats.total_free_ops);
     printf("  Allocation Tier Breakdown   :\n");
-    printf("    - Slab Pool (Small <=512B): %zu bytes\n", pool->stats.slab_allocated_bytes);
-    printf("    - TLSF Pool (Med <=4MB)   : %zu bytes\n", pool->stats.tlsf_allocated_bytes);
-    printf("    - Direct OS (Large >4MB)  : %zu bytes\n", pool->stats.os_allocated_bytes);
+    printf("    - Slab Pool (Small <=512B): %zu bytes\n", stats.slab_allocated_bytes);
+    printf("    - TLSF Pool (Med <=4MB)   : %zu bytes\n", stats.tlsf_allocated_bytes);
+    printf("    - Direct OS (Large >4MB)  : %zu bytes\n", stats.os_allocated_bytes);
     printf("==============================================================\n\n");
+}
 
-    pool_unlock(pool);
+size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
+    if (!pool || !buf || max_len == 0) return 0;
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+
+    int len = snprintf(buf, max_len,
+        "{\n"
+        "  \"total_pool_size\": %zu,\n"
+        "  \"active_bytes\": %zu,\n"
+        "  \"peak_bytes\": %zu,\n"
+        "  \"active_allocations\": %zu,\n"
+        "  \"total_alloc_ops\": %zu,\n"
+        "  \"total_free_ops\": %zu,\n"
+        "  \"slab_allocated_bytes\": %zu,\n"
+        "  \"tlsf_allocated_bytes\": %zu,\n"
+        "  \"os_allocated_bytes\": %zu,\n"
+        "  \"fragmentation_ratio\": %.4f\n"
+        "}",
+        stats.total_pool_size, stats.active_bytes, stats.peak_bytes,
+        stats.active_allocations, stats.total_alloc_ops, stats.total_free_ops,
+        stats.slab_allocated_bytes, stats.tlsf_allocated_bytes, stats.os_allocated_bytes,
+        stats.fragmentation_ratio
+    );
+
+    return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
 bool mp_check_leaks(memory_pool_t* pool) {
