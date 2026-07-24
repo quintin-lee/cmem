@@ -18,3 +18,9 @@ target_link_libraries(cpp_tests PRIVATE memory_pool pthread)
 
 add_executable(benchmark benchmarks/bench_main.c)
 target_link_libraries(benchmark PRIVATE memory_pool pthread)
+
+add_executable(example_basic examples/example_basic.c)
+target_link_libraries(example_basic PRIVATE memory_pool pthread)
+
+add_executable(example_embedded examples/example_embedded.c)
+target_link_libraries(example_embedded PRIVATE memory_pool pthread)

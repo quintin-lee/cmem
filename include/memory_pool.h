@@ -7,6 +7,9 @@
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - Arena Fast Reset (O(1) batch deallocation for request-scoped lifetime)
+ *  - Static Buffer Mode (Zero OS malloc dependency for embedded / bare-metal)
+ *  - Custom Backing Allocator injection (Shared Memory, HugePages)
+ *  - Real-time Profiling & Event Callback Hooks
  *  - Memory diagnostic tools: Leak detection, JSON statistics, canary redzone
  */
 
@@ -29,8 +32,36 @@ typedef enum {
     MP_FLAG_THREAD_SAFE        = (1 << 0), /**< Enable thread safety via mutex locks */
     MP_FLAG_DEBUG_CANARY       = (1 << 1), /**< Add magic canary bytes for buffer overflow checks */
     MP_FLAG_ZERO_ON_ALLOC      = (1 << 2), /**< Automatically zero memory upon allocation */
-    MP_FLAG_THREAD_LOCAL_CACHE = (1 << 3)  /**< Enable thread-local cache for lock-free small allocs */
+    MP_FLAG_THREAD_LOCAL_CACHE = (1 << 3), /**< Enable thread-local cache for lock-free small allocs */
+    MP_FLAG_STATIC_BUFFER      = (1 << 4)  /**< Static buffer mode (no OS memory allocation/free) */
 } mp_flags_t;
+
+/**
+ * Profiling & Debug Event Types.
+ */
+typedef enum {
+    MP_EVENT_ALLOC = 1,
+    MP_EVENT_FREE,
+    MP_EVENT_REALLOC,
+    MP_EVENT_CANARY_CORRUPTION,
+    MP_EVENT_RESET
+} mp_event_type_t;
+
+typedef struct memory_pool memory_pool_t;
+
+/**
+ * Event Callback function pointer for telemetry profiling.
+ */
+typedef void (*mp_event_callback_t)(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data);
+
+/**
+ * Custom Backing Allocator function table for system memory injection.
+ */
+typedef struct {
+    void* (*sys_alloc)(size_t size, void* user_data);
+    void  (*sys_free)(void* ptr, size_t size, void* user_data);
+    void* user_data;
+} mp_sys_allocator_t;
 
 /**
  * Statistics snapshot of the memory pool.
@@ -48,15 +79,31 @@ typedef struct {
     double fragmentation_ratio;   /**< Estimated memory fragmentation ratio (0.0 to 1.0) */
 } mp_stats_t;
 
-typedef struct memory_pool memory_pool_t;
-
 /**
- * @brief Creates a new memory pool instance.
+ * @brief Creates a new memory pool instance using default OS memory.
  * @param initial_capacity Initial memory pool capacity in bytes (0 for default 4MB).
  * @param flags Bitwise OR of mp_flags_t.
  * @return Pointer to created memory_pool_t, or NULL on failure.
  */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
+
+/**
+ * @brief Creates a memory pool instance using a custom backing allocator (e.g. Shared Memory / HugePages).
+ * @param initial_capacity Initial capacity in bytes.
+ * @param flags Bitwise OR of mp_flags_t.
+ * @param sys_allocator Custom backing allocator vtable.
+ * @return Pointer to created memory_pool_t, or NULL on failure.
+ */
+memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator);
+
+/**
+ * @brief Creates a memory pool inside a pre-allocated static buffer (Zero OS malloc dependency).
+ * @param buffer Pointer to contiguous static memory buffer.
+ * @param buffer_size Size of the buffer in bytes.
+ * @param flags Bitwise OR of mp_flags_t.
+ * @return Pointer to created memory_pool_t inside the buffer, or NULL on failure.
+ */
+memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_t flags);
 
 /**
  * @brief Destroys the memory pool and frees all associated system resources.
@@ -65,10 +112,18 @@ memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
 void mp_destroy(memory_pool_t* pool);
 
 /**
- * @brief Resets the memory pool, instantly clearing all active allocations while preserving reserved system memory blocks.
+ * @brief Resets the memory pool, instantly clearing all active allocations while preserving reserved memory blocks.
  * @param pool Memory pool pointer.
  */
 void mp_reset(memory_pool_t* pool);
+
+/**
+ * @brief Registers an event callback function for real-time profiling and debugging.
+ * @param pool Memory pool pointer.
+ * @param callback Callback function pointer.
+ * @param user_data User context pointer passed to callback.
+ */
+void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data);
 
 /**
  * @brief Allocates memory block of specified size.

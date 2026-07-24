@@ -12,7 +12,7 @@ BENCH_SRC = benchmarks/bench_main.c
 
 BUILD_DIR = build
 
-all: test test_cpp bench
+all: test test_cpp bench examples
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -29,7 +29,13 @@ bench: $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) $(BENCH_SRC) -o $(BUILD_DIR)/benchmark
 	./$(BUILD_DIR)/benchmark
 
+examples: $(SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic
+	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded
+	./$(BUILD_DIR)/example_basic
+	./$(BUILD_DIR)/example_embedded
+
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all test test_cpp bench clean
+.PHONY: all test test_cpp bench examples clean

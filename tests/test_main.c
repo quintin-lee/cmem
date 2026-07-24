@@ -12,6 +12,14 @@
 
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
+static bool g_event_triggered = false;
+static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data) {
+    (void)pool; (void)ptr; (void)size; (void)user_data;
+    if (event == MP_EVENT_ALLOC) {
+        g_event_triggered = true;
+    }
+}
+
 void test_slab_small_allocs() {
     printf("\n--- Test 1: Slab Allocations (Small Objects <= 512B) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
@@ -44,9 +52,9 @@ void test_tlsf_medium_allocs() {
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p1 = mp_alloc(pool, 1024);     // 1 KB
-    void* p2 = mp_alloc(pool, 64 * 1024); // 64 KB
-    void* p3 = mp_alloc(pool, 512 * 1024);// 512 KB
+    void* p1 = mp_alloc(pool, 1024);
+    void* p2 = mp_alloc(pool, 64 * 1024);
+    void* p3 = mp_alloc(pool, 512 * 1024);
 
     assert(p1 && p2 && p3);
 
@@ -101,14 +109,11 @@ void test_arena_reset_and_json() {
     mp_get_stats(pool, &stats);
     assert(stats.active_allocations == 50);
 
-    // Test JSON export
     char json_buf[512];
     size_t json_len = mp_dump_json_stats(pool, json_buf, sizeof(json_buf));
     assert(json_len > 0);
     assert(strstr(json_buf, "\"active_allocations\": 50") != NULL);
-    printf("Generated JSON Telemetry:\n%s\n", json_buf);
 
-    // Perform Fast Reset
     mp_reset(pool);
     mp_get_stats(pool, &stats);
     assert(stats.active_allocations == 0);
@@ -117,6 +122,30 @@ void test_arena_reset_and_json() {
 
     mp_destroy(pool);
     TEST_PASS("test_arena_reset_and_json");
+}
+
+static uint8_t g_static_buf[256 * 1024];
+
+void test_static_buffer_and_callbacks() {
+    printf("\n--- Test 6: Static Buffer Arena & Event Callbacks ---\n");
+    memory_pool_t* pool = mp_create_from_buffer(g_static_buf, sizeof(g_static_buf), MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    g_event_triggered = false;
+    mp_set_event_callback(pool, test_event_cb, NULL);
+
+    void* p1 = mp_alloc(pool, 500);
+    assert(p1 != NULL);
+    assert(g_event_triggered == true);
+
+    uintptr_t buf_start = (uintptr_t)g_static_buf;
+    uintptr_t buf_end   = buf_start + sizeof(g_static_buf);
+    assert((uintptr_t)p1 >= buf_start && (uintptr_t)p1 < buf_end);
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_static_buffer_and_callbacks");
 }
 
 #define THREAD_COUNT 4
@@ -165,6 +194,7 @@ int main() {
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
     test_arena_reset_and_json();
+    test_static_buffer_and_callbacks();
     test_multithread_safety();
     printf("\nALL UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
