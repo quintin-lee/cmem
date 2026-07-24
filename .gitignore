@@ -1,3 +1,22 @@
+# Build directories and binaries
 build/
-.codegraph/
+bin/
+obj/
+
+# Static libraries and object files
 *.o
+*.a
+*.so
+*.dylib
+
+# Memory pool report & profiler output artifacts
+leak_report.txt
+test_report.html
+memory_profile.html
+*.html
+*.log
+
+# CodeGraph and IDE metadata
+.codegraph/
+.vscode/
+.idea/
