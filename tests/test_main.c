@@ -100,6 +100,23 @@ void test_cache_aligned_alloc() {
     TEST_PASS("test_cache_aligned_alloc");
 }
 
+void test_guard_pages_protection() {
+    printf("\n--- Test 13: Page-Level Guard Pages Protection via PROT_NONE ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_GUARD_PAGES);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 8192);
+    assert(p1 != NULL);
+
+    memset(p1, 0xAB, 8192);
+    printf("  Guard Pages memory payload read/write verified successfully!\n");
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_guard_pages_protection");
+}
+
 void test_allocation_histogram() {
     printf("\n--- Test 12: Allocation Size Histogram Diagnostics ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -340,6 +357,7 @@ int main() {
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
     test_cache_aligned_alloc();
+    test_guard_pages_protection();
     test_allocation_histogram();
     test_batch_alloc_and_compact();
     test_memory_budget_and_oom();

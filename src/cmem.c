@@ -13,6 +13,8 @@
 #include <assert.h>
 #include <stdint.h>
 #include <execinfo.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #define MP_MAGIC_HEAD 0x4D504F4F  // "MPOO" in ASCII
 #define MP_CANARY_BYTE 0xDE
@@ -171,6 +173,20 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
     if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc) {
         return pool->sys_allocator.sys_alloc(size, pool->sys_allocator.user_data);
     }
+    if (pool->flags & MP_FLAG_GUARD_PAGES) {
+        long pg = sysconf(_SC_PAGESIZE);
+        size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
+        size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
+        size_t total_map = page_sz + aligned_payload + page_sz;
+        void* raw_map = mmap(NULL, total_map, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (raw_map == MAP_FAILED) return NULL;
+
+        uint8_t* base = (uint8_t*)raw_map;
+        mprotect(base, page_sz, PROT_NONE);
+        mprotect(base + page_sz + aligned_payload, page_sz, PROT_NONE);
+
+        return base + page_sz;
+    }
     if (alignment > sizeof(void*)) {
         void* ptr = NULL;
         if (posix_memalign(&ptr, alignment, size) != 0) return NULL;
@@ -183,6 +199,15 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size) {
     if (pool->flags & MP_FLAG_STATIC_BUFFER) return;
     if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_free) {
         pool->sys_allocator.sys_free(ptr, size, pool->sys_allocator.user_data);
+        return;
+    }
+    if (pool->flags & MP_FLAG_GUARD_PAGES) {
+        long pg = sysconf(_SC_PAGESIZE);
+        size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
+        size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
+        size_t total_map = page_sz + aligned_payload + page_sz;
+        uint8_t* raw_map = (uint8_t*)ptr - page_sz;
+        munmap(raw_map, total_map);
         return;
     }
     free(ptr);
@@ -684,7 +709,7 @@ void mp_destroy(memory_pool_t* pool) {
             pthread_mutex_destroy(&pool->lock);
         }
 
-        sys_mem_free(pool, pool, sizeof(memory_pool_t));
+        free(pool);
     }
 }
 

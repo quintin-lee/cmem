@@ -7,6 +7,7 @@
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - Cache Line 64B Alignment & False Sharing Elimination (MP_FLAG_CACHE_ALIGNED)
+ *  - Page-Level Guard Pages Protection via PROT_NONE (MP_FLAG_GUARD_PAGES)
  *  - Allocation Size Histogram & Distribution Diagnostics (mp_dump_histogram)
  *  - High-Throughput Batch Allocation & Free (mp_alloc_batch / mp_free_batch)
  *  - Memory Compaction & OS Page Trimming (mp_compact)
@@ -44,7 +45,8 @@ typedef enum {
     MP_FLAG_STATIC_BUFFER      = (1 << 4), /**< Static buffer mode (no OS memory allocation/free) */
     MP_FLAG_TRACK_LOCATIONS    = (1 << 5), /**< Record file, line, function & backtrace for allocs */
     MP_FLAG_POISON_ON_FREE     = (1 << 6), /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
-    MP_FLAG_CACHE_ALIGNED      = (1 << 7)  /**< Force 64-byte Cache Line alignment to prevent False Sharing */
+    MP_FLAG_CACHE_ALIGNED      = (1 << 7), /**< Force 64-byte Cache Line alignment to prevent False Sharing */
+    MP_FLAG_GUARD_PAGES        = (1 << 8)  /**< Add PROT_NONE Guard Pages to trap out-of-bounds page faults */
 } mp_flags_t;
 
 /**
@@ -196,7 +198,6 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath);
 
 /**
  * @brief Prints ASCII allocation size distribution histogram chart.
- * @param pool Memory pool pointer.
  */
 void mp_dump_histogram(memory_pool_t* pool);
 
