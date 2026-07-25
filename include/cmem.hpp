@@ -168,6 +168,7 @@ public:
     }
 
     memory_pool_t* get_raw_pool() const { return pool_; }
+    memory_pool_t* get() const { return pool_; }
 
 private:
     memory_pool_t* pool_;

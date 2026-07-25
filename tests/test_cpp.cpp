@@ -47,7 +47,32 @@ void test_cpp_stl_allocator() {
     std::cout << "[PASS] C++ STL Container Allocator Test Passed Cleanly!" << std::endl;
 }
 
+#include "../include/cmem_pmr.hpp"
+
+void test_cpp_pmr_allocator() {
+    std::cout << "\n================ RUNNING C++17 PMR ALLOCATOR TESTS ================\n" << std::endl;
+
+    cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
+
+    {
+        cmem::pmr_resource res(pool.get());
+        std::pmr::vector<std::pmr::string> vec(&res);
+
+        vec.push_back(std::pmr::string("Polymorphic", &res));
+        vec.push_back(std::pmr::string("Memory Resource", &res));
+        vec.push_back(std::pmr::string("C++17 Container Integration", &res));
+
+        assert(vec.size() == 3);
+        assert(vec[0] == "Polymorphic");
+        assert(vec[1] == "Memory Resource");
+    }
+
+    assert(pool.check_leaks() == true);
+    std::cout << "[PASS] C++17 PMR Allocator Test Passed Cleanly!" << std::endl;
+}
+
 int main() {
     test_cpp_stl_allocator();
+    test_cpp_pmr_allocator();
     return 0;
 }
