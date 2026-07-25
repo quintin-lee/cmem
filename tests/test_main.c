@@ -99,6 +99,29 @@ void test_tlsf_inplace_realloc() {
     TEST_PASS("test_tlsf_inplace_realloc");
 }
 
+void test_reallocarray() {
+    printf("\n--- Test 31: Overflow-Safe mp_reallocarray ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    int* arr = (int*)mp_alloc(pool, 10 * sizeof(int));
+    assert(arr != NULL);
+
+    arr = (int*)mp_reallocarray(pool, arr, 100, sizeof(int));
+    assert(arr != NULL);
+    assert(mp_alloc_size(pool, arr) == 100 * sizeof(int));
+
+    void* overflow_ptr = mp_reallocarray(pool, arr, SIZE_MAX / 2, 4);
+    assert(overflow_ptr == NULL);
+
+    printf("  mp_reallocarray overflow protection & reallocation verified!\n");
+
+    mp_free(pool, arr);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_reallocarray");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -777,6 +800,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_introspection_apis();
     test_tlsf_inplace_realloc();
+    test_reallocarray();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();

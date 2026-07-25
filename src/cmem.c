@@ -1632,6 +1632,20 @@ void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size) {
     return new_ptr;
 }
 
+void* mp_reallocarray_loc(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size, const char* file, int line, const char* func) {
+    if (nmemb != 0 && size > SIZE_MAX / nmemb) {
+        return NULL;
+    }
+    return mp_realloc_loc(pool, ptr, nmemb * size, file, line, func);
+}
+
+void* mp_reallocarray(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size) {
+    if (nmemb != 0 && size > SIZE_MAX / nmemb) {
+        return NULL;
+    }
+    return mp_realloc(pool, ptr, nmemb * size);
+}
+
 void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     if ((alignment & (alignment - 1)) != 0 || alignment < sizeof(void*)) {
         return NULL;

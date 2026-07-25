@@ -284,6 +284,8 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
 void* mp_alloc(memory_pool_t* pool, size_t size);
 void* mp_calloc(memory_pool_t* pool, size_t num, size_t size);
 void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size);
+void* mp_reallocarray(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size);
+void* mp_reallocarray_loc(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size, const char* file, int line, const char* func);
 void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size);
 void mp_free(memory_pool_t* pool, void* ptr);
 
