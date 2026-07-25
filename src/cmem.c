@@ -178,6 +178,22 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
     if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc) {
         return pool->sys_allocator.sys_alloc(size, pool->sys_allocator.user_data);
     }
+    if (pool->flags & MP_FLAG_HUGE_PAGES) {
+#ifndef MAP_HUGETLB
+#define MAP_HUGETLB 0x40000
+#endif
+        void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+        if (ptr == MAP_FAILED) {
+            ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#ifdef MADV_HUGEPAGE
+            if (ptr != MAP_FAILED) {
+                madvise(ptr, size, MADV_HUGEPAGE);
+            }
+#endif
+        }
+        if (ptr == MAP_FAILED) return NULL;
+        return ptr;
+    }
     if (pool->flags & MP_FLAG_GUARD_PAGES) {
         long pg = sysconf(_SC_PAGESIZE);
         size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
@@ -204,6 +220,10 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size) {
     if (pool->flags & MP_FLAG_STATIC_BUFFER) return;
     if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_free) {
         pool->sys_allocator.sys_free(ptr, size, pool->sys_allocator.user_data);
+        return;
+    }
+    if (pool->flags & MP_FLAG_HUGE_PAGES) {
+        munmap(ptr, size);
         return;
     }
     if (pool->flags & MP_FLAG_GUARD_PAGES) {

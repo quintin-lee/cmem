@@ -5,6 +5,7 @@
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
  *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
+ *  - Linux HugePages (2MB / 1GB) Support for TLB Performance Acceleration (MP_FLAG_HUGE_PAGES)
  *  - Real-Time Allocation QPS & Bandwidth Throughput Meter (alloc_qps, bandwidth_mbps)
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
@@ -49,7 +50,8 @@ typedef enum {
     MP_FLAG_POISON_ON_FREE     = (1 << 6), /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
     MP_FLAG_CACHE_ALIGNED      = (1 << 7), /**< Force 64-byte Cache Line alignment to prevent False Sharing */
     MP_FLAG_GUARD_PAGES        = (1 << 8), /**< Add PROT_NONE Guard Pages to trap out-of-bounds page faults */
-    MP_FLAG_SHARED_MEMORY      = (1 << 9)  /**< POSIX Shared Memory IPC Mode (/dev/shm zero-copy) */
+    MP_FLAG_SHARED_MEMORY      = (1 << 9), /**< POSIX Shared Memory IPC Mode (/dev/shm zero-copy) */
+    MP_FLAG_HUGE_PAGES         = (1 << 10) /**< Use Linux HugePages (2MB/1GB MAP_HUGETLB) for TLB performance */
 } mp_flags_t;
 
 /**

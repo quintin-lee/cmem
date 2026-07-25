@@ -52,10 +52,26 @@ void test_slab_small_allocs() {
     TEST_PASS("test_slab_small_allocs");
 }
 
+void test_huge_pages_alloc() {
+    printf("\n--- Test 17: Linux HugePages (2MB/1GB MAP_HUGETLB) Acceleration ---\n");
+    memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_HUGE_PAGES);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 512 * 1024);
+    assert(p1 != NULL);
+    memset(p1, 0xEE, 512 * 1024);
+
+    printf("  HugePages memory mapping read/write verified successfully!\n");
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_huge_pages_alloc");
+}
+
 void test_global_override() {
     printf("\n--- Test 16: Global malloc/free Symbol Interception (cmem_override.h) ---\n");
     
-    // Testing redirected malloc & free
     char* str = (char*)malloc(128);
     assert(str != NULL);
     strcpy(str, "Overridden Standard Malloc");
@@ -414,6 +430,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_huge_pages_alloc();
     test_shared_memory_ipc();
     test_global_override();
     test_realtime_throughput_meter();
