@@ -288,6 +288,21 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size);
 void mp_free(memory_pool_t* pool, void* ptr);
 
 /**
+ * @brief Returns the usable allocated capacity of a pointer block.
+ */
+size_t mp_usable_size(memory_pool_t* pool, void* ptr);
+
+/**
+ * @brief Returns the requested payload size of an allocated pointer block.
+ */
+size_t mp_alloc_size(memory_pool_t* pool, void* ptr);
+
+/**
+ * @brief Validates if a pointer belongs to an active allocation in the memory pool.
+ */
+bool mp_ptr_valid(memory_pool_t* pool, void* ptr);
+
+/**
  * @brief Batch allocates multiple memory blocks in a single operation.
  */
 size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t count);

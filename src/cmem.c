@@ -1604,6 +1604,53 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     return (void*)aligned_addr;
 }
 
+size_t mp_usable_size(memory_pool_t* pool, void* ptr) {
+    if (!pool || !ptr) return 0;
+    pool_lock(pool);
+    mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD) {
+        pool_unlock(pool);
+        return 0;
+    }
+    size_t sz = header->usable_size;
+    pool_unlock(pool);
+    return sz;
+}
+
+size_t mp_alloc_size(memory_pool_t* pool, void* ptr) {
+    if (!pool || !ptr) return 0;
+    pool_lock(pool);
+    mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD) {
+        pool_unlock(pool);
+        return 0;
+    }
+    size_t sz = header->requested_size;
+    pool_unlock(pool);
+    return sz;
+}
+
+bool mp_ptr_valid(memory_pool_t* pool, void* ptr) {
+    if (!pool || !ptr) return false;
+    pool_lock(pool);
+    mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD) {
+        pool_unlock(pool);
+        return false;
+    }
+    bool found = false;
+    mp_block_header_t* curr = pool->active_head;
+    while (curr) {
+        if (curr == header) {
+            found = true;
+            break;
+        }
+        curr = curr->next;
+    }
+    pool_unlock(pool);
+    return found;
+}
+
 /* --- Heap Integrity, Leak Analysis & HTML Dashboard --- */
 
 bool mp_audit_heap(memory_pool_t* pool) {

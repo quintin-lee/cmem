@@ -48,6 +48,34 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_introspection_apis() {
+    printf("\n--- Test 29: Memory Introspection APIs (mp_usable_size, mp_alloc_size, mp_ptr_valid) ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 120);
+    assert(p1 != NULL);
+
+    assert(mp_ptr_valid(pool, p1) == true);
+    assert(mp_alloc_size(pool, p1) == 120);
+    assert(mp_usable_size(pool, p1) >= 120);
+
+    int fake_var = 42;
+    assert(mp_ptr_valid(pool, &fake_var) == false);
+    assert(mp_alloc_size(pool, &fake_var) == 0);
+    assert(mp_usable_size(pool, &fake_var) == 0);
+
+    printf("  Memory introspection query (usable_size=%zu, alloc_size=%zu, valid=true) verified!\n",
+           mp_usable_size(pool, p1), mp_alloc_size(pool, p1));
+
+    mp_free(pool, p1);
+    assert(mp_ptr_valid(pool, p1) == false);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_introspection_apis");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -724,6 +752,7 @@ void test_multithread_safety() {
 
 int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
+    test_introspection_apis();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();

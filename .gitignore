@@ -1,4 +1,5 @@
 # Build directories and binaries
+build*/
 build/
 bin/
 obj/
