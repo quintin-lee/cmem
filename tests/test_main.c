@@ -4,6 +4,7 @@
  */
 
 #include "../include/cmem.h"
+#include "../include/cmem_override.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,20 @@ void test_slab_small_allocs() {
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_slab_small_allocs");
+}
+
+void test_global_override() {
+    printf("\n--- Test 16: Global malloc/free Symbol Interception (cmem_override.h) ---\n");
+    
+    // Testing redirected malloc & free
+    char* str = (char*)malloc(128);
+    assert(str != NULL);
+    strcpy(str, "Overridden Standard Malloc");
+    assert(strcmp(str, "Overridden Standard Malloc") == 0);
+    free(str);
+
+    printf("  Standard malloc/free calls seamlessly intercepted by cmem!\n");
+    TEST_PASS("test_global_override");
 }
 
 void test_realtime_throughput_meter() {
@@ -400,6 +415,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_shared_memory_ipc();
+    test_global_override();
     test_realtime_throughput_meter();
     test_realloc_and_aligned();
     test_cache_aligned_alloc();

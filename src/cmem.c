@@ -619,7 +619,7 @@ memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_
 
     if (shm_ptr == MAP_FAILED) return NULL;
 
-    memory_pool_t* pool = mp_create_from_buffer(shm_ptr, capacity, flags | MP_FLAG_SHARED_MEMORY);
+    memory_pool_t* pool = mp_create_from_buffer(shm_ptr, capacity, (mp_flags_t)(flags | MP_FLAG_SHARED_MEMORY));
     if (pool) {
         snprintf(pool->arena_name, sizeof(pool->arena_name), "SharedIPC[%s]", shm_name);
         if (flags & MP_FLAG_THREAD_SAFE) {
