@@ -44,6 +44,34 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_diff_snapshots() {
+    printf("\n--- Test 25: Binary Snapshot Incremental Diff Leak Detector ---\n");
+    memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
+    assert(pool != NULL);
+
+    void* base_ptr = mp_alloc_loc(pool, 128, __FILE__, __LINE__, __func__);
+    assert(base_ptr != NULL);
+    assert(mp_export_binary_snapshot(pool, "snap_a.cmem_dump") == true);
+
+    void* incr_ptr = mp_alloc_loc(pool, 512, __FILE__, __LINE__, __func__);
+    assert(incr_ptr != NULL);
+    assert(mp_export_binary_snapshot(pool, "snap_b.cmem_dump") == true);
+
+    char diff_report[4096];
+    assert(mp_diff_snapshots("snap_a.cmem_dump", "snap_b.cmem_dump", diff_report, sizeof(diff_report)) == true);
+    assert(strstr(diff_report, "Net Incremental Leaked Allocations : 1 blocks") != NULL);
+    printf("  Incremental Snapshot Diff Leak Analysis generated successfully!\n");
+
+    mp_free(pool, base_ptr);
+    mp_free(pool, incr_ptr);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    remove("snap_a.cmem_dump");
+    remove("snap_b.cmem_dump");
+    TEST_PASS("test_diff_snapshots");
+}
+
 void test_watermark_callback() {
     printf("\n--- Test 24: High/Low Watermark Threshold Alert Callbacks ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -610,6 +638,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_diff_snapshots();
     test_watermark_callback();
     test_purge_lazy();
     test_prometheus_metrics();

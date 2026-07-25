@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - Incremental Memory Leak Diff Analysis Tool (mp_diff_snapshots)
  *  - High/Low Watermark Threshold Alert Callbacks (mp_set_watermark_callback)
  *  - Linux madvise MADV_DONTNEED / MADV_FREE Lazy RSS Physical Memory Purging (mp_purge_lazy)
  *  - Prometheus / OpenTelemetry Standard Metrics Exporter (mp_export_prometheus_metrics)
@@ -296,6 +297,11 @@ bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath);
  * @brief Parses a binary post-mortem memory snapshot file into readable text report.
  */
 bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max_len);
+
+/**
+ * @brief Compares two binary snapshot files (A vs B) and generates an incremental leak diff report.
+ */
+bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path, char* out_report, size_t max_len);
 
 /**
  * @brief Prints ASCII allocation size distribution histogram chart.

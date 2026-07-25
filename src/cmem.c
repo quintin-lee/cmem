@@ -1803,6 +1803,90 @@ bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max
     return true;
 }
 
+bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path, char* out_report, size_t max_len) {
+    if (!snapshot_a_path || !snapshot_b_path || !out_report || max_len == 0) return false;
+
+    FILE* fa = fopen(snapshot_a_path, "rb");
+    FILE* fb = fopen(snapshot_b_path, "rb");
+    if (!fa || !fb) {
+        if (fa) fclose(fa);
+        if (fb) fclose(fb);
+        return false;
+    }
+
+    cmem_snapshot_header_t hdra, hdrb;
+    if (fread(&hdra, sizeof(hdra), 1, fa) != 1 || hdra.magic != 0x434D454D ||
+        fread(&hdrb, sizeof(hdrb), 1, fb) != 1 || hdrb.magic != 0x434D454D) {
+        fclose(fa);
+        fclose(fb);
+        return false;
+    }
+
+    size_t count_a = (size_t)hdra.active_allocations;
+    cmem_snapshot_record_t* recs_a = NULL;
+    if (count_a > 0) {
+        recs_a = (cmem_snapshot_record_t*)calloc(count_a, sizeof(cmem_snapshot_record_t));
+        if (recs_a) {
+            fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa);
+        }
+    }
+    fclose(fa);
+
+    size_t offset = 0;
+    size_t diff_count = 0;
+    size_t diff_bytes = 0;
+
+    offset += snprintf(out_report + offset, max_len - offset,
+        "=================== CMEM INCREMENTAL SNAPSHOT DIFF REPORT ===================\n"
+        "  Baseline Snapshot A : %s (%u blocks)\n"
+        "  Target Snapshot B   : %s (%u blocks)\n"
+        "=============================================================================\n",
+        snapshot_a_path, (unsigned)hdra.active_allocations,
+        snapshot_b_path, (unsigned)hdrb.active_allocations
+    );
+
+    cmem_snapshot_record_t recb;
+    while (fread(&recb, sizeof(recb), 1, fb) == 1) {
+        bool found_in_a = false;
+        for (size_t i = 0; i < count_a; i++) {
+            if (recs_a && recs_a[i].address == recb.address && recs_a[i].requested_size == recb.requested_size) {
+                found_in_a = true;
+                break;
+            }
+        }
+        if (!found_in_a) {
+            diff_count++;
+            diff_bytes += (size_t)recb.requested_size;
+            if (offset < max_len) {
+                const char* tier_str = (recb.alloc_type == ALLOC_TYPE_SLAB) ? "SLAB" :
+                                       ((recb.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
+                offset += snprintf(out_report + offset, max_len - offset,
+                    "[Incremental Leak #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64 " B | Tier: %s | Location: %s:%u (%s)\n",
+                    diff_count, recb.address, recb.requested_size, tier_str,
+                    recb.alloc_file[0] ? recb.alloc_file : "unknown",
+                    recb.alloc_line,
+                    recb.alloc_func[0] ? recb.alloc_func : "unknown"
+                );
+            }
+        }
+    }
+
+    fclose(fb);
+    if (recs_a) free(recs_a);
+
+    if (offset < max_len) {
+        offset += snprintf(out_report + offset, max_len - offset,
+            "-----------------------------------------------------------------------------\n"
+            "  Net Incremental Leaked Allocations : %zu blocks\n"
+            "  Net Incremental Leaked Bytes       : %zu bytes\n"
+            "=============================================================================\n",
+            diff_count, diff_bytes
+        );
+    }
+
+    return true;
+}
+
 void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     if (!pool || !stats) return;
     pool_lock(pool);
