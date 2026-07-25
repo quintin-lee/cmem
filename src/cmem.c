@@ -73,7 +73,8 @@ static const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512
 typedef enum {
     ALLOC_TYPE_SLAB = 1,
     ALLOC_TYPE_TLSF = 2,
-    ALLOC_TYPE_OS   = 3
+    ALLOC_TYPE_OS   = 3,
+    ALLOC_TYPE_EMERGENCY = 4
 } mp_alloc_type_t;
 
 /* Header prepended to every user payload */
@@ -1262,15 +1263,39 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
 
     pool_lock(pool);
     if (pool->stats.max_memory_limit > 0 && pool->stats.active_bytes + size > pool->stats.max_memory_limit) {
-        if (pool->emergency_buf && (pool->emergency_used + size) <= pool->emergency_size) {
+        size_t emerg_total = sizeof(mp_block_header_t) + size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+        if (pool->emergency_buf && (pool->emergency_used + emerg_total) <= pool->emergency_size) {
             if (!pool->in_emergency_state) {
                 pool->in_emergency_state = true;
                 fprintf(stderr, "[CMEM CRITICAL] System OOM limit reached! Activating emergency fallback memory reserve buffer (%zu bytes)\n", pool->emergency_size);
             }
-            void* emergency_ptr = (uint8_t*)pool->emergency_buf + pool->emergency_used;
-            pool->emergency_used += size;
+            uint8_t* raw = (uint8_t*)pool->emergency_buf + pool->emergency_used;
+            pool->emergency_used += emerg_total;
+
+            mp_block_header_t* header = (mp_block_header_t*)raw;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_EMERGENCY;
+            header->slab_class = 0;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = size;
+            header->raw_base = raw;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
+
+            void* emergency_ptr = (void*)(raw + sizeof(mp_block_header_t));
+            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                uint8_t* canary = (uint8_t*)emergency_ptr + size;
+                *canary = MP_CANARY_BYTE;
+            }
+            active_list_add(pool, header);
+            pool->stats.active_bytes += size;
+            pool->stats.active_allocations++;
+            pool->stats.total_alloc_ops++;
             pool_unlock(pool);
-            trigger_event(pool, MP_EVENT_OOM, NULL, size);
+            trigger_event(pool, MP_EVENT_OOM, emergency_ptr, size);
             return emergency_ptr;
         }
         trigger_event(pool, MP_EVENT_OOM, NULL, size);
@@ -1303,6 +1328,10 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
             header->backtrace_depth = 0;
 
             void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
+            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                uint8_t* canary = (uint8_t*)payload + size;
+                *canary = MP_CANARY_BYTE;
+            }
             if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(payload, 0, size);
 
             pool_lock(pool);
@@ -1504,6 +1533,8 @@ void mp_free(memory_pool_t* pool, void* ptr) {
         pool->stats.os_allocated_bytes -= header->requested_size;
         pool->stats.total_pool_size -= (header->requested_size + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0));
         sys_mem_free(pool, header->raw_base, header->requested_size);
+    } else if (header->alloc_type == ALLOC_TYPE_EMERGENCY) {
+        // Allocated inside pool->emergency_buf; reclaimed automatically on mp_destroy
     }
 
     pool_unlock(pool);

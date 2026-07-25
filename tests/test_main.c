@@ -64,6 +64,9 @@ void test_emergency_reserve() {
     printf("  Emergency fallback memory cushion activated & payload verified!\n");
 
     mp_free(pool, p1);
+    mp_free(pool, p_emerg);
+
+    assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_emergency_reserve");
 }
