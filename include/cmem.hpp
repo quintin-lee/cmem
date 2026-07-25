@@ -11,6 +11,7 @@
 #include <utility>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cmem {
 
@@ -79,8 +80,20 @@ public:
         mp_free(pool_, ptr);
     }
 
+    size_t alloc_batch(size_t size, void** out_ptrs, size_t count) {
+        return mp_alloc_batch(pool_, size, out_ptrs, count);
+    }
+
+    void free_batch(void** ptrs, size_t count) {
+        mp_free_batch(pool_, ptrs, count);
+    }
+
     void reset() {
         mp_reset(pool_);
+    }
+
+    size_t compact() {
+        return mp_compact(pool_);
     }
 
     bool audit_heap() const {

@@ -6,6 +6,8 @@
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
+ *  - High-Throughput Batch Allocation & Free (mp_alloc_batch / mp_free_batch)
+ *  - Memory Compaction & OS Page Trimming (mp_compact)
  *  - Arena Fast Reset (O(1) batch deallocation for request-scoped lifetime)
  *  - Hierarchical Child Arenas (Parent-Child nested memory contexts)
  *  - Static Buffer Mode (Zero OS malloc dependency for embedded / bare-metal)
@@ -48,7 +50,8 @@ typedef enum {
     MP_EVENT_REALLOC,
     MP_EVENT_CANARY_CORRUPTION,
     MP_EVENT_DOUBLE_FREE,
-    MP_EVENT_RESET
+    MP_EVENT_RESET,
+    MP_EVENT_COMPACT
 } mp_event_type_t;
 
 typedef struct memory_pool memory_pool_t;
@@ -114,6 +117,13 @@ void mp_destroy(memory_pool_t* pool);
 void mp_reset(memory_pool_t* pool);
 
 /**
+ * @brief Compacts memory pool by releasing empty, unused system memory pages back to OS.
+ * @param pool Memory pool pointer.
+ * @return Total number of bytes released back to system OS.
+ */
+size_t mp_compact(memory_pool_t* pool);
+
+/**
  * @brief Registers an event callback function for real-time profiling and debugging.
  */
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data);
@@ -141,6 +151,24 @@ void* mp_calloc(memory_pool_t* pool, size_t num, size_t size);
 void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size);
 void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size);
 void mp_free(memory_pool_t* pool, void* ptr);
+
+/**
+ * @brief Batch allocates multiple memory blocks in a single operation.
+ * @param pool Memory pool pointer.
+ * @param size Requested payload size per block in bytes.
+ * @param out_ptrs Output array of void pointers (must be allocated by caller for at least count elements).
+ * @param count Number of blocks to allocate.
+ * @return Number of successfully allocated blocks.
+ */
+size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t count);
+
+/**
+ * @brief Batch frees multiple memory blocks in a single operation.
+ * @param pool Memory pool pointer.
+ * @param ptrs Array of memory block pointers to free.
+ * @param count Number of blocks to free.
+ */
+void mp_free_batch(memory_pool_t* pool, void** ptrs, size_t count);
 
 /**
  * @brief Audits heap integrity by checking header magics and canary redzones of all active allocations.

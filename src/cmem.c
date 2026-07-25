@@ -344,13 +344,6 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
         page->prev = NULL;
         if (sc->partial_pages) sc->partial_pages->prev = page;
         sc->partial_pages = page;
-    } else if (page->free_count == page->total_slots && sc->partial_pages != page) {
-        if (page->prev) page->prev->next = page->next;
-        else sc->partial_pages = page->next;
-        if (page->next) page->next->prev = page->prev;
-
-        pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
-        sys_mem_free(pool, page->page_raw_mem, SLAB_PAGE_SIZE);
     }
 }
 
@@ -768,6 +761,39 @@ void mp_reset(memory_pool_t* pool) {
     pool_unlock(pool);
 }
 
+size_t mp_compact(memory_pool_t* pool) {
+    if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) return 0;
+    pool_lock(pool);
+
+    size_t freed_bytes = 0;
+
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+
+        while (curr) {
+            mp_slab_page_t* next = curr->next;
+            if (curr->free_count == curr->total_slots) {
+                // Page is completely empty, remove it and return to system OS
+                if (curr->prev) curr->prev->next = curr->next;
+                else sc->partial_pages = curr->next;
+                if (curr->next) curr->next->prev = curr->prev;
+
+                sys_mem_free(pool, curr->page_raw_mem, SLAB_PAGE_SIZE);
+                freed_bytes += SLAB_PAGE_SIZE;
+                if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
+                    pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
+                }
+            }
+            curr = next;
+        }
+    }
+
+    trigger_event(pool, MP_EVENT_COMPACT, NULL, freed_bytes);
+    pool_unlock(pool);
+    return freed_bytes;
+}
+
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data) {
     if (!pool) return;
     pool_lock(pool);
@@ -935,6 +961,27 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
 
     pool_unlock(pool);
     return ptr;
+}
+
+size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t count) {
+    if (!pool || !out_ptrs || count == 0) return 0;
+    size_t allocated = 0;
+    for (size_t i = 0; i < count; i++) {
+        out_ptrs[i] = mp_alloc(pool, size);
+        if (out_ptrs[i]) allocated++;
+        else break;
+    }
+    return allocated;
+}
+
+void mp_free_batch(memory_pool_t* pool, void** ptrs, size_t count) {
+    if (!pool || !ptrs || count == 0) return;
+    for (size_t i = 0; i < count; i++) {
+        if (ptrs[i]) {
+            mp_free(pool, ptrs[i]);
+            ptrs[i] = NULL;
+        }
+    }
 }
 
 void* mp_calloc(memory_pool_t* pool, size_t num, size_t size) {
@@ -1176,7 +1223,7 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath) {
 
     fwrite(buffer, 1, report_len, f);
     fclose(f);
-    printf("[MEMORY_POOL DIAGNOSTICS] Detailed memory leak report exported to: %s\n", filepath);
+    printf("[CMEM DIAGNOSTICS] Detailed memory leak report exported to: %s\n", filepath);
     return true;
 }
 

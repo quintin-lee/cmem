@@ -34,6 +34,13 @@
 
 ---
 
+## ⚡ 高吞吐批量分配与内存紧凑归还 (Batch Alloc & Compaction)
+
+- **批量分配与释放 (`mp_alloc_batch` / `mp_free_batch`)**：单次函数调用即可批量获取/归还 $N$ 个内存块，大幅降低锁竞争与函数调用开销。
+- **内存紧凑与 OS 页归还 (`mp_compact`)**：遍历内存池，主动释放未使用的空闲 Slab 页面归还给操作系统内核，降低长期运行进程的 Resident Set Size (RSS)。
+
+---
+
 ## 🌳 树状分层 Memory Arena 架构 (Hierarchical Arena Trees)
 
 针对复杂系统（如编译器 AST、游戏引擎场景树、Web 服务器 HTTP Request 作用域），支持**父子嵌套内存池（Parent-Child Arenas）**：
@@ -64,17 +71,6 @@
 
 ---
 
-## ✨ 核心高级特性 (Features)
-
-1. **静态内存缓冲区模式 (Static Buffer Arena)**：通过 [mp_create_from_buffer](file:///home/quintin/Data/source/c_cpp/memory_pool/include/cmem.h#L97) 直接在静态字节数组中初始化内存池，零 OS `malloc` 依赖。
-2. **自定义系统分配器注入 (Custom Backing Allocator)**：通过 [mp_create_custom](file:///home/quintin/Data/source/c_cpp/memory_pool/include/cmem.h#L88) 注入共享内存或大页内存。
-3. **实时 Profiler 事件回调 (`mp_set_event_callback`)**：捕获 `ALLOC`、`FREE`、`REALLOC`、`DOUBLE_FREE`、`CANARY_CORRUPTION` 事件。
-4. **线程本地缓存 (Thread-Local Cache)**：开启 `MP_FLAG_THREAD_LOCAL_CACHE` 后小对象分配无锁化。
-5. **Arena 批量快速重置 (`mp_reset`)**：$O(1)$ 批量清空恢复能力。
-6. **C++11 RAII 与 STL Allocator 支持**：提供 [include/cmem.hpp](file:///home/quintin/Data/source/c_cpp/memory_pool/include/cmem.hpp)。
-
----
-
 ## 🛠️ 核心 API 一览 (API Index)
 
 | 函数 / 类 API | 说明 |
@@ -82,13 +78,15 @@
 | `mp_create(initial_cap, flags)` | 创建并初始化 **cmem** 内存池实例 |
 | `mp_create_child(parent, cap, flags, name)` | 创建挂载于父内存池下的子 Arena |
 | `mp_create_from_buffer(buffer, size, flags)` | 在静态内存缓冲区中创建内存池（零 OS `malloc`） |
+| `mp_alloc_batch(pool, size, out_ptrs, count)` | 高吞吐单次批量分配 $N$ 个内存块 |
+| `mp_free_batch(pool, ptrs, count)` | 单次批量释放 $N$ 个内存块 |
+| `mp_compact(pool)` | 紧凑内存池并释放未使用 Slab 空闲页归还系统 OS |
 | `mp_destroy(pool)` | 销毁内存池并递归销毁所有子 Context |
 | `mp_reset(pool)` | $O(1)$ 批量重置内存池及所有子 Context |
 | `mp_export_html_report(pool, filepath)` | 导出交互式可视化 HTML 剖析与泄漏大屏报告 |
 | `mp_dump_tree_info(pool)` | 打印层级化子 Arena 树状分布及内存占用 |
 | `mp_audit_heap(pool)` | 主动遍历堆内存，检测 Redzone Canary 越界踩内存 |
 | `mp_analyze_leaks(pool, buf, max_len)` | 生成结构化内存泄漏分析报告（含文件行号与调用栈） |
-| `mp_export_leak_report(pool, filepath)` | 将内存泄漏分析报告导出至文本文件 |
 | `cmem::MemoryPool` | C++ RAII 内存池包装类 |
 | `cmem::allocator<T>` | 兼容 STL 容器（`std::vector` 等）的 C++ 分配器 |
 

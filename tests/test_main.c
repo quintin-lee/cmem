@@ -97,6 +97,30 @@ void test_realloc_and_aligned() {
     TEST_PASS("test_realloc_and_aligned");
 }
 
+void test_batch_alloc_and_compact() {
+    printf("\n--- Test 9: Batch Allocations & Memory Compaction ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+
+    void* ptrs[50];
+    size_t count = mp_alloc_batch(pool, 64, ptrs, 50);
+    assert(count == 50);
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 50);
+
+    mp_free_batch(pool, ptrs, 50);
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+
+    size_t freed = mp_compact(pool);
+    printf("  Compacted bytes freed back to OS: %zu bytes\n", freed);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_batch_alloc_and_compact");
+}
+
 void test_leak_analysis_and_heap_audit() {
     printf("\n--- Test 7: Leak Analysis Report & Heap Audit ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS | MP_FLAG_POISON_ON_FREE);
@@ -243,6 +267,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
+    test_batch_alloc_and_compact();
     test_leak_analysis_and_heap_audit();
     test_child_arenas_and_html_export();
     test_arena_reset_and_json();
