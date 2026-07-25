@@ -865,7 +865,7 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
     return new_ptr;
 }
 
-void* mp_alloc(memory_pool_t* pool, size_t size) {
+static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
     pool_lock(pool);
@@ -975,6 +975,14 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
 
     pool_unlock(pool);
     return ptr;
+}
+
+void* mp_alloc(memory_pool_t* pool, size_t size) {
+    if (!pool || size == 0) return NULL;
+    if (pool->flags & MP_FLAG_CACHE_ALIGNED) {
+        return mp_aligned_alloc(pool, 64, size);
+    }
+    return mp_alloc_internal(pool, size);
 }
 
 size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t count) {
@@ -1100,7 +1108,7 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     }
 
     size_t total_size = size + alignment + sizeof(mp_block_header_t);
-    void* raw_ptr = mp_alloc(pool, total_size);
+    void* raw_ptr = mp_alloc_internal(pool, total_size);
     if (!raw_ptr) return NULL;
 
     uintptr_t raw_addr = (uintptr_t)raw_ptr;

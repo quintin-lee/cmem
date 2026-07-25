@@ -6,6 +6,7 @@
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
+ *  - Cache Line 64B Alignment & False Sharing Elimination (MP_FLAG_CACHE_ALIGNED)
  *  - High-Throughput Batch Allocation & Free (mp_alloc_batch / mp_free_batch)
  *  - Memory Compaction & OS Page Trimming (mp_compact)
  *  - Memory Budget Limits & OOM Protection (mp_set_memory_limit)
@@ -39,7 +40,8 @@ typedef enum {
     MP_FLAG_THREAD_LOCAL_CACHE = (1 << 3), /**< Enable thread-local cache for lock-free small allocs */
     MP_FLAG_STATIC_BUFFER      = (1 << 4), /**< Static buffer mode (no OS memory allocation/free) */
     MP_FLAG_TRACK_LOCATIONS    = (1 << 5), /**< Record file, line, function & backtrace for allocs */
-    MP_FLAG_POISON_ON_FREE     = (1 << 6)  /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
+    MP_FLAG_POISON_ON_FREE     = (1 << 6), /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
+    MP_FLAG_CACHE_ALIGNED      = (1 << 7)  /**< Force 64-byte Cache Line alignment to prevent False Sharing */
 } mp_flags_t;
 
 /**
@@ -121,8 +123,6 @@ void mp_reset(memory_pool_t* pool);
 
 /**
  * @brief Sets a hard maximum memory budget limit on the pool.
- * @param pool Memory pool pointer.
- * @param max_bytes Maximum bytes allowed (0 for unlimited).
  */
 void mp_set_memory_limit(memory_pool_t* pool, size_t max_bytes);
 

@@ -79,6 +79,27 @@ void test_tlsf_medium_allocs() {
     TEST_PASS("test_tlsf_medium_allocs");
 }
 
+void test_cache_aligned_alloc() {
+    printf("\n--- Test 11: Cache Line 64B Alignment & False Sharing Elimination ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_CACHE_ALIGNED);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 18);
+    void* p2 = mp_alloc(pool, 120);
+    assert(p1 && p2);
+
+    assert(((uintptr_t)p1 % 64) == 0);
+    assert(((uintptr_t)p2 % 64) == 0);
+    printf("  All allocated pointers strictly aligned to 64-byte Cache Line boundary!\n");
+
+    mp_free(pool, p1);
+    mp_free(pool, p2);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_cache_aligned_alloc");
+}
+
 void test_memory_budget_and_oom() {
     printf("\n--- Test 10: Memory Budget Limit & OOM Event Callback ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -86,12 +107,12 @@ void test_memory_budget_and_oom() {
 
     g_oom_triggered = false;
     mp_set_event_callback(pool, test_event_cb, NULL);
-    mp_set_memory_limit(pool, 1024); // Set hard budget limit to 1 KB
+    mp_set_memory_limit(pool, 1024);
 
     void* p1 = mp_alloc(pool, 512);
     assert(p1 != NULL);
 
-    void* p2 = mp_alloc(pool, 1024); // Exceeds 1024 B budget limit!
+    void* p2 = mp_alloc(pool, 1024);
     assert(p2 == NULL);
     assert(g_oom_triggered == true);
     printf("  OOM Protection Event successfully triggered when limit exceeded!\n");
@@ -294,6 +315,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
+    test_cache_aligned_alloc();
     test_batch_alloc_and_compact();
     test_memory_budget_and_oom();
     test_leak_analysis_and_heap_audit();
