@@ -1,0 +1,26 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# 依赖查找 (pthread, rt 通常是系统库，无需 find_dependency)
+# find_dependency(Threads REQUIRED)
+
+# 导入目标
+include("${CMAKE_CURRENT_LIST_DIR}/cmemTargets.cmake")
+
+# 为便利性提供 alias
+if(TARGET cmem::cmem AND NOT TARGET cmem)
+    add_library(cmem INTERFACE IMPORTED)
+    set_target_properties(cmem PROPERTIES
+        INTERFACE_LINK_LIBRARIES cmem::cmem
+    )
+endif()
+
+# 提供版本变量
+set(CMEM_VERSION @CMEM_VERSION@)
+set(CMEM_VERSION_MAJOR @CMEM_VERSION_MAJOR@)
+set(CMEM_VERSION_MINOR @CMEM_VERSION_MINOR@)
+set(CMEM_VERSION_PATCH @CMEM_VERSION_PATCH@)
+
+# 提供包含目录变量
+set(CMEM_INCLUDE_DIRS "@PACKAGE_INCLUDE_INSTALL_DIR@")
