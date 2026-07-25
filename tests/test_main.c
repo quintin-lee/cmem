@@ -173,6 +173,35 @@ void test_mp_trim() {
     TEST_PASS("test_mp_trim");
 }
 
+void test_arena_metadata_apis() {
+    printf("\n--- Test 34: Arena Metadata & Hierarchy Navigation (mp_set_name, mp_get_name, mp_get_parent, mp_get_child_count) ---\n");
+    memory_pool_t* root = mp_create(0, MP_FLAG_DEFAULT);
+    assert(root != NULL);
+
+    mp_set_name(root, "CustomRootArena");
+    assert(strcmp(mp_get_name(root), "CustomRootArena") == 0);
+    assert(mp_get_parent(root) == NULL);
+
+    memory_pool_t* child1 = mp_create_child(root, 0, MP_FLAG_DEFAULT, "SubChild1");
+    memory_pool_t* child2 = mp_create_child(root, 0, MP_FLAG_DEFAULT, "SubChild2");
+    assert(child1 != NULL && child2 != NULL);
+
+    assert(mp_get_parent(child1) == root);
+    assert(mp_get_parent(child2) == root);
+    assert(mp_get_child_count(root) == 2);
+    assert(mp_get_child_count(child1) == 0);
+
+    printf("  Arena hierarchy metadata navigation (Name='%s', ChildCount=%zu) verified!\n",
+           mp_get_name(root), mp_get_child_count(root));
+
+    assert(mp_check_leaks(root) == true);
+    assert(mp_check_leaks(child1) == true);
+    assert(mp_check_leaks(child2) == true);
+
+    mp_destroy(root);
+    TEST_PASS("test_arena_metadata_apis");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -854,6 +883,7 @@ int main() {
     test_reallocarray();
     test_convenience_apis();
     test_mp_trim();
+    test_arena_metadata_apis();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();

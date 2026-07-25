@@ -219,6 +219,26 @@ void mp_destroy_shared(memory_pool_t* pool, const char* shm_name);
 memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags, const char* arena_name);
 
 /**
+ * @brief Sets a human-readable name for the memory pool.
+ */
+void mp_set_name(memory_pool_t* pool, const char* name);
+
+/**
+ * @brief Gets the human-readable name of the memory pool.
+ */
+const char* mp_get_name(memory_pool_t* pool);
+
+/**
+ * @brief Gets the parent pool pointer if this pool is a child arena.
+ */
+memory_pool_t* mp_get_parent(memory_pool_t* pool);
+
+/**
+ * @brief Gets the count of direct child arenas linked to this pool.
+ */
+size_t mp_get_child_count(memory_pool_t* pool);
+
+/**
  * @brief Creates a memory pool instance using a custom backing allocator.
  */
 memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator);

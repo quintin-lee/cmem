@@ -995,6 +995,36 @@ memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_
     return pool;
 }
 
+void mp_set_name(memory_pool_t* pool, const char* name) {
+    if (!pool || !name) return;
+    pool_lock(pool);
+    snprintf(pool->arena_name, sizeof(pool->arena_name), "%s", name);
+    pool_unlock(pool);
+}
+
+const char* mp_get_name(memory_pool_t* pool) {
+    if (!pool) return NULL;
+    return pool->arena_name;
+}
+
+memory_pool_t* mp_get_parent(memory_pool_t* pool) {
+    if (!pool) return NULL;
+    return pool->parent;
+}
+
+size_t mp_get_child_count(memory_pool_t* pool) {
+    if (!pool) return 0;
+    pool_lock(pool);
+    size_t count = 0;
+    memory_pool_t* child = pool->first_child;
+    while (child) {
+        count++;
+        child = child->next_sibling;
+    }
+    pool_unlock(pool);
+    return count;
+}
+
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
 
