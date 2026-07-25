@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - Linux NUMA Node CPU Memory Affinity Binding (mp_set_numa_node)
  *  - Game & Graphics Pipeline Dual Ping-Pong Frame Arena (mp_frame_arena_create / mp_frame_alloc / mp_frame_end)
  *  - Incremental Memory Leak Diff Analysis Tool (mp_diff_snapshots)
  *  - High/Low Watermark Threshold Alert Callbacks (mp_set_watermark_callback)
@@ -122,13 +123,17 @@ typedef struct {
 } mp_stats_t;
 
 /**
+ * @brief Binds memory pool backing allocations to a specific Linux NUMA CPU node.
+ */
+bool mp_set_numa_node(memory_pool_t* pool, int numa_node);
+
+/**
  * @brief Parses CMEM_CONF environment variable string and returns merged configuration flags.
  */
 mp_flags_t mp_parse_env_flags(mp_flags_t default_flags);
 
 /**
  * @brief Creates a game & graphics dual ping-pong frame arena allocator.
- * @param frame_capacity Capacity of each frame buffer in bytes.
  */
 cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity);
 

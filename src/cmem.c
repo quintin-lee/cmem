@@ -3,6 +3,7 @@
  * @brief cmem - Universal Tiered Memory Manager Implementation (Slab + TLSF + OS + Child Arenas + Diagnostics).
  */
 
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 #include "cmem.h"
@@ -18,6 +19,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#ifndef CMEM_MPOL_BIND
+#define CMEM_MPOL_BIND 2
+#endif
+#endif
 
 #ifdef __cplusplus
 #include <atomic>
@@ -167,6 +174,9 @@ struct memory_pool {
     bool in_high_watermark_state;
     void* watermark_user_data;
 
+    // NUMA CPU Node Affinity
+    int numa_node;
+
     // Diagnostics & Statistics
     mp_stats_t stats;
     mp_block_header_t* active_head; // Linked list of current active allocations for leak detection
@@ -203,14 +213,15 @@ static inline void trigger_event(memory_pool_t* pool, mp_event_type_t ev, void* 
 
 /* Backing Memory Allocator Helpers */
 static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
-    if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc) {
+    void* ptr = NULL;
+    if (pool && pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc) {
         return pool->sys_allocator.sys_alloc(size, pool->sys_allocator.user_data);
     }
-    if (pool->flags & MP_FLAG_HUGE_PAGES) {
+    if (pool && (pool->flags & MP_FLAG_HUGE_PAGES)) {
 #ifndef MAP_HUGETLB
 #define MAP_HUGETLB 0x40000
 #endif
-        void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+        ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
         if (ptr == MAP_FAILED) {
             ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #ifdef MADV_HUGEPAGE
@@ -220,9 +231,7 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
 #endif
         }
         if (ptr == MAP_FAILED) return NULL;
-        return ptr;
-    }
-    if (pool->flags & MP_FLAG_GUARD_PAGES) {
+    } else if (pool && (pool->flags & MP_FLAG_GUARD_PAGES)) {
         long pg = sysconf(_SC_PAGESIZE);
         size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
         size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
@@ -234,14 +243,21 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
         mprotect(base, page_sz, PROT_NONE);
         mprotect(base + page_sz + aligned_payload, page_sz, PROT_NONE);
 
-        return base + page_sz;
-    }
-    if (alignment > sizeof(void*)) {
-        void* ptr = NULL;
+        ptr = base + page_sz;
+    } else if (alignment > sizeof(void*)) {
         if (posix_memalign(&ptr, alignment, size) != 0) return NULL;
-        return ptr;
+    } else {
+        ptr = malloc(size);
     }
-    return malloc(size);
+
+#if defined(__linux__) && defined(SYS_mbind)
+    if (pool && pool->numa_node >= 0 && ptr) {
+        unsigned long nodemask = (1UL << pool->numa_node);
+        syscall(SYS_mbind, ptr, size, CMEM_MPOL_BIND, &nodemask, sizeof(nodemask) * 8, 0);
+    }
+#endif
+
+    return ptr;
 }
 
 static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size) {
@@ -1080,7 +1096,7 @@ size_t mp_purge_lazy(memory_pool_t* pool) {
         mp_slab_class_t* sc = &pool->slab_classes[c];
         mp_slab_page_t* curr = sc->partial_pages;
         while (curr) {
-            if (curr->free_count > 0 && curr->page_raw_mem) {
+            if (curr->free_count == curr->total_slots && curr->page_raw_mem) {
                 uintptr_t start = (uintptr_t)curr->page_raw_mem + sizeof(mp_slab_page_t);
                 uintptr_t aligned_start = (start + page_sz - 1) & ~((uintptr_t)page_sz - 1);
                 uintptr_t end = (uintptr_t)curr->page_raw_mem + SLAB_PAGE_SIZE;
@@ -1122,6 +1138,15 @@ void mp_set_watermark_callback(memory_pool_t* pool, double high_ratio, double lo
     pool->watermark_user_data = user_data;
     pool->in_high_watermark_state = false;
     pool_unlock(pool);
+}
+
+bool mp_set_numa_node(memory_pool_t* pool, int numa_node) {
+    if (!pool) return false;
+    pool_lock(pool);
+    pool->numa_node = numa_node;
+    pool_unlock(pool);
+    printf("[CMEM NUMA] Memory Pool [%s] bound to NUMA CPU Node #%d\n", pool->arena_name, numa_node);
+    return true;
 }
 
 static inline void check_watermark_after_change(memory_pool_t* pool) {

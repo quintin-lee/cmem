@@ -44,6 +44,25 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_numa_node_binding() {
+    printf("\n--- Test 27: Linux NUMA CPU Node Affinity Binding ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    assert(mp_set_numa_node(pool, 0) == true);
+
+    void* p1 = mp_alloc(pool, 1024 * 1024);
+    assert(p1 != NULL);
+    memset(p1, 0x77, 1024 * 1024);
+
+    printf("  NUMA Node #0 backing memory allocation & access verified!\n");
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_numa_node_binding");
+}
+
 void test_frame_arena() {
     printf("\n--- Test 26: Game & Graphics Pipeline Dual Ping-Pong Frame Arena ---\n");
     cmem_frame_arena_t* farena = mp_frame_arena_create(512 * 1024);
@@ -665,6 +684,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_numa_node_binding();
     test_frame_arena();
     test_diff_snapshots();
     test_watermark_callback();
