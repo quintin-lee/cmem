@@ -76,6 +76,29 @@ void test_introspection_apis() {
     TEST_PASS("test_introspection_apis");
 }
 
+void test_tlsf_inplace_realloc() {
+    printf("\n--- Test 30: TLSF In-Place Realloc Optimization ---\n");
+    memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 1024);
+    void* p2 = mp_alloc(pool, 2048);
+    assert(p1 != NULL && p2 != NULL);
+
+    mp_free(pool, p2);
+
+    void* p1_expanded = mp_realloc(pool, p1, 2500);
+    assert(p1_expanded == p1);
+    assert(mp_alloc_size(pool, p1_expanded) == 2500);
+
+    printf("  TLSF in-place realloc expanded pointer 0x%zx in-place (0 memcpy overhead)!\n", (uintptr_t)p1);
+
+    mp_free(pool, p1_expanded);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_tlsf_inplace_realloc");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -753,6 +776,7 @@ void test_multithread_safety() {
 int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_introspection_apis();
+    test_tlsf_inplace_realloc();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();

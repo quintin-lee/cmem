@@ -671,6 +671,60 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
     tlsf_insert_free_block(tpool, block);
 }
 
+static bool tlsf_try_inplace_expand(memory_pool_t* pool, mp_block_header_t* header, size_t new_size) {
+    if (header->alloc_type != ALLOC_TYPE_TLSF) return false;
+    tlsf_block_t* block = (tlsf_block_t*)header->raw_base;
+    tlsf_pool_t* tpool = (tlsf_pool_t*)header->subpool;
+    if (!block || !tpool) return false;
+
+    size_t current_block_size = block->size_and_flags & BLOCK_SIZE_MASK;
+    size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + new_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+    total_needed = (total_needed + 7) & ~7;
+    if (total_needed < TLSF_MIN_BLOCK_SIZE) total_needed = TLSF_MIN_BLOCK_SIZE;
+
+    tlsf_block_t* next_phys = (tlsf_block_t*)((uint8_t*)block + current_block_size);
+    if (!(next_phys->size_and_flags & BLOCK_STATE_FREE)) return false;
+
+    size_t next_size = next_phys->size_and_flags & BLOCK_SIZE_MASK;
+    if (current_block_size + next_size < total_needed) return false;
+
+    tlsf_remove_free_block(tpool, next_phys);
+    size_t combined_size = current_block_size + next_size;
+    size_t remaining = combined_size - total_needed;
+
+    if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
+        block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
+
+        tlsf_block_t* split_block = (tlsf_block_t*)((uint8_t*)block + total_needed);
+        split_block->size_and_flags = remaining | BLOCK_STATE_FREE;
+        split_block->prev_physical = block;
+
+        tlsf_block_t* far_phys = (tlsf_block_t*)((uint8_t*)split_block + remaining);
+        far_phys->prev_physical = split_block;
+        far_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
+
+        tlsf_insert_free_block(tpool, split_block);
+    } else {
+        block->size_and_flags = combined_size | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
+        tlsf_block_t* far_phys = (tlsf_block_t*)((uint8_t*)block + combined_size);
+        far_phys->prev_physical = block;
+        far_phys->size_and_flags &= ~BLOCK_STATE_PREV_FREE;
+    }
+
+    size_t new_usable = (block->size_and_flags & BLOCK_SIZE_MASK) - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
+    pool->stats.tlsf_allocated_bytes += (new_usable - header->usable_size);
+    header->requested_size = new_size;
+    header->usable_size = new_usable;
+
+    void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
+    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+        uint8_t* canary = (uint8_t*)payload + new_size;
+        *canary = MP_CANARY_BYTE;
+    }
+
+    return true;
+}
+
 /* --- Lock-Free Ring Buffer Allocator Implementation --- */
 struct cmem_ring_buffer {
     size_t slot_size;
@@ -1558,6 +1612,16 @@ void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size) {
         }
         trigger_event(pool, MP_EVENT_REALLOC, ptr, new_size);
         return ptr;
+    }
+
+    if (header->alloc_type == ALLOC_TYPE_TLSF) {
+        pool_lock(pool);
+        bool expanded = tlsf_try_inplace_expand(pool, header, new_size);
+        pool_unlock(pool);
+        if (expanded) {
+            trigger_event(pool, MP_EVENT_REALLOC, ptr, new_size);
+            return ptr;
+        }
     }
 
     void* new_ptr = mp_alloc(pool, new_size);
