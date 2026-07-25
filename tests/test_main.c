@@ -27,6 +27,36 @@ static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr,
     }
 }
 
+typedef struct {
+    int id;
+    char name[32];
+    double value;
+} test_node_t;
+
+void test_typed_object_pool() {
+    printf("\n--- Test 21: 0-Overhead Typed Object Pool Allocator ---\n");
+    mp_typed_pool_t* tpool = mp_typed_pool_create(sizeof(test_node_t), 128);
+    assert(tpool != NULL);
+
+    test_node_t* n1 = (test_node_t*)mp_typed_alloc(tpool);
+    test_node_t* n2 = (test_node_t*)mp_typed_alloc(tpool);
+
+    assert(n1 != NULL && n2 != NULL && n1 != n2);
+
+    n1->id = 1001;
+    strcpy(n1->name, "TypedNode1");
+    n1->value = 99.99;
+
+    assert(n1->id == 1001 && strcmp(n1->name, "TypedNode1") == 0);
+    printf("  0-Overhead Typed Object Pool allocation & field access verified!\n");
+
+    mp_typed_free(tpool, n1);
+    mp_typed_free(tpool, n2);
+
+    mp_typed_pool_destroy(tpool);
+    TEST_PASS("test_typed_object_pool");
+}
+
 void test_slab_small_allocs() {
     printf("\n--- Test 1: Slab Allocations (Small Objects <= 512B) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
@@ -496,6 +526,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_typed_object_pool();
     test_env_conf_tuning();
     test_ring_buffer_alloc();
     test_huge_pages_alloc();

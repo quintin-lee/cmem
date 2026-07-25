@@ -706,6 +706,69 @@ void mp_ring_destroy(cmem_ring_buffer_t* ring) {
     free(ring);
 }
 
+/* --- 0-Overhead Typed Object Pool Implementation --- */
+struct mp_typed_pool {
+    size_t elem_size;
+    size_t capacity;
+    size_t active_count;
+    void* free_list;
+    void* raw_buf;
+};
+
+mp_typed_pool_t* mp_typed_pool_create(size_t elem_size, size_t capacity) {
+    if (elem_size == 0 || capacity == 0) return NULL;
+    size_t real_elem_sz = (elem_size < sizeof(void*)) ? sizeof(void*) : elem_size;
+    real_elem_sz = (real_elem_sz + 7) & ~((size_t)7);
+
+    mp_typed_pool_t* tpool = (mp_typed_pool_t*)calloc(1, sizeof(mp_typed_pool_t));
+    if (!tpool) return NULL;
+
+    tpool->elem_size = real_elem_sz;
+    tpool->capacity = capacity;
+    tpool->active_count = 0;
+
+    size_t total_sz = real_elem_sz * capacity;
+    if (posix_memalign(&tpool->raw_buf, 64, total_sz) != 0) {
+        free(tpool);
+        return NULL;
+    }
+
+    uint8_t* base = (uint8_t*)tpool->raw_buf;
+    tpool->free_list = base;
+
+    for (size_t i = 0; i < capacity - 1; i++) {
+        void** curr = (void**)(base + i * real_elem_sz);
+        *curr = base + (i + 1) * real_elem_sz;
+    }
+    void** last = (void**)(base + (capacity - 1) * real_elem_sz);
+    *last = NULL;
+
+    return tpool;
+}
+
+void* mp_typed_alloc(mp_typed_pool_t* tpool) {
+    if (!tpool || !tpool->free_list) return NULL;
+
+    void* ptr = tpool->free_list;
+    tpool->free_list = *(void**)ptr;
+    tpool->active_count++;
+    return ptr;
+}
+
+void mp_typed_free(mp_typed_pool_t* tpool, void* ptr) {
+    if (!tpool || !ptr) return;
+
+    *(void**)ptr = tpool->free_list;
+    tpool->free_list = ptr;
+    if (tpool->active_count > 0) tpool->active_count--;
+}
+
+void mp_typed_pool_destroy(mp_typed_pool_t* tpool) {
+    if (!tpool) return;
+    if (tpool->raw_buf) free(tpool->raw_buf);
+    free(tpool);
+}
+
 /* --- Public API Implementation --- */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags) {
     return mp_create_custom(initial_capacity, flags, NULL);

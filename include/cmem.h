@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - 0-Overhead Typed Object Pool Allocator (mp_typed_pool_create / mp_typed_alloc / mp_typed_free)
  *  - CMEM_CONF Environment Variable Runtime Auto-Tuning (mp_parse_env_flags)
  *  - DPDK-Style Lock-Free Atomic Ring Buffer Allocator (mp_ring_create / mp_ring_alloc / mp_ring_free)
  *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
@@ -73,6 +74,7 @@ typedef enum {
 
 typedef struct memory_pool memory_pool_t;
 typedef struct cmem_ring_buffer cmem_ring_buffer_t;
+typedef struct mp_typed_pool mp_typed_pool_t;
 
 /**
  * Event Callback function pointer for telemetry profiling.
@@ -110,9 +112,30 @@ typedef struct {
 
 /**
  * @brief Parses CMEM_CONF environment variable string and returns merged configuration flags.
- * @param default_flags Initial default flags to merge.
  */
 mp_flags_t mp_parse_env_flags(mp_flags_t default_flags);
+
+/**
+ * @brief Creates a 0-overhead fixed-size object pool allocator.
+ * @param elem_size Size of each individual typed object in bytes.
+ * @param capacity Maximum number of pre-allocated elements.
+ */
+mp_typed_pool_t* mp_typed_pool_create(size_t elem_size, size_t capacity);
+
+/**
+ * @brief Allocates an object pointer from the typed object pool with 0 header overhead.
+ */
+void* mp_typed_alloc(mp_typed_pool_t* tpool);
+
+/**
+ * @brief Returns an object pointer back to the typed object pool.
+ */
+void mp_typed_free(mp_typed_pool_t* tpool, void* ptr);
+
+/**
+ * @brief Destroys the typed object pool instance.
+ */
+void mp_typed_pool_destroy(mp_typed_pool_t* tpool);
 
 /**
  * @brief Creates a new cmem memory pool instance using default OS memory.
