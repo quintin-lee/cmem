@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - Game & Graphics Pipeline Dual Ping-Pong Frame Arena (mp_frame_arena_create / mp_frame_alloc / mp_frame_end)
  *  - Incremental Memory Leak Diff Analysis Tool (mp_diff_snapshots)
  *  - High/Low Watermark Threshold Alert Callbacks (mp_set_watermark_callback)
  *  - Linux madvise MADV_DONTNEED / MADV_FREE Lazy RSS Physical Memory Purging (mp_purge_lazy)
@@ -79,6 +80,7 @@ typedef enum {
 typedef struct memory_pool memory_pool_t;
 typedef struct cmem_ring_buffer cmem_ring_buffer_t;
 typedef struct mp_typed_pool mp_typed_pool_t;
+typedef struct cmem_frame_arena cmem_frame_arena_t;
 
 /**
  * Event Callback function pointer for telemetry profiling.
@@ -123,6 +125,27 @@ typedef struct {
  * @brief Parses CMEM_CONF environment variable string and returns merged configuration flags.
  */
 mp_flags_t mp_parse_env_flags(mp_flags_t default_flags);
+
+/**
+ * @brief Creates a game & graphics dual ping-pong frame arena allocator.
+ * @param frame_capacity Capacity of each frame buffer in bytes.
+ */
+cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity);
+
+/**
+ * @brief Allocates temporary memory for the current frame.
+ */
+void* mp_frame_alloc(cmem_frame_arena_t* farena, size_t size);
+
+/**
+ * @brief Ends the current frame and swaps ping-pong buffers with O(1) cursor reset.
+ */
+void mp_frame_end(cmem_frame_arena_t* farena);
+
+/**
+ * @brief Destroys the frame arena allocator instance.
+ */
+void mp_frame_arena_destroy(cmem_frame_arena_t* farena);
 
 /**
  * @brief Creates a 0-overhead fixed-size object pool allocator.

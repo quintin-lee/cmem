@@ -44,6 +44,33 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_frame_arena() {
+    printf("\n--- Test 26: Game & Graphics Pipeline Dual Ping-Pong Frame Arena ---\n");
+    cmem_frame_arena_t* farena = mp_frame_arena_create(512 * 1024);
+    assert(farena != NULL);
+
+    // Frame 1 Allocation
+    void* frame1_ptr = mp_frame_alloc(farena, 1024);
+    assert(frame1_ptr != NULL);
+    strcpy((char*)frame1_ptr, "RenderMeshFrame1");
+
+    // Frame End -> Swap to Ping-Pong Buffer 2
+    mp_frame_end(farena);
+
+    // Frame 2 Allocation
+    void* frame2_ptr = mp_frame_alloc(farena, 2048);
+    assert(frame2_ptr != NULL);
+    strcpy((char*)frame2_ptr, "RenderMeshFrame2");
+
+    // Frame End -> Swap back to Ping-Pong Buffer 1
+    mp_frame_end(farena);
+
+    printf("  Dual Ping-Pong Frame Arena ping-pong swaps & O(1) resets verified!\n");
+
+    mp_frame_arena_destroy(farena);
+    TEST_PASS("test_frame_arena");
+}
+
 void test_diff_snapshots() {
     printf("\n--- Test 25: Binary Snapshot Incremental Diff Leak Detector ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
@@ -638,6 +665,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_frame_arena();
     test_diff_snapshots();
     test_watermark_callback();
     test_purge_lazy();

@@ -2067,3 +2067,55 @@ bool mp_check_leaks(memory_pool_t* pool) {
     pool_unlock(pool);
     return true;
 }
+
+/* --- Game & Graphics Pipeline Dual Ping-Pong Frame Arena --- */
+struct cmem_frame_arena {
+    memory_pool_t* pool_a;
+    memory_pool_t* pool_b;
+    memory_pool_t* active_pool;
+    size_t frame_index;
+};
+
+cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity) {
+    cmem_frame_arena_t* farena = (cmem_frame_arena_t*)malloc(sizeof(cmem_frame_arena_t));
+    if (!farena) return NULL;
+
+    size_t cap = frame_capacity > 0 ? frame_capacity : 1024 * 1024;
+    farena->pool_a = mp_create(cap, MP_FLAG_DEFAULT);
+    farena->pool_b = mp_create(cap, MP_FLAG_DEFAULT);
+    if (!farena->pool_a || !farena->pool_b) {
+        if (farena->pool_a) mp_destroy(farena->pool_a);
+        if (farena->pool_b) mp_destroy(farena->pool_b);
+        free(farena);
+        return NULL;
+    }
+
+    farena->active_pool = farena->pool_a;
+    farena->frame_index = 0;
+    return farena;
+}
+
+void* mp_frame_alloc(cmem_frame_arena_t* farena, size_t size) {
+    if (!farena || !farena->active_pool) return NULL;
+    return mp_alloc(farena->active_pool, size);
+}
+
+void mp_frame_end(cmem_frame_arena_t* farena) {
+    if (!farena) return;
+    farena->frame_index++;
+    if (farena->active_pool == farena->pool_a) {
+        farena->active_pool = farena->pool_b;
+        mp_reset(farena->pool_b);
+    } else {
+        farena->active_pool = farena->pool_a;
+        mp_reset(farena->pool_a);
+    }
+}
+
+void mp_frame_arena_destroy(cmem_frame_arena_t* farena) {
+    if (!farena) return;
+    if (farena->pool_a) mp_destroy(farena->pool_a);
+    if (farena->pool_b) mp_destroy(farena->pool_b);
+    free(farena);
+}
+
