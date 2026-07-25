@@ -17,6 +17,8 @@
 
 static bool g_event_triggered = false;
 static bool g_oom_triggered = false;
+static bool g_high_watermark_hit = false;
+static bool g_low_watermark_hit = false;
 
 static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data) {
     (void)pool; (void)ptr; (void)size; (void)user_data;
@@ -27,11 +29,45 @@ static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr,
     }
 }
 
+static void test_watermark_cb(memory_pool_t* pool, bool is_high_watermark, size_t current_bytes, size_t limit_bytes, void* user_data) {
+    (void)pool; (void)current_bytes; (void)limit_bytes; (void)user_data;
+    if (is_high_watermark) {
+        g_high_watermark_hit = true;
+    } else {
+        g_low_watermark_hit = true;
+    }
+}
+
 typedef struct {
     int id;
     char name[32];
     double value;
 } test_node_t;
+
+void test_watermark_callback() {
+    printf("\n--- Test 24: High/Low Watermark Threshold Alert Callbacks ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    g_high_watermark_hit = false;
+    g_low_watermark_hit = false;
+
+    mp_set_memory_limit(pool, 10000);
+    mp_set_watermark_callback(pool, 0.80, 0.40, test_watermark_cb, NULL);
+
+    void* p1 = mp_alloc(pool, 8500); // 85% > 80% High Watermark
+    assert(p1 != NULL);
+    assert(g_high_watermark_hit == true);
+    printf("  High Watermark Threshold Alert successfully triggered!\n");
+
+    mp_free(pool, p1); // 0% <= 40% Low Watermark
+    assert(g_low_watermark_hit == true);
+    printf("  Low Watermark Recovery Alert successfully triggered!\n");
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_watermark_callback");
+}
 
 void test_purge_lazy() {
     printf("\n--- Test 23: Linux madvise MADV_DONTNEED Lazy RSS Physical Memory Purging ---\n");
@@ -574,6 +610,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_watermark_callback();
     test_purge_lazy();
     test_prometheus_metrics();
     test_typed_object_pool();

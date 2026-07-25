@@ -160,6 +160,13 @@ struct memory_pool {
     mp_event_callback_t event_cb;
     void* event_user_data;
 
+    // Watermark Alert Callback
+    mp_watermark_callback_t watermark_cb;
+    double high_watermark_ratio;
+    double low_watermark_ratio;
+    bool in_high_watermark_state;
+    void* watermark_user_data;
+
     // Diagnostics & Statistics
     mp_stats_t stats;
     mp_block_header_t* active_head; // Linked list of current active allocations for leak detection
@@ -1106,6 +1113,38 @@ void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, vo
     pool_unlock(pool);
 }
 
+void mp_set_watermark_callback(memory_pool_t* pool, double high_ratio, double low_ratio, mp_watermark_callback_t cb, void* user_data) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->high_watermark_ratio = high_ratio;
+    pool->low_watermark_ratio = low_ratio;
+    pool->watermark_cb = cb;
+    pool->watermark_user_data = user_data;
+    pool->in_high_watermark_state = false;
+    pool_unlock(pool);
+}
+
+static inline void check_watermark_after_change(memory_pool_t* pool) {
+    if (!pool->watermark_cb || pool->stats.max_memory_limit == 0) return;
+
+    size_t limit = pool->stats.max_memory_limit;
+    size_t active = pool->stats.active_bytes;
+
+    if (!pool->in_high_watermark_state && pool->high_watermark_ratio > 0.0) {
+        size_t high_thresh = (size_t)(pool->high_watermark_ratio * limit);
+        if (active >= high_thresh) {
+            pool->in_high_watermark_state = true;
+            pool->watermark_cb(pool, true, active, limit, pool->watermark_user_data);
+        }
+    } else if (pool->in_high_watermark_state && pool->low_watermark_ratio > 0.0) {
+        size_t low_thresh = (size_t)(pool->low_watermark_ratio * limit);
+        if (active <= low_thresh) {
+            pool->in_high_watermark_state = false;
+            pool->watermark_cb(pool, false, active, limit, pool->watermark_user_data);
+        }
+    }
+}
+
 static void active_list_add(memory_pool_t* pool, mp_block_header_t* header) {
     header->next = pool->active_head;
     header->prev = NULL;
@@ -1293,6 +1332,8 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         else bucket = 15;
         pool->stats.size_histogram[bucket]++;
 
+        check_watermark_after_change(pool);
+
         trigger_event(pool, MP_EVENT_ALLOC, ptr, size);
     }
 
@@ -1386,6 +1427,7 @@ void mp_free(memory_pool_t* pool, void* ptr) {
     pool->stats.active_bytes -= header->requested_size;
     pool->stats.active_allocations--;
     pool->stats.total_free_ops++;
+    check_watermark_after_change(pool);
     trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
 
     if (header->alloc_type == ALLOC_TYPE_SLAB) {
