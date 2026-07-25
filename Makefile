@@ -1,3 +1,6 @@
+# cmem - Universal High-Performance Tiered Memory Manager
+# Makefile with support for build, test, benchmark, install, uninstall, package
+
 CC = gcc
 CXX = g++
 CFLAGS = -Wall -Wextra -O3 -std=c11 -I./include -pthread -lrt
@@ -5,45 +8,179 @@ CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include -pthread -lrt
 CFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c11 -I./include -pthread -lrt -fsanitize=address,undefined
 CXXFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c++17 -I./include -pthread -lrt -fsanitize=address,undefined
 
+# 版本信息
+VERSION = 1.0.0
+LIBNAME = libcmem.a
+SONAME = libcmem.so.$(VERSION)
+
 SRC = src/cmem.c
 TEST_SRC = tests/test_main.c
 CPP_TEST_SRC = tests/test_cpp.cpp
 BENCH_SRC = benchmarks/bench_main.c
 
 BUILD_DIR = build
+PREFIX = /usr/local
+LIBDIR = $(PREFIX)/lib
+INCLUDEDIR = $(PREFIX)/include
+
+# 默认目标
+.PHONY: all lib test test_cpp bench examples clean install uninstall package distclean help
 
 all: lib test test_cpp bench examples
+
+help:
+	@echo "cmem Makefile Targets:"
+	@echo "  all          - Build library, run all tests, benchmarks, and examples"
+	@echo "  lib          - Build static library $(BUILD_DIR)/$(LIBNAME)"
+	@echo "  lib_shared   - Build shared library $(BUILD_DIR)/$(SONAME)"
+	@echo "  test         - Build and run C unit tests (with ASan/UBSan)"
+	@echo "  test_cpp     - Build and run C++17 PMR/STL tests (with ASan/UBSan)"
+	@echo "  bench        - Build and run performance benchmarks"
+	@echo "  examples     - Build and run all example programs"
+	@echo "  install      - Install library and headers to $(PREFIX)"
+	@echo "  uninstall    - Remove installed files from $(PREFIX)"
+	@echo "  package      - Create source tarball for distribution"
+	@echo "  clean        - Remove build artifacts"
+	@echo "  distclean    - Remove build artifacts and generated files"
+	@echo ""
+	@echo "Variables:"
+	@echo "  PREFIX       - Installation prefix (default: /usr/local)"
+	@echo "  BUILD_DIR    - Build directory (default: build)"
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+# 静态库
 lib: $(SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $(SRC) -o $(BUILD_DIR)/cmem.o
-	ar rcs $(BUILD_DIR)/libcmem.a $(BUILD_DIR)/cmem.o
+	ar rcs $(BUILD_DIR)/$(LIBNAME) $(BUILD_DIR)/cmem.o
+	@echo "Built static library: $(BUILD_DIR)/$(LIBNAME)"
 
+# 共享库
+lib_shared: $(SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -fPIC -shared $(SRC) -o $(BUILD_DIR)/$(SONAME) -pthread -lrt
+	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so
+	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
+	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
+
+# C 单元测试
 test: $(SRC) $(TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests
+	@echo "Running C unit tests..."
 	./$(BUILD_DIR)/unit_tests
 
+# C++ 测试
 test_cpp: $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS_DEBUG) $(SRC) $(CPP_TEST_SRC) -o $(BUILD_DIR)/cpp_tests
+	@echo "Running C++ tests..."
 	./$(BUILD_DIR)/cpp_tests
 
+# 性能基准测试
 bench: $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) $(BENCH_SRC) -o $(BUILD_DIR)/benchmark
+	@echo "Running benchmarks..."
 	./$(BUILD_DIR)/benchmark
 
+# 示例程序
 examples: $(SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic
 	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded
 	$(CC) $(CFLAGS) $(SRC) examples/example_leak_analysis.c -o $(BUILD_DIR)/example_leak_analysis
 	$(CC) $(CFLAGS) $(SRC) examples/example_arena_tree.c -o $(BUILD_DIR)/example_arena_tree
+	@echo "Running examples..."
 	./$(BUILD_DIR)/example_basic
 	./$(BUILD_DIR)/example_embedded
 	./$(BUILD_DIR)/example_leak_analysis
 	./$(BUILD_DIR)/example_arena_tree
 
-clean:
-	rm -rf $(BUILD_DIR) leak_report.txt test_report.html memory_profile.html
+# 安装
+install: lib | $(BUILD_DIR)
+	install -d $(DESTDIR)$(LIBDIR)
+	install -d $(DESTDIR)$(INCLUDEDIR)
+	install -m 644 $(BUILD_DIR)/$(LIBNAME) $(DESTDIR)$(LIBDIR)/$(LIBNAME)
+	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
+	install -m 644 include/cmem.hpp $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
+	install -m 644 include/cmem_pmr.hpp $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
+	install -m 644 include/cmem_override.h $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
+	@echo "Installed cmem to $(DESTDIR)$(PREFIX)"
+	@echo "  Library: $(DESTDIR)$(LIBDIR)/$(LIBNAME)"
+	@echo "  Headers: $(DESTDIR)$(INCLUDEDIR)/"
 
-.PHONY: all lib test test_cpp bench examples clean
+# 安装共享库 (可选)
+install-shared: lib_shared | $(BUILD_DIR)
+	install -d $(DESTDIR)$(LIBDIR)
+	install -d $(DESTDIR)$(INCLUDEDIR)
+	install -m 755 $(BUILD_DIR)/$(SONAME) $(DESTDIR)$(LIBDIR)/$(SONAME)
+	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so
+	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so.1
+	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
+	install -m 644 include/cmem.hpp $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
+	install -m 644 include/cmem_pmr.hpp $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
+	install -m 644 include/cmem_override.h $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
+	@echo "Installed shared library cmem to $(DESTDIR)$(PREFIX)"
+
+# 卸载
+uninstall:
+	rm -f $(DESTDIR)$(LIBDIR)/$(LIBNAME)
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so.1
+	rm -f $(DESTDIR)$(LIBDIR)/$(SONAME)
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
+	@echo "Uninstalled cmem from $(DESTDIR)$(PREFIX)"
+
+# 创建源码发布包
+package: distclean
+	@echo "Creating source package..."
+	cd .. && tar --exclude='*/build' --exclude='*/.git' --exclude='*/cmake-build-*' \
+		--exclude='*/.vscode' --exclude='*/.idea' --exclude='*/.cache' \
+		-czf cmem-$(VERSION).tar.gz cmem
+	@echo "Package created: ../cmem-$(VERSION).tar.gz"
+
+# 清理构建产物
+clean:
+	rm -rf $(BUILD_DIR)
+	rm -f leak_report.txt test_report.html memory_profile.html
+	rm -f snap_a.cmem_dump snap_b.cmem_dump test_snapshot.cmem_dump
+	rm -f test_report.html
+
+# 彻底清理
+distclean: clean
+	rm -f ../cmem-$(VERSION).tar.gz
+
+# 开发模式：快速编译测试 (无 sanitizer)
+test-fast: $(SRC) $(TEST_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests_fast
+	./$(BUILD_DIR)/unit_tests_fast
+
+# 使用 CMake 构建 (备选)
+cmake-build:
+	cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug
+	cmake --build build_cmake
+
+cmake-test:
+	ctest --test-dir build_cmake --output-on-failure
+
+cmake-install:
+	cmake --install build_cmake --prefix $(PREFIX)
+
+# 检查代码风格 (需要 clang-format)
+format-check:
+	@which clang-format > /dev/null || (echo "clang-format not found"; exit 1)
+	clang-format --dry-run --Werror include/*.h include/*.hpp src/*.c tests/*.c examples/*.c benchmarks/*.c
+
+format:
+	@which clang-format > /dev/null || (echo "clang-format not found"; exit 1)
+	clang-format -i include/*.h include/*.hpp src/*.c tests/*.c examples/*.c benchmarks/*.c
+
+# 静态分析 (需要 cppcheck)
+static-analysis:
+	@which cppcheck > /dev/null || (echo "cppcheck not found"; exit 1)
+	cppcheck --enable=all --std=c11 --suppress=missingIncludeSystem -I include src/
+
+# 生成文档 (需要 doxygen)
+docs:
+	@which doxygen > /dev/null || (echo "doxygen not found"; exit 1)
+	doxygen Doxyfile 2>/dev/null || echo "Doxyfile not found, skipping docs generation"

@@ -60,8 +60,8 @@ typedef atomic_size_t cmem_atomic_size_t;
 #define SLAB_CLASS_COUNT 7
 static const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
 #define SLAB_MAX_SIZE 512
-#define SLAB_PAGE_SIZE (16 * 1024) // 16 KB per slab page
-#define TLS_CACHE_MAX_SLOTS 64
+#define SLAB_PAGE_SIZE (64 * 1024) // 64 KB per slab page
+#define TLS_CACHE_MAX_SLOTS 256
 #define MAX_BACKTRACE_FRAMES 8
 
 /* TLSF Allocator Constants */
@@ -497,6 +497,18 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
+    }
+}
+
+static inline void tls_cache_refill(memory_pool_t* pool, uint8_t class_idx) {
+    for (int i = 0; i < 32; i++) {
+        void* ptr = slab_alloc(pool, class_idx, kSlabSizes[class_idx]);
+        if (!ptr) break;
+        mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+        mp_slab_slot_t* slot = (mp_slab_slot_t*)header->raw_base;
+        slot->next = tls_cache.slots[class_idx];
+        tls_cache.slots[class_idx] = slot;
+        tls_cache.counts[class_idx]++;
     }
 }
 
@@ -993,6 +1005,7 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const
 
     pool->flags = flags;
     snprintf(pool->arena_name, sizeof(pool->arena_name), "RootArena");
+    clock_gettime(CLOCK_MONOTONIC, &pool->window_start_time);
     if (sys_allocator) {
         pool->has_custom_sys_alloc = true;
         pool->sys_allocator = *sys_allocator;
@@ -1521,8 +1534,71 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
     return new_ptr;
 }
 
+static inline uint8_t get_slab_class_index(size_t size) {
+    if (size <= 8) return 0;
+    if (size <= 16) return 1;
+    if (size <= 32) return 2;
+    if (size <= 64) return 3;
+    if (size <= 128) return 4;
+    if (size <= 256) return 5;
+    return 6;
+}
+
 static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
+
+    if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && size <= SLAB_MAX_SIZE) {
+        uint8_t class_idx = get_slab_class_index(size);
+        if (tls_cache.counts[class_idx] == 0) {
+            tls_cache_refill(pool, class_idx);
+        }
+        if (tls_cache.counts[class_idx] > 0) {
+            mp_slab_slot_t* slot = tls_cache.slots[class_idx];
+            tls_cache.slots[class_idx] = slot->next;
+            tls_cache.counts[class_idx]--;
+
+            mp_block_header_t* header = (mp_block_header_t*)slot;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_SLAB;
+            header->slab_class = class_idx;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = kSlabSizes[class_idx];
+            header->raw_base = slot;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
+
+            void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
+            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                uint8_t* canary = (uint8_t*)payload + size;
+                *canary = MP_CANARY_BYTE;
+            }
+            if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(payload, 0, size);
+
+            if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
+                active_list_add(pool, header);
+                pool->stats.active_bytes += size;
+                if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                    pool->stats.peak_bytes = pool->stats.active_bytes;
+                }
+                pool->stats.active_allocations++;
+                pool->stats.total_alloc_ops++;
+            } else {
+                pool_lock(pool);
+                active_list_add(pool, header);
+                pool->stats.active_bytes += size;
+                if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                    pool->stats.peak_bytes = pool->stats.active_bytes;
+                }
+                pool->stats.active_allocations++;
+                pool->stats.total_alloc_ops++;
+                pool_unlock(pool);
+            }
+            return payload;
+        }
+    }
 
     pool_lock(pool);
     if (pool->stats.max_memory_limit > 0 && pool->stats.active_bytes + size > pool->stats.max_memory_limit) {
@@ -1565,61 +1641,11 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         pool_unlock(pool);
         return NULL;
     }
-    pool_unlock(pool);
 
-    if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && size <= SLAB_MAX_SIZE) {
-        uint8_t class_idx = 0;
-        while (class_idx < SLAB_CLASS_COUNT && kSlabSizes[class_idx] < size) {
-            class_idx++;
-        }
-        if (tls_cache.counts[class_idx] > 0) {
-            mp_slab_slot_t* slot = tls_cache.slots[class_idx];
-            tls_cache.slots[class_idx] = slot->next;
-            tls_cache.counts[class_idx]--;
-
-            mp_block_header_t* header = (mp_block_header_t*)slot;
-            header->magic = MP_MAGIC_HEAD;
-            header->alloc_type = ALLOC_TYPE_SLAB;
-            header->slab_class = class_idx;
-            header->flags = 0;
-            header->requested_size = size;
-            header->usable_size = kSlabSizes[class_idx];
-            header->raw_base = slot;
-            header->alloc_file = NULL;
-            header->alloc_line = 0;
-            header->alloc_func = NULL;
-            header->backtrace_depth = 0;
-
-            void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
-            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
-                uint8_t* canary = (uint8_t*)payload + size;
-                *canary = MP_CANARY_BYTE;
-            }
-            if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(payload, 0, size);
-
-            pool_lock(pool);
-            active_list_add(pool, header);
-            pool->stats.active_bytes += size;
-            if (pool->stats.active_bytes > pool->stats.peak_bytes) {
-                pool->stats.peak_bytes = pool->stats.active_bytes;
-            }
-            pool->stats.active_allocations++;
-            pool->stats.total_alloc_ops++;
-            pool_unlock(pool);
-
-            trigger_event(pool, MP_EVENT_ALLOC, payload, size);
-            return payload;
-        }
-    }
-
-    pool_lock(pool);
     void* ptr = NULL;
 
     if ((pool->flags & MP_FLAG_STATIC_BUFFER) == 0 && size <= SLAB_MAX_SIZE) {
-        uint8_t class_idx = 0;
-        while (class_idx < SLAB_CLASS_COUNT && kSlabSizes[class_idx] < size) {
-            class_idx++;
-        }
+        uint8_t class_idx = get_slab_class_index(size);
         ptr = slab_alloc(pool, class_idx, size);
     } else if (size <= TLSF_MAX_SIZE || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
         ptr = tlsf_alloc(pool, size);
@@ -1665,34 +1691,13 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         pool->stats.active_allocations++;
         pool->stats.total_alloc_ops++;
 
-        if (pool->window_start_time.tv_sec == 0) {
-            clock_gettime(CLOCK_MONOTONIC, &pool->window_start_time);
+        int bucket = get_slab_class_index(size);
+        if (bucket < CMEM_HISTOGRAM_BUCKETS) {
+            pool->stats.size_histogram[bucket]++;
         }
-        pool->window_alloc_ops++;
-        pool->window_alloc_bytes += size;
 
-        int bucket = 0;
-        if (size <= 16) bucket = 0;
-        else if (size <= 32) bucket = 1;
-        else if (size <= 64) bucket = 2;
-        else if (size <= 128) bucket = 3;
-        else if (size <= 256) bucket = 4;
-        else if (size <= 512) bucket = 5;
-        else if (size <= 1024) bucket = 6;
-        else if (size <= 2048) bucket = 7;
-        else if (size <= 4096) bucket = 8;
-        else if (size <= 8192) bucket = 9;
-        else if (size <= 16384) bucket = 10;
-        else if (size <= 32768) bucket = 11;
-        else if (size <= 65536) bucket = 12;
-        else if (size <= 524288) bucket = 13;
-        else if (size <= 4194304) bucket = 14;
-        else bucket = 15;
-        pool->stats.size_histogram[bucket]++;
-
-        check_watermark_after_change(pool);
-
-        trigger_event(pool, MP_EVENT_ALLOC, ptr, size);
+        if (pool->watermark_cb) check_watermark_after_change(pool);
+        if (pool->event_cb) trigger_event(pool, MP_EVENT_ALLOC, ptr, size);
     }
 
     pool_unlock(pool);
@@ -1755,13 +1760,22 @@ void mp_free(memory_pool_t* pool, void* ptr) {
     if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && header->alloc_type == ALLOC_TYPE_SLAB) {
         uint8_t class_idx = header->slab_class;
         if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
-            pool_lock(pool);
-            active_list_remove(pool, header);
-            pool->stats.active_bytes -= header->requested_size;
-            pool->stats.active_allocations--;
-            pool->stats.total_free_ops++;
-            trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
-            pool_unlock(pool);
+            if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
+                active_list_remove(pool, header);
+                pool->stats.active_bytes -= header->requested_size;
+                pool->stats.active_allocations--;
+                pool->stats.total_free_ops++;
+            } else {
+                pool_lock(pool);
+                active_list_remove(pool, header);
+                pool->stats.active_bytes -= header->requested_size;
+                pool->stats.active_allocations--;
+                pool->stats.total_free_ops++;
+                pool_unlock(pool);
+            }
+            if (pool->event_cb) {
+                trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+            }
 
             mp_slab_slot_t* slot = (mp_slab_slot_t*)header->raw_base;
             slot->next = tls_cache.slots[class_idx];
@@ -2388,22 +2402,27 @@ bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path,
 
 void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     if (!pool || !stats) return;
-    pool_lock(pool);
+    pool_rdlock(pool);
     *stats = pool->stats;
     size_t total_sys = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
     stats->fragmentation_ratio = 1.0 - ((double)pool->stats.active_bytes / (double)total_sys);
 
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    double elapsed = (now.tv_sec - pool->window_start_time.tv_sec) + (now.tv_nsec - pool->window_start_time.tv_nsec) / 1e9;
-    if (elapsed > 0.0001 && pool->window_alloc_ops > 0) {
-        stats->alloc_qps = (double)pool->window_alloc_ops / elapsed;
-        stats->bandwidth_mbps = ((double)pool->window_alloc_bytes / (1024.0 * 1024.0)) / elapsed;
-    } else {
-        stats->alloc_qps = 0.0;
-        stats->bandwidth_mbps = 0.0;
+    if (pool->window_start_time.tv_sec == 0) {
+        pool->window_start_time = now;
     }
-    pool_unlock(pool);
+    double elapsed = (now.tv_sec - pool->window_start_time.tv_sec) + (now.tv_nsec - pool->window_start_time.tv_nsec) / 1e9;
+    size_t ops = pool->stats.total_alloc_ops;
+    size_t active = pool->stats.active_bytes;
+    if (elapsed > 0.000001 && ops > 0) {
+        stats->alloc_qps = (double)ops / elapsed;
+        stats->bandwidth_mbps = ((double)active / (1024.0 * 1024.0)) / elapsed;
+    } else {
+        stats->alloc_qps = (double)ops;
+        stats->bandwidth_mbps = (double)active / (1024.0 * 1024.0);
+    }
+    pool_rdunlock(pool);
 }
 
 void mp_dump_info(memory_pool_t* pool) {
