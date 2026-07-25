@@ -257,6 +257,25 @@ void test_reset_stats_and_preferred_size() {
     TEST_PASS("test_reset_stats_and_preferred_size");
 }
 
+void test_mp_madvise() {
+    printf("\n--- Test 37: Cross-Platform mp_madvise Wrapper ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* ptr = mp_aligned_alloc(pool, 4096, 16384);
+    assert(ptr != NULL);
+
+    int res = mp_madvise(pool, ptr, 16384, 4);
+    assert(res == 0);
+
+    printf("  mp_madvise executed successfully (res=%d)!\n", res);
+
+    mp_free(pool, ptr);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_mp_madvise");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -941,6 +960,7 @@ int main() {
     test_arena_metadata_apis();
     test_advanced_stats();
     test_reset_stats_and_preferred_size();
+    test_mp_madvise();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();

@@ -304,6 +304,11 @@ size_t mp_compact(memory_pool_t* pool);
 size_t mp_purge_lazy(memory_pool_t* pool);
 
 /**
+ * @brief Portable madvise wrapper for memory page purging and advice across Linux and Windows.
+ */
+int mp_madvise(memory_pool_t* pool, void* addr, size_t length, int advice);
+
+/**
  * @brief Trims and reclaims unused memory capacity back to the system, keeping pad bytes buffer.
  */
 size_t mp_trim(memory_pool_t* pool, size_t pad);

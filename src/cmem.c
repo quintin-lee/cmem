@@ -17,11 +17,15 @@
 #include <assert.h>
 #include <stdint.h>
 #include <inttypes.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <execinfo.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 #ifdef __linux__
 #include <sys/syscall.h>
 #ifndef CMEM_MPOL_BIND
@@ -1286,6 +1290,38 @@ size_t mp_purge_lazy(memory_pool_t* pool) {
     pool_unlock(pool);
     printf("[CMEM PERF] Lazy RSS physical memory purge completed: %zu bytes released to Linux kernel\n", purged_bytes);
     return purged_bytes;
+}
+
+int mp_madvise(memory_pool_t* pool, void* addr, size_t length, int advice) {
+    if (!addr || length == 0) return -1;
+    (void)pool;
+
+#ifdef _WIN32
+    (void)advice;
+    VirtualAlloc(addr, length, MEM_RESET, PAGE_READWRITE);
+    return 0;
+#else
+    long pg = sysconf(_SC_PAGESIZE);
+    size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
+
+    uintptr_t start = (uintptr_t)addr;
+    uintptr_t aligned_start = (start + page_sz - 1) & ~(page_sz - 1);
+    uintptr_t end = start + length;
+    uintptr_t aligned_end = end & ~(page_sz - 1);
+
+    if (aligned_end <= aligned_start) {
+        return 0;
+    }
+
+    size_t aligned_len = aligned_end - aligned_start;
+
+#ifdef MADV_DONTNEED
+    return madvise((void*)aligned_start, aligned_len, advice);
+#else
+    (void)advice;
+    return 0;
+#endif
+#endif
 }
 
 size_t mp_trim(memory_pool_t* pool, size_t pad) {
