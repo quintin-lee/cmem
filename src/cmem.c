@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <assert.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <execinfo.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -1450,10 +1451,106 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
     }
     pool_unlock(pool);
 
-    fprintf(f, "    </tbody>\n  mtable>\n</div>\n</body>\n</html>\n");
+    fprintf(f, "    </tbody>\n  </table>\n</div>\n</body>\n</html>\n");
     fclose(f);
 
     printf("[CMEM DIAGNOSTICS] Interactive HTML Profiler Report exported to: %s\n", filepath);
+    return true;
+}
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t total_pool_size;
+    uint64_t active_bytes;
+    uint64_t active_allocations;
+} cmem_snapshot_header_t;
+
+typedef struct {
+    uint64_t address;
+    uint64_t requested_size;
+    uint8_t  alloc_type;
+    uint32_t alloc_line;
+    char     alloc_file[64];
+    char     alloc_func[64];
+} cmem_snapshot_record_t;
+
+bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath) {
+    if (!pool || !filepath) return false;
+    FILE* f = fopen(filepath, "wb");
+    if (!f) return false;
+
+    pool_lock(pool);
+
+    cmem_snapshot_header_t hdr;
+    hdr.magic = 0x434D454D;
+    hdr.version = 1;
+    hdr.total_pool_size = (uint64_t)pool->stats.total_pool_size;
+    hdr.active_bytes = (uint64_t)pool->stats.active_bytes;
+    hdr.active_allocations = (uint64_t)pool->stats.active_allocations;
+
+    fwrite(&hdr, sizeof(hdr), 1, f);
+
+    mp_block_header_t* curr = pool->active_head;
+    while (curr) {
+        cmem_snapshot_record_t rec;
+        memset(&rec, 0, sizeof(rec));
+        rec.address = (uint64_t)(uintptr_t)((uint8_t*)curr + sizeof(mp_block_header_t));
+        rec.requested_size = (uint64_t)curr->requested_size;
+        rec.alloc_type = curr->alloc_type;
+        rec.alloc_line = (uint32_t)curr->alloc_line;
+        if (curr->alloc_file) snprintf(rec.alloc_file, sizeof(rec.alloc_file), "%s", curr->alloc_file);
+        if (curr->alloc_func) snprintf(rec.alloc_func, sizeof(rec.alloc_func), "%s", curr->alloc_func);
+
+        fwrite(&rec, sizeof(rec), 1, f);
+        curr = curr->next;
+    }
+
+    pool_unlock(pool);
+    fclose(f);
+
+    printf("[CMEM DIAGNOSTICS] Binary Crash Snapshot Dump exported to: %s\n", filepath);
+    return true;
+}
+
+bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max_len) {
+    if (!filepath || !out_report || max_len == 0) return false;
+    FILE* f = fopen(filepath, "rb");
+    if (!f) return false;
+
+    cmem_snapshot_header_t hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1 || hdr.magic != 0x434D454D) {
+        fclose(f);
+        return false;
+    }
+
+    size_t offset = 0;
+    offset += snprintf(out_report + offset, max_len - offset,
+        "=================== CMEM BINARY SNAPSHOT DUMP PARSER ===================\n"
+        "  Format Version     : %u\n"
+        "  Total Pool Size    : %" PRIu64 " bytes\n"
+        "  Active Payload B   : %" PRIu64 " bytes\n"
+        "  Active Allocations : %" PRIu64 " blocks\n"
+        "========================================================================\n",
+        hdr.version, hdr.total_pool_size, hdr.active_bytes, hdr.active_allocations
+    );
+
+    cmem_snapshot_record_t rec;
+    size_t idx = 1;
+
+    while (fread(&rec, sizeof(rec), 1, f) == 1 && offset < max_len) {
+        const char* tier_str = (rec.alloc_type == ALLOC_TYPE_SLAB) ? "SLAB" :
+                               ((rec.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
+        offset += snprintf(out_report + offset, max_len - offset,
+            "[Record #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64 " B | Tier: %s | Location: %s:%u (%s)\n",
+            idx++, rec.address, rec.requested_size, tier_str,
+            rec.alloc_file[0] ? rec.alloc_file : "unknown",
+            rec.alloc_line,
+            rec.alloc_func[0] ? rec.alloc_func : "unknown"
+        );
+    }
+
+    fclose(f);
     return true;
 }
 

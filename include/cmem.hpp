@@ -133,6 +133,18 @@ public:
         return mp_export_html_report(pool_, filepath.c_str());
     }
 
+    bool export_binary_snapshot(const std::string& filepath) const {
+        return mp_export_binary_snapshot(pool_, filepath.c_str());
+    }
+
+    static std::string parse_binary_snapshot(const std::string& filepath) {
+        char buffer[16384];
+        if (mp_parse_binary_snapshot(filepath.c_str(), buffer, sizeof(buffer))) {
+            return std::string(buffer);
+        }
+        return "";
+    }
+
     mp_stats_t get_stats() const {
         mp_stats_t stats;
         mp_get_stats(pool_, &stats);

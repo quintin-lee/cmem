@@ -6,6 +6,7 @@
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
  *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
  *  - Linux HugePages (2MB / 1GB) Support for TLB Performance Acceleration (MP_FLAG_HUGE_PAGES)
+ *  - Post-Mortem Binary Crash Memory Snapshot Dump & Parser (mp_export_binary_snapshot / mp_parse_binary_snapshot)
  *  - Real-Time Allocation QPS & Bandwidth Throughput Meter (alloc_qps, bandwidth_mbps)
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
@@ -212,6 +213,16 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath);
  * @brief Exports an interactive visual HTML report.
  */
 bool mp_export_html_report(memory_pool_t* pool, const char* filepath);
+
+/**
+ * @brief Exports a binary post-mortem memory crash snapshot dump to file.
+ */
+bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath);
+
+/**
+ * @brief Parses a binary post-mortem memory snapshot file into readable text report.
+ */
+bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max_len);
 
 /**
  * @brief Prints ASCII allocation size distribution histogram chart.

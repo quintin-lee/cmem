@@ -52,6 +52,30 @@ void test_slab_small_allocs() {
     TEST_PASS("test_slab_small_allocs");
 }
 
+void test_binary_snapshot() {
+    printf("\n--- Test 18: Binary Crash Memory Snapshot Dump & Parser ---\n");
+    memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    void* p2 = mp_alloc_loc(pool, 1024, __FILE__, __LINE__, __func__);
+
+    assert(mp_export_binary_snapshot(pool, "test_snapshot.cmem_dump") == true);
+
+    char report[4096];
+    assert(mp_parse_binary_snapshot("test_snapshot.cmem_dump", report, sizeof(report)) == true);
+    assert(strstr(report, "Active Allocations : 2 blocks") != NULL);
+    printf("  Binary Snapshot Dump exported & parsed cleanly!\n");
+
+    mp_free(pool, p1);
+    mp_free(pool, p2);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    remove("test_snapshot.cmem_dump");
+    TEST_PASS("test_binary_snapshot");
+}
+
 void test_huge_pages_alloc() {
     printf("\n--- Test 17: Linux HugePages (2MB/1GB MAP_HUGETLB) Acceleration ---\n");
     memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_HUGE_PAGES);
@@ -431,6 +455,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_huge_pages_alloc();
+    test_binary_snapshot();
     test_shared_memory_ipc();
     test_global_override();
     test_realtime_throughput_meter();
