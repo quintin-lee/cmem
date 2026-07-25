@@ -1,3 +1,0 @@
-CUnitTests 2 0.00903346
-CppUnitTests 2 0.00536179
----

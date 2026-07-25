@@ -1,2 +1,0 @@
-/usr/bin/ar qc libcmem.a CMakeFiles/cmem.dir/src/cmem.c.o
-/usr/bin/ranlib libcmem.a

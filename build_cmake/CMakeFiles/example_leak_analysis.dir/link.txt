@@ -1,1 +1,0 @@
-/usr/bin/cc  -Wall -Wextra -pthread -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/example_leak_analysis.dir/link.d CMakeFiles/example_leak_analysis.dir/examples/example_leak_analysis.c.o -o example_leak_analysis  libcmem.a -lpthread -lrt

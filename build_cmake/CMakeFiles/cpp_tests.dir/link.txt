@@ -1,1 +1,0 @@
-/usr/bin/c++  -Wall -Wextra -pthread -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/cpp_tests.dir/link.d CMakeFiles/cpp_tests.dir/tests/test_cpp.cpp.o -o cpp_tests  libcmem.a -lpthread -lrt
