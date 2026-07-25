@@ -1,9 +1,9 @@
 CC = gcc
 CXX = g++
 CFLAGS = -Wall -Wextra -O3 -std=c11 -I./include -pthread -lrt
-CXXFLAGS = -Wall -Wextra -O3 -std=c++11 -I./include -pthread -lrt
+CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include -pthread -lrt
 CFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c11 -I./include -pthread -lrt -fsanitize=address,undefined
-CXXFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c++11 -I./include -pthread -lrt -fsanitize=address,undefined
+CXXFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c++17 -I./include -pthread -lrt -fsanitize=address,undefined
 
 SRC = src/cmem.c
 TEST_SRC = tests/test_main.c
