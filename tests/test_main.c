@@ -60,10 +60,11 @@ void test_introspection_apis() {
     assert(mp_alloc_size(pool, p1) == 120);
     assert(mp_usable_size(pool, p1) >= 120);
 
-    int fake_var = 42;
-    assert(mp_ptr_valid(pool, &fake_var) == false);
-    assert(mp_alloc_size(pool, &fake_var) == 0);
-    assert(mp_usable_size(pool, &fake_var) == 0);
+    uint8_t fake_buf[128] = {0};
+    void* fake_ptr = &fake_buf[64];
+    assert(mp_ptr_valid(pool, fake_ptr) == false);
+    assert(mp_alloc_size(pool, fake_ptr) == 0);
+    assert(mp_usable_size(pool, fake_ptr) == 0);
 
     printf("  Memory introspection query (usable_size=%zu, alloc_size=%zu, valid=true) verified!\n",
            mp_usable_size(pool, p1), mp_alloc_size(pool, p1));
