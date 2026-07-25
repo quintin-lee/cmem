@@ -96,6 +96,10 @@ public:
         return mp_compact(pool_);
     }
 
+    void set_memory_limit(size_t max_bytes) {
+        mp_set_memory_limit(pool_, max_bytes);
+    }
+
     bool audit_heap() const {
         return mp_audit_heap(pool_);
     }

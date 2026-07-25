@@ -761,6 +761,13 @@ void mp_reset(memory_pool_t* pool) {
     pool_unlock(pool);
 }
 
+void mp_set_memory_limit(memory_pool_t* pool, size_t max_bytes) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->stats.max_memory_limit = max_bytes;
+    pool_unlock(pool);
+}
+
 size_t mp_compact(memory_pool_t* pool) {
     if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) return 0;
     pool_lock(pool);
@@ -774,7 +781,6 @@ size_t mp_compact(memory_pool_t* pool) {
         while (curr) {
             mp_slab_page_t* next = curr->next;
             if (curr->free_count == curr->total_slots) {
-                // Page is completely empty, remove it and return to system OS
                 if (curr->prev) curr->prev->next = curr->next;
                 else sc->partial_pages = curr->next;
                 if (curr->next) curr->next->prev = curr->prev;
@@ -861,6 +867,14 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
 
 void* mp_alloc(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
+
+    pool_lock(pool);
+    if (pool->stats.max_memory_limit > 0 && pool->stats.active_bytes + size > pool->stats.max_memory_limit) {
+        trigger_event(pool, MP_EVENT_OOM, NULL, size);
+        pool_unlock(pool);
+        return NULL;
+    }
+    pool_unlock(pool);
 
     if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && size <= SLAB_MAX_SIZE) {
         uint8_t class_idx = 0;
@@ -1313,7 +1327,7 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
     }
     pool_unlock(pool);
 
-    fprintf(f, "    </tbody>\n  </table>\n</div>\n</body>\n</html>\n");
+    fprintf(f, "    </tbody>\n  mtable>\n</div>\n</body>\n</html>\n");
     fclose(f);
 
     printf("[CMEM DIAGNOSTICS] Interactive HTML Profiler Report exported to: %s\n", filepath);
@@ -1338,6 +1352,7 @@ void mp_dump_info(memory_pool_t* pool) {
     printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n", stats.total_pool_size, stats.total_pool_size / 1024.0);
     printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n", stats.active_allocations, stats.active_bytes, stats.active_bytes / 1024.0);
     printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", stats.peak_bytes, stats.peak_bytes / 1024.0);
+    printf("  Max Memory Budget Limit     : %zu bytes (%s)\n", stats.max_memory_limit, stats.max_memory_limit > 0 ? "Enforced" : "Unlimited");
     printf("  Estimated Fragmentation     : %.2f%%\n", stats.fragmentation_ratio * 100.0);
     printf("  Cumulative Stats            : %zu Allocations, %zu Frees\n", stats.total_alloc_ops, stats.total_free_ops);
     printf("  Allocation Tier Breakdown   :\n");
@@ -1380,6 +1395,7 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
         "  \"total_pool_size\": %zu,\n"
         "  \"active_bytes\": %zu,\n"
         "  \"peak_bytes\": %zu,\n"
+        "  \"max_memory_limit\": %zu,\n"
         "  \"active_allocations\": %zu,\n"
         "  \"total_alloc_ops\": %zu,\n"
         "  \"total_free_ops\": %zu,\n"
@@ -1390,6 +1406,7 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
         "}",
         pool->arena_name,
         stats.total_pool_size, stats.active_bytes, stats.peak_bytes,
+        stats.max_memory_limit,
         stats.active_allocations, stats.total_alloc_ops, stats.total_free_ops,
         stats.slab_allocated_bytes, stats.tlsf_allocated_bytes, stats.os_allocated_bytes,
         stats.fragmentation_ratio

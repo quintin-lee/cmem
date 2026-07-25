@@ -8,6 +8,7 @@
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - High-Throughput Batch Allocation & Free (mp_alloc_batch / mp_free_batch)
  *  - Memory Compaction & OS Page Trimming (mp_compact)
+ *  - Memory Budget Limits & OOM Protection (mp_set_memory_limit)
  *  - Arena Fast Reset (O(1) batch deallocation for request-scoped lifetime)
  *  - Hierarchical Child Arenas (Parent-Child nested memory contexts)
  *  - Static Buffer Mode (Zero OS malloc dependency for embedded / bare-metal)
@@ -51,7 +52,8 @@ typedef enum {
     MP_EVENT_CANARY_CORRUPTION,
     MP_EVENT_DOUBLE_FREE,
     MP_EVENT_RESET,
-    MP_EVENT_COMPACT
+    MP_EVENT_COMPACT,
+    MP_EVENT_OOM
 } mp_event_type_t;
 
 typedef struct memory_pool memory_pool_t;
@@ -77,6 +79,7 @@ typedef struct {
     size_t total_pool_size;       /**< Total bytes reserved/allocated from system */
     size_t active_bytes;          /**< Total active payload bytes requested by user */
     size_t peak_bytes;            /**< Peak active payload bytes */
+    size_t max_memory_limit;      /**< Maximum memory limit budget in bytes (0 for unlimited) */
     size_t active_allocations;    /**< Count of currently outstanding allocations */
     size_t total_alloc_ops;       /**< Cumulative allocation count */
     size_t total_free_ops;        /**< Cumulative free count */
@@ -117,9 +120,14 @@ void mp_destroy(memory_pool_t* pool);
 void mp_reset(memory_pool_t* pool);
 
 /**
- * @brief Compacts memory pool by releasing empty, unused system memory pages back to OS.
+ * @brief Sets a hard maximum memory budget limit on the pool.
  * @param pool Memory pool pointer.
- * @return Total number of bytes released back to system OS.
+ * @param max_bytes Maximum bytes allowed (0 for unlimited).
+ */
+void mp_set_memory_limit(memory_pool_t* pool, size_t max_bytes);
+
+/**
+ * @brief Compacts memory pool by releasing empty, unused system memory pages back to OS.
  */
 size_t mp_compact(memory_pool_t* pool);
 
@@ -154,19 +162,11 @@ void mp_free(memory_pool_t* pool, void* ptr);
 
 /**
  * @brief Batch allocates multiple memory blocks in a single operation.
- * @param pool Memory pool pointer.
- * @param size Requested payload size per block in bytes.
- * @param out_ptrs Output array of void pointers (must be allocated by caller for at least count elements).
- * @param count Number of blocks to allocate.
- * @return Number of successfully allocated blocks.
  */
 size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t count);
 
 /**
  * @brief Batch frees multiple memory blocks in a single operation.
- * @param pool Memory pool pointer.
- * @param ptrs Array of memory block pointers to free.
- * @param count Number of blocks to free.
  */
 void mp_free_batch(memory_pool_t* pool, void** ptrs, size_t count);
 

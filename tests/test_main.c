@@ -13,10 +13,14 @@
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
 static bool g_event_triggered = false;
+static bool g_oom_triggered = false;
+
 static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data) {
     (void)pool; (void)ptr; (void)size; (void)user_data;
     if (event == MP_EVENT_ALLOC) {
         g_event_triggered = true;
+    } else if (event == MP_EVENT_OOM) {
+        g_oom_triggered = true;
     }
 }
 
@@ -73,6 +77,29 @@ void test_tlsf_medium_allocs() {
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_tlsf_medium_allocs");
+}
+
+void test_memory_budget_and_oom() {
+    printf("\n--- Test 10: Memory Budget Limit & OOM Event Callback ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    g_oom_triggered = false;
+    mp_set_event_callback(pool, test_event_cb, NULL);
+    mp_set_memory_limit(pool, 1024); // Set hard budget limit to 1 KB
+
+    void* p1 = mp_alloc(pool, 512);
+    assert(p1 != NULL);
+
+    void* p2 = mp_alloc(pool, 1024); // Exceeds 1024 B budget limit!
+    assert(p2 == NULL);
+    assert(g_oom_triggered == true);
+    printf("  OOM Protection Event successfully triggered when limit exceeded!\n");
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_memory_budget_and_oom");
 }
 
 void test_realloc_and_aligned() {
@@ -268,6 +295,7 @@ int main() {
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
     test_batch_alloc_and_compact();
+    test_memory_budget_and_oom();
     test_leak_analysis_and_heap_audit();
     test_child_arenas_and_html_export();
     test_arena_reset_and_json();
