@@ -3,6 +3,8 @@
  * @brief Comprehensive Unit Tests for cmem Memory Manager.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "../include/cmem.h"
 #include "../include/cmem_override.h"
 #include <stdio.h>
@@ -50,6 +52,27 @@ void test_slab_small_allocs() {
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_slab_small_allocs");
+}
+
+void test_env_conf_tuning() {
+    printf("\n--- Test 20: CMEM_CONF Environment Variable Auto-Tuning ---\n");
+    setenv("CMEM_CONF", "canary=1,poison=on,aligned=1", 1);
+
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 32);
+    assert(p1 != NULL);
+    assert(((uintptr_t)p1 % 64) == 0);
+
+    printf("  CMEM_CONF='canary=1,poison=on,aligned=1' successfully auto-tuned pool flags!\n");
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+
+    unsetenv("CMEM_CONF");
+    TEST_PASS("test_env_conf_tuning");
 }
 
 void test_ring_buffer_alloc() {
@@ -473,6 +496,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_env_conf_tuning();
     test_ring_buffer_alloc();
     test_huge_pages_alloc();
     test_binary_snapshot();

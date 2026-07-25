@@ -768,7 +768,27 @@ memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, m
     return child;
 }
 
+mp_flags_t mp_parse_env_flags(mp_flags_t default_flags) {
+    const char* env_conf = getenv("CMEM_CONF");
+    if (!env_conf || strlen(env_conf) == 0) return default_flags;
+
+    mp_flags_t flags = default_flags;
+
+    if (strstr(env_conf, "canary=1") || strstr(env_conf, "canary=on")) flags = (mp_flags_t)(flags | MP_FLAG_DEBUG_CANARY);
+    if (strstr(env_conf, "zero=1") || strstr(env_conf, "zero=on")) flags = (mp_flags_t)(flags | MP_FLAG_ZERO_ON_ALLOC);
+    if (strstr(env_conf, "tls=1") || strstr(env_conf, "tls=on")) flags = (mp_flags_t)(flags | MP_FLAG_THREAD_LOCAL_CACHE);
+    if (strstr(env_conf, "track=1") || strstr(env_conf, "track=on")) flags = (mp_flags_t)(flags | MP_FLAG_TRACK_LOCATIONS);
+    if (strstr(env_conf, "poison=1") || strstr(env_conf, "poison=on")) flags = (mp_flags_t)(flags | MP_FLAG_POISON_ON_FREE);
+    if (strstr(env_conf, "aligned=1") || strstr(env_conf, "aligned=on")) flags = (mp_flags_t)(flags | MP_FLAG_CACHE_ALIGNED);
+    if (strstr(env_conf, "guard=1") || strstr(env_conf, "guard=on")) flags = (mp_flags_t)(flags | MP_FLAG_GUARD_PAGES);
+    if (strstr(env_conf, "hugepages=1") || strstr(env_conf, "hugepages=on")) flags = (mp_flags_t)(flags | MP_FLAG_HUGE_PAGES);
+
+    return flags;
+}
+
 memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator) {
+    flags = mp_parse_env_flags(flags);
+
     memory_pool_t* pool = (memory_pool_t*)calloc(1, sizeof(memory_pool_t));
     if (!pool) return NULL;
 

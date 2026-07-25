@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - CMEM_CONF Environment Variable Runtime Auto-Tuning (mp_parse_env_flags)
  *  - DPDK-Style Lock-Free Atomic Ring Buffer Allocator (mp_ring_create / mp_ring_alloc / mp_ring_free)
  *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
  *  - Linux HugePages (2MB / 1GB) Support for TLB Performance Acceleration (MP_FLAG_HUGE_PAGES)
@@ -108,14 +109,18 @@ typedef struct {
 } mp_stats_t;
 
 /**
+ * @brief Parses CMEM_CONF environment variable string and returns merged configuration flags.
+ * @param default_flags Initial default flags to merge.
+ */
+mp_flags_t mp_parse_env_flags(mp_flags_t default_flags);
+
+/**
  * @brief Creates a new cmem memory pool instance using default OS memory.
  */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
 
 /**
  * @brief Creates a lock-free DPDK-style Ring Buffer Allocator.
- * @param slot_size Fixed payload size of each slot in bytes.
- * @param capacity Maximum number of slot elements (must be power of 2).
  */
 cmem_ring_buffer_t* mp_ring_create(size_t slot_size, size_t capacity);
 
