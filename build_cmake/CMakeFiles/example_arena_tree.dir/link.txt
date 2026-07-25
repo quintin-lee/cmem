@@ -1,0 +1,1 @@
+/usr/bin/cc  -Wall -Wextra -pthread -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/example_arena_tree.dir/link.d CMakeFiles/example_arena_tree.dir/examples/example_arena_tree.c.o -o example_arena_tree  libcmem.a -lpthread -lrt

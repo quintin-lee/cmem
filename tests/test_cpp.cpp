@@ -3,6 +3,10 @@
  * @brief Unit tests verifying cmem C++ RAII wrapper and STL-compatible allocator.
  */
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "../include/cmem.hpp"
 #include <iostream>
 #include <vector>

@@ -3,6 +3,10 @@
  * @brief Comprehensive Unit Tests for cmem Memory Manager.
  */
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #define _POSIX_C_SOURCE 200809L
 
 #include "../include/cmem.h"
@@ -133,6 +137,7 @@ void test_diff_snapshots() {
     char diff_report[4096];
     assert(mp_diff_snapshots("snap_a.cmem_dump", "snap_b.cmem_dump", diff_report, sizeof(diff_report)) == true);
     assert(strstr(diff_report, "Net Incremental Leaked Allocations : 1 blocks") != NULL);
+    (void)diff_report;
     printf("  Incremental Snapshot Diff Leak Analysis generated successfully!\n");
 
     mp_free(pool, base_ptr);
@@ -209,6 +214,7 @@ void test_prometheus_metrics() {
     assert(len > 0);
     assert(strstr(prom_buf, "cmem_active_bytes{arena=\"RootArena\"}") != NULL);
     assert(strstr(prom_buf, "cmem_alloc_ops_total{arena=\"RootArena\"}") != NULL);
+    (void)len;
 
     printf("  Prometheus exposition metrics formatted & exported cleanly!\n");
 
@@ -253,6 +259,7 @@ void test_slab_small_allocs() {
         assert(ptrs[i] != NULL);
         uint8_t* byte_ptr = (uint8_t*)ptrs[i];
         assert(byte_ptr[0] == 0 && byte_ptr[15] == 0);
+        (void)byte_ptr;
     }
 
     mp_stats_t stats;
@@ -298,6 +305,7 @@ void test_ring_buffer_alloc() {
     void* p1 = mp_ring_alloc(ring);
     void* p2 = mp_ring_alloc(ring);
     assert(p1 != NULL && p2 != NULL && p1 != p2);
+    (void)p2;
 
     strcpy((char*)p1, "Lock-Free Ring Buffer Payload");
     assert(strcmp((char*)p1, "Lock-Free Ring Buffer Payload") == 0);
@@ -322,6 +330,7 @@ void test_binary_snapshot() {
     char report[4096];
     assert(mp_parse_binary_snapshot("test_snapshot.cmem_dump", report, sizeof(report)) == true);
     assert(strstr(report, "Active Allocations : 2 blocks") != NULL);
+    (void)report;
     printf("  Binary Snapshot Dump exported & parsed cleanly!\n");
 
     mp_free(pool, p1);
@@ -511,6 +520,7 @@ void test_memory_budget_and_oom() {
 
     void* p2 = mp_alloc(pool, 1024);
     assert(p2 == NULL);
+    (void)p2;
     assert(g_oom_triggered == true);
     printf("  OOM Protection Event successfully triggered when limit exceeded!\n");
 
@@ -549,6 +559,7 @@ void test_batch_alloc_and_compact() {
     void* ptrs[50];
     size_t count = mp_alloc_batch(pool, 64, ptrs, 50);
     assert(count == 50);
+    (void)count;
 
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
@@ -581,11 +592,13 @@ void test_leak_analysis_and_heap_audit() {
     uint8_t* poison_test = (uint8_t*)valid_ptr;
     mp_free(pool, valid_ptr);
     assert(poison_test[0] == 0xDD && poison_test[63] == 0xDD);
+    (void)poison_test;
 
     char report[2048];
     size_t report_len = mp_analyze_leaks(pool, report, sizeof(report));
     assert(report_len > 0);
     assert(strstr(report, "Source Location") != NULL);
+    (void)report_len;
 
     mp_free(pool, leak_ptr);
     assert(mp_check_leaks(pool) == true);
@@ -632,6 +645,7 @@ void test_arena_reset_and_json() {
     size_t json_len = mp_dump_json_stats(pool, json_buf, sizeof(json_buf));
     assert(json_len > 0);
     assert(strstr(json_buf, "\"active_allocations\": 50") != NULL);
+    (void)json_len;
 
     mp_reset(pool);
     mp_get_stats(pool, &stats);
@@ -660,6 +674,7 @@ void test_static_buffer_and_callbacks() {
     uintptr_t buf_start = (uintptr_t)g_static_buf;
     uintptr_t buf_end   = buf_start + sizeof(g_static_buf);
     assert((uintptr_t)p1 >= buf_start && (uintptr_t)p1 < buf_end);
+    (void)buf_end;
 
     mp_free(pool, p1);
     assert(mp_check_leaks(pool) == true);

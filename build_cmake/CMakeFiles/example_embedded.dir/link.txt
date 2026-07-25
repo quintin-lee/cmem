@@ -1,0 +1,1 @@
+/usr/bin/cc  -Wall -Wextra -pthread -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/example_embedded.dir/link.d CMakeFiles/example_embedded.dir/examples/example_embedded.c.o -o example_embedded  libcmem.a -lpthread -lrt
