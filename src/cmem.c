@@ -1068,6 +1068,32 @@ size_t mp_resident(memory_pool_t* pool) {
     return res;
 }
 
+void mp_reset_stats(memory_pool_t* pool) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->stats.total_alloc_ops = 0;
+    pool->stats.total_free_ops = 0;
+    pool->stats.peak_bytes = pool->stats.active_bytes;
+    pool->window_alloc_ops = 0;
+    pool->window_alloc_bytes = 0;
+    pool->window_start_time.tv_sec = 0;
+    pool->window_start_time.tv_nsec = 0;
+    memset(pool->stats.size_histogram, 0, sizeof(pool->stats.size_histogram));
+    pool_unlock(pool);
+}
+
+size_t mp_preferred_size(size_t size) {
+    if (size == 0) return 0;
+    if (size <= SLAB_MAX_SIZE) {
+        for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+            if (kSlabSizes[i] >= size) {
+                return kSlabSizes[i];
+            }
+        }
+    }
+    return (size + 7) & ~7;
+}
+
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
 

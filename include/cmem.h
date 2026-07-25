@@ -254,6 +254,16 @@ size_t mp_freeable(memory_pool_t* pool);
 size_t mp_resident(memory_pool_t* pool);
 
 /**
+ * @brief Resets cumulative performance metrics and peak memory usage statistics.
+ */
+void mp_reset_stats(memory_pool_t* pool);
+
+/**
+ * @brief Returns the optimal size class for a requested byte allocation size.
+ */
+size_t mp_preferred_size(size_t size);
+
+/**
  * @brief Creates a memory pool instance using a custom backing allocator.
  */
 memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator);

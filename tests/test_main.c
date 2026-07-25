@@ -227,6 +227,36 @@ void test_advanced_stats() {
     TEST_PASS("test_advanced_stats");
 }
 
+void test_reset_stats_and_preferred_size() {
+    printf("\n--- Test 36: Stats Reset & Preferred Size Optimization (mp_reset_stats, mp_preferred_size) ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    assert(mp_preferred_size(12) == 16);
+    assert(mp_preferred_size(40) == 64);
+    assert(mp_preferred_size(1000) == 1000);
+
+    void* p1 = mp_alloc(pool, 500);
+    assert(p1 != NULL);
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.total_alloc_ops == 1);
+
+    mp_reset_stats(pool);
+    mp_get_stats(pool, &stats);
+    assert(stats.total_alloc_ops == 0);
+    assert(stats.active_allocations == 1);
+
+    printf("  mp_reset_stats & mp_preferred_size verified (12B->%zuB, 40B->%zuB)!\n",
+           mp_preferred_size(12), mp_preferred_size(40));
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_reset_stats_and_preferred_size");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -910,6 +940,7 @@ int main() {
     test_mp_trim();
     test_arena_metadata_apis();
     test_advanced_stats();
+    test_reset_stats_and_preferred_size();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();
