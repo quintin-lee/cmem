@@ -177,6 +177,12 @@ struct memory_pool {
     // NUMA CPU Node Affinity
     int numa_node;
 
+    // Emergency Fallback Reserve Cushion
+    void* emergency_buf;
+    size_t emergency_size;
+    size_t emergency_used;
+    bool in_emergency_state;
+
     // Diagnostics & Statistics
     mp_stats_t stats;
     mp_block_header_t* active_head; // Linked list of current active allocations for leak detection
@@ -968,6 +974,10 @@ void mp_destroy(memory_pool_t* pool) {
             pthread_mutex_destroy(&pool->lock);
         }
 
+        if (pool->emergency_buf) {
+            free(pool->emergency_buf);
+        }
+
         free(pool);
     }
 }
@@ -1149,6 +1159,24 @@ bool mp_set_numa_node(memory_pool_t* pool, int numa_node) {
     return true;
 }
 
+bool mp_enable_emergency_reserve(memory_pool_t* pool, size_t reserve_bytes) {
+    if (!pool || reserve_bytes == 0) return false;
+    pool_lock(pool);
+    if (pool->emergency_buf) free(pool->emergency_buf);
+
+    pool->emergency_buf = malloc(reserve_bytes);
+    if (!pool->emergency_buf) {
+        pool_unlock(pool);
+        return false;
+    }
+    pool->emergency_size = reserve_bytes;
+    pool->emergency_used = 0;
+    pool->in_emergency_state = false;
+    pool_unlock(pool);
+    printf("[CMEM RELIABILITY] Emergency OOM reserve buffer (%zu bytes) configured for [%s]\n", reserve_bytes, pool->arena_name);
+    return true;
+}
+
 static inline void check_watermark_after_change(memory_pool_t* pool) {
     if (!pool->watermark_cb || pool->stats.max_memory_limit == 0) return;
 
@@ -1232,6 +1260,17 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
 
     pool_lock(pool);
     if (pool->stats.max_memory_limit > 0 && pool->stats.active_bytes + size > pool->stats.max_memory_limit) {
+        if (pool->emergency_buf && (pool->emergency_used + size) <= pool->emergency_size) {
+            if (!pool->in_emergency_state) {
+                pool->in_emergency_state = true;
+                fprintf(stderr, "[CMEM CRITICAL] System OOM limit reached! Activating emergency fallback memory reserve buffer (%zu bytes)\n", pool->emergency_size);
+            }
+            void* emergency_ptr = (uint8_t*)pool->emergency_buf + pool->emergency_used;
+            pool->emergency_used += size;
+            pool_unlock(pool);
+            trigger_event(pool, MP_EVENT_OOM, NULL, size);
+            return emergency_ptr;
+        }
         trigger_event(pool, MP_EVENT_OOM, NULL, size);
         pool_unlock(pool);
         return NULL;

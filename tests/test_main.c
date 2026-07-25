@@ -44,6 +44,30 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_emergency_reserve() {
+    printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_memory_limit(pool, 1000);
+    assert(mp_enable_emergency_reserve(pool, 4096) == true);
+
+    void* p1 = mp_alloc(pool, 800);
+    assert(p1 != NULL);
+
+    // This allocation exceeds 1000B budget limit -> triggers emergency reserve fallback!
+    void* p_emerg = mp_alloc(pool, 512);
+    assert(p_emerg != NULL);
+    strcpy((char*)p_emerg, "Emergency Logging Reserve Payload");
+    assert(strcmp((char*)p_emerg, "Emergency Logging Reserve Payload") == 0);
+
+    printf("  Emergency fallback memory cushion activated & payload verified!\n");
+
+    mp_free(pool, p1);
+    mp_destroy(pool);
+    TEST_PASS("test_emergency_reserve");
+}
+
 void test_numa_node_binding() {
     printf("\n--- Test 27: Linux NUMA CPU Node Affinity Binding ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -684,6 +708,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_emergency_reserve();
     test_numa_node_binding();
     test_frame_arena();
     test_diff_snapshots();

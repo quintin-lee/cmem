@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - Emergency OOM Fallback Memory Reserve Cushion (mp_enable_emergency_reserve)
  *  - Linux NUMA Node CPU Memory Affinity Binding (mp_set_numa_node)
  *  - Game & Graphics Pipeline Dual Ping-Pong Frame Arena (mp_frame_arena_create / mp_frame_alloc / mp_frame_end)
  *  - Incremental Memory Leak Diff Analysis Tool (mp_diff_snapshots)
@@ -121,6 +122,11 @@ typedef struct {
     double bandwidth_mbps;        /**< Real-time allocation bandwidth throughput (MB/s) */
     size_t size_histogram[CMEM_HISTOGRAM_BUCKETS]; /**< Allocation size distribution histogram */
 } mp_stats_t;
+
+/**
+ * @brief Enables an emergency fallback reserve cushion for critical OOM scenarios.
+ */
+bool mp_enable_emergency_reserve(memory_pool_t* pool, size_t reserve_bytes);
 
 /**
  * @brief Binds memory pool backing allocations to a specific Linux NUMA CPU node.
