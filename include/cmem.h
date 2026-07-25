@@ -239,6 +239,21 @@ memory_pool_t* mp_get_parent(memory_pool_t* pool);
 size_t mp_get_child_count(memory_pool_t* pool);
 
 /**
+ * @brief Returns memory pool pressure ratio from 0.0 (0%) to 1.0 (100%).
+ */
+double mp_pressure(memory_pool_t* pool);
+
+/**
+ * @brief Returns total reclaimable/freeable bytes inside unused pages in the pool.
+ */
+size_t mp_freeable(memory_pool_t* pool);
+
+/**
+ * @brief Returns estimated physical RSS resident memory size in bytes.
+ */
+size_t mp_resident(memory_pool_t* pool);
+
+/**
  * @brief Creates a memory pool instance using a custom backing allocator.
  */
 memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator);

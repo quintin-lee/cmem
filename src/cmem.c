@@ -1025,6 +1025,49 @@ size_t mp_get_child_count(memory_pool_t* pool) {
     return count;
 }
 
+double mp_pressure(memory_pool_t* pool) {
+    if (!pool) return 0.0;
+    pool_lock(pool);
+    double ratio = 0.0;
+    if (pool->stats.max_memory_limit > 0) {
+        ratio = (double)pool->stats.active_bytes / (double)pool->stats.max_memory_limit;
+    } else if (pool->stats.total_pool_size > 0) {
+        ratio = (double)pool->stats.active_bytes / (double)pool->stats.total_pool_size;
+    }
+    pool_unlock(pool);
+    if (ratio < 0.0) ratio = 0.0;
+    if (ratio > 1.0) ratio = 1.0;
+    return ratio;
+}
+
+size_t mp_freeable(memory_pool_t* pool) {
+    if (!pool) return 0;
+    pool_lock(pool);
+    size_t freeable_bytes = 0;
+
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            if (curr->free_count == curr->total_slots) {
+                freeable_bytes += SLAB_PAGE_SIZE;
+            }
+            curr = curr->next;
+        }
+    }
+
+    pool_unlock(pool);
+    return freeable_bytes;
+}
+
+size_t mp_resident(memory_pool_t* pool) {
+    if (!pool) return 0;
+    pool_lock(pool);
+    size_t res = pool->stats.total_pool_size;
+    pool_unlock(pool);
+    return res;
+}
+
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
 

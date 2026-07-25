@@ -202,6 +202,31 @@ void test_arena_metadata_apis() {
     TEST_PASS("test_arena_metadata_apis");
 }
 
+void test_advanced_stats() {
+    printf("\n--- Test 35: Advanced Memory Pressure & Resource Metrics (mp_pressure, mp_freeable, mp_resident) ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_memory_limit(pool, 10000);
+
+    void* p1 = mp_alloc(pool, 5000);
+    assert(p1 != NULL);
+
+    double press = mp_pressure(pool);
+    assert(press >= 0.49 && press <= 0.51);
+
+    size_t resident = mp_resident(pool);
+    assert(resident >= 5000);
+
+    printf("  Advanced stats verified cleanly (Pressure=%.2f%%, Resident=%zu bytes, Freeable=%zu bytes)\n",
+           press * 100.0, resident, mp_freeable(pool));
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_advanced_stats");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -884,6 +909,7 @@ int main() {
     test_convenience_apis();
     test_mp_trim();
     test_arena_metadata_apis();
+    test_advanced_stats();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();
