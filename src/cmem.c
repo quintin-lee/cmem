@@ -1552,6 +1552,10 @@ void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size) {
 
     if (new_size <= header->usable_size) {
         header->requested_size = new_size;
+        if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+            uint8_t* canary = (uint8_t*)ptr + new_size;
+            *canary = MP_CANARY_BYTE;
+        }
         trigger_event(pool, MP_EVENT_REALLOC, ptr, new_size);
         return ptr;
     }
@@ -1569,7 +1573,7 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
         return NULL;
     }
 
-    size_t total_size = size + alignment + sizeof(mp_block_header_t);
+    size_t total_size = size + alignment + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
     void* raw_ptr = mp_alloc_internal(pool, total_size);
     if (!raw_ptr) return NULL;
 
@@ -1588,6 +1592,13 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
         else pool->active_head = new_header;
         if (orig_header->next) orig_header->next->prev = new_header;
         pool_unlock(pool);
+    } else {
+        new_header->requested_size = size;
+    }
+
+    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+        uint8_t* canary = (uint8_t*)aligned_addr + size;
+        *canary = MP_CANARY_BYTE;
     }
 
     return (void*)aligned_addr;
