@@ -51,6 +51,24 @@ void test_slab_small_allocs() {
     TEST_PASS("test_slab_small_allocs");
 }
 
+void test_shared_memory_ipc() {
+    printf("\n--- Test 14: POSIX Shared Memory Pool & Zero-Copy IPC ---\n");
+    const char* shm_name = "/cmem_test_shm_pool";
+    memory_pool_t* pool = mp_create_shared(shm_name, 512 * 1024, MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 1024);
+    assert(p1 != NULL);
+    strcpy((char*)p1, "Zero-Copy IPC Shared Memory Payload");
+
+    assert(strcmp((char*)p1, "Zero-Copy IPC Shared Memory Payload") == 0);
+    printf("  Shared memory payload read/write verified in /dev/shm segment!\n");
+
+    mp_free(pool, p1);
+    mp_destroy_shared(pool, shm_name);
+    TEST_PASS("test_shared_memory_ipc");
+}
+
 void test_tlsf_medium_allocs() {
     printf("\n--- Test 2: TLSF Allocations (Medium Objects 512B - 4MB) ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
@@ -355,6 +373,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_shared_memory_ipc();
     test_realloc_and_aligned();
     test_cache_aligned_alloc();
     test_guard_pages_protection();

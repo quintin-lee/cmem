@@ -14,6 +14,8 @@
 #include <stdint.h>
 #include <execinfo.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #define MP_MAGIC_HEAD 0x4D504F4F  // "MPOO" in ASCII
@@ -596,6 +598,46 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
 /* --- Public API Implementation --- */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags) {
     return mp_create_custom(initial_capacity, flags, NULL);
+}
+
+memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_t flags) {
+    if (!shm_name || capacity < 64 * 1024) capacity = 1024 * 1024;
+
+    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) return NULL;
+
+    if (ftruncate(shm_fd, capacity) == -1) {
+        close(shm_fd);
+        return NULL;
+    }
+
+    void* shm_ptr = mmap(NULL, capacity, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    close(shm_fd);
+
+    if (shm_ptr == MAP_FAILED) return NULL;
+
+    memory_pool_t* pool = mp_create_from_buffer(shm_ptr, capacity, flags | MP_FLAG_SHARED_MEMORY);
+    if (pool) {
+        snprintf(pool->arena_name, sizeof(pool->arena_name), "SharedIPC[%s]", shm_name);
+        if (flags & MP_FLAG_THREAD_SAFE) {
+            pthread_mutexattr_t mattr;
+            pthread_mutexattr_init(&mattr);
+            pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED);
+            pthread_mutex_init(&pool->lock, &mattr);
+            pthread_mutexattr_destroy(&mattr);
+        }
+    }
+    return pool;
+}
+
+void mp_destroy_shared(memory_pool_t* pool, const char* shm_name) {
+    if (!pool) return;
+    size_t sz = pool->stats.total_pool_size;
+    void* shm_ptr = (void*)pool;
+    munmap(shm_ptr, sz);
+    if (shm_name) {
+        shm_unlink(shm_name);
+    }
 }
 
 memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags, const char* arena_name) {

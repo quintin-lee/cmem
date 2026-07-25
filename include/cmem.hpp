@@ -21,14 +21,21 @@ namespace cmem {
 class MemoryPool {
 public:
     explicit MemoryPool(size_t initial_capacity = 0, mp_flags_t flags = MP_FLAG_DEFAULT)
-        : pool_(mp_create(initial_capacity, flags)) {
+        : pool_(mp_create(initial_capacity, flags)), shm_name_("") {
         if (!pool_) {
             throw std::runtime_error("Failed to create memory pool instance.");
         }
     }
 
+    MemoryPool(const std::string& shm_name, size_t capacity, mp_flags_t flags)
+        : pool_(mp_create_shared(shm_name.c_str(), capacity, flags)), shm_name_(shm_name) {
+        if (!pool_) {
+            throw std::runtime_error("Failed to create POSIX shared memory pool instance.");
+        }
+    }
+
     MemoryPool(MemoryPool& parent, size_t initial_capacity, mp_flags_t flags, const std::string& name)
-        : pool_(mp_create_child(parent.get_raw_pool(), initial_capacity, flags, name.c_str())) {
+        : pool_(mp_create_child(parent.get_raw_pool(), initial_capacity, flags, name.c_str())), shm_name_("") {
         if (!pool_) {
             throw std::runtime_error("Failed to create child memory pool instance.");
         }
@@ -36,21 +43,29 @@ public:
 
     ~MemoryPool() {
         if (pool_) {
-            mp_destroy(pool_);
+            if (!shm_name_.empty()) {
+                mp_destroy_shared(pool_, shm_name_.c_str());
+            } else {
+                mp_destroy(pool_);
+            }
         }
     }
 
     MemoryPool(const MemoryPool&) = delete;
     MemoryPool& operator=(const MemoryPool&) = delete;
 
-    MemoryPool(MemoryPool&& other) noexcept : pool_(other.pool_) {
+    MemoryPool(MemoryPool&& other) noexcept : pool_(other.pool_), shm_name_(std::move(other.shm_name_)) {
         other.pool_ = nullptr;
     }
 
     MemoryPool& operator=(MemoryPool&& other) noexcept {
         if (this != &other) {
-            if (pool_) mp_destroy(pool_);
+            if (pool_) {
+                if (!shm_name_.empty()) mp_destroy_shared(pool_, shm_name_.c_str());
+                else mp_destroy(pool_);
+            }
             pool_ = other.pool_;
+            shm_name_ = std::move(other.shm_name_);
             other.pool_ = nullptr;
         }
         return *this;
@@ -144,6 +159,7 @@ public:
 
 private:
     memory_pool_t* pool_;
+    std::string shm_name_;
 };
 
 /**

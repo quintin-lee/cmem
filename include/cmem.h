@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - Cache Line 64B Alignment & False Sharing Elimination (MP_FLAG_CACHE_ALIGNED)
@@ -46,7 +47,8 @@ typedef enum {
     MP_FLAG_TRACK_LOCATIONS    = (1 << 5), /**< Record file, line, function & backtrace for allocs */
     MP_FLAG_POISON_ON_FREE     = (1 << 6), /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
     MP_FLAG_CACHE_ALIGNED      = (1 << 7), /**< Force 64-byte Cache Line alignment to prevent False Sharing */
-    MP_FLAG_GUARD_PAGES        = (1 << 8)  /**< Add PROT_NONE Guard Pages to trap out-of-bounds page faults */
+    MP_FLAG_GUARD_PAGES        = (1 << 8), /**< Add PROT_NONE Guard Pages to trap out-of-bounds page faults */
+    MP_FLAG_SHARED_MEMORY      = (1 << 9)  /**< POSIX Shared Memory IPC Mode (/dev/shm zero-copy) */
 } mp_flags_t;
 
 /**
@@ -101,6 +103,19 @@ typedef struct {
  * @brief Creates a new cmem memory pool instance using default OS memory.
  */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
+
+/**
+ * @brief Creates a POSIX shared memory pool in /dev/shm for zero-copy Inter-Process Communication (IPC).
+ * @param shm_name POSIX shared memory name (e.g. "/cmem_ipc_arena").
+ * @param capacity Memory capacity size in bytes.
+ * @param flags Memory pool configuration flags.
+ */
+memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_t flags);
+
+/**
+ * @brief Destroys a shared memory pool and unlinks the POSIX shared memory segment.
+ */
+void mp_destroy_shared(memory_pool_t* pool, const char* shm_name);
 
 /**
  * @brief Creates a child memory pool linked to a parent pool.
