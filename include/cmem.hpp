@@ -132,6 +132,10 @@ public:
         mp_dump_tree_info(pool_);
     }
 
+    void dump_histogram() const {
+        mp_dump_histogram(pool_);
+    }
+
     bool check_leaks() const {
         return mp_check_leaks(pool_);
     }

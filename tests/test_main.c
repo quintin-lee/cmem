@@ -100,6 +100,30 @@ void test_cache_aligned_alloc() {
     TEST_PASS("test_cache_aligned_alloc");
 }
 
+void test_allocation_histogram() {
+    printf("\n--- Test 12: Allocation Size Histogram Diagnostics ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 12);
+    void* p2 = mp_alloc(pool, 48);
+    void* p3 = mp_alloc(pool, 200);
+    void* p4 = mp_alloc(pool, 2000);
+    void* p5 = mp_alloc(pool, 60000);
+
+    mp_dump_histogram(pool);
+
+    mp_free(pool, p1);
+    mp_free(pool, p2);
+    mp_free(pool, p3);
+    mp_free(pool, p4);
+    mp_free(pool, p5);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_allocation_histogram");
+}
+
 void test_memory_budget_and_oom() {
     printf("\n--- Test 10: Memory Budget Limit & OOM Event Callback ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -316,6 +340,7 @@ int main() {
     test_tlsf_medium_allocs();
     test_realloc_and_aligned();
     test_cache_aligned_alloc();
+    test_allocation_histogram();
     test_batch_alloc_and_compact();
     test_memory_budget_and_oom();
     test_leak_analysis_and_heap_audit();

@@ -7,6 +7,7 @@
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - Cache Line 64B Alignment & False Sharing Elimination (MP_FLAG_CACHE_ALIGNED)
+ *  - Allocation Size Histogram & Distribution Diagnostics (mp_dump_histogram)
  *  - High-Throughput Batch Allocation & Free (mp_alloc_batch / mp_free_batch)
  *  - Memory Compaction & OS Page Trimming (mp_compact)
  *  - Memory Budget Limits & OOM Protection (mp_set_memory_limit)
@@ -28,6 +29,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define CMEM_HISTOGRAM_BUCKETS 16
 
 /**
  * Configuration flags for memory pool behavior.
@@ -89,6 +92,7 @@ typedef struct {
     size_t tlsf_allocated_bytes;  /**< Payload bytes in medium-object TLSF allocator */
     size_t os_allocated_bytes;    /**< Payload bytes in direct OS fallback allocator */
     double fragmentation_ratio;   /**< Estimated memory fragmentation ratio (0.0 to 1.0) */
+    size_t size_histogram[CMEM_HISTOGRAM_BUCKETS]; /**< Allocation size distribution histogram */
 } mp_stats_t;
 
 /**
@@ -189,6 +193,12 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath);
  * @brief Exports an interactive visual HTML report.
  */
 bool mp_export_html_report(memory_pool_t* pool, const char* filepath);
+
+/**
+ * @brief Prints ASCII allocation size distribution histogram chart.
+ * @param pool Memory pool pointer.
+ */
+void mp_dump_histogram(memory_pool_t* pool);
 
 /**
  * @brief Retrieves current statistical metrics of the memory pool.

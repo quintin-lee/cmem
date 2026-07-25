@@ -970,6 +970,25 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         pool->stats.active_allocations++;
         pool->stats.total_alloc_ops++;
 
+        int bucket = 0;
+        if (size <= 16) bucket = 0;
+        else if (size <= 32) bucket = 1;
+        else if (size <= 64) bucket = 2;
+        else if (size <= 128) bucket = 3;
+        else if (size <= 256) bucket = 4;
+        else if (size <= 512) bucket = 5;
+        else if (size <= 1024) bucket = 6;
+        else if (size <= 2048) bucket = 7;
+        else if (size <= 4096) bucket = 8;
+        else if (size <= 8192) bucket = 9;
+        else if (size <= 16384) bucket = 10;
+        else if (size <= 32768) bucket = 11;
+        else if (size <= 65536) bucket = 12;
+        else if (size <= 524288) bucket = 13;
+        else if (size <= 4194304) bucket = 14;
+        else bucket = 15;
+        pool->stats.size_histogram[bucket]++;
+
         trigger_event(pool, MP_EVENT_ALLOC, ptr, size);
     }
 
@@ -1368,6 +1387,36 @@ void mp_dump_info(memory_pool_t* pool) {
     printf("    - TLSF Pool (Med <=4MB)   : %zu bytes\n", stats.tlsf_allocated_bytes);
     printf("    - Direct OS (Large >4MB)  : %zu bytes\n", stats.os_allocated_bytes);
     printf("==============================================================\n\n");
+}
+
+void mp_dump_histogram(memory_pool_t* pool) {
+    if (!pool) return;
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+
+    static const char* labels[CMEM_HISTOGRAM_BUCKETS] = {
+        "<= 16 B       ", "17 B - 32 B    ", "33 B - 64 B    ", "65 B - 128 B   ",
+        "129 B - 256 B  ", "257 B - 512 B  ", "513 B - 1 KB   ", "1 KB - 2 KB    ",
+        "2 KB - 4 KB    ", "4 KB - 8 KB    ", "8 KB - 16 KB   ", "16 KB - 32 KB  ",
+        "32 KB - 64 KB  ", "64 KB - 512 KB ", "512 KB - 4 MB  ", "> 4 MB         "
+    };
+
+    size_t max_count = 0;
+    for (int i = 0; i < CMEM_HISTOGRAM_BUCKETS; i++) {
+        if (stats.size_histogram[i] > max_count) max_count = stats.size_histogram[i];
+    }
+
+    printf("\n================ ALLOCATION SIZE HISTOGRAM [%s] ================\n", pool->arena_name);
+    for (int i = 0; i < CMEM_HISTOGRAM_BUCKETS; i++) {
+        if (stats.size_histogram[i] == 0) continue;
+        int bar_len = (max_count > 0) ? (int)((stats.size_histogram[i] * 20) / max_count) : 0;
+        char bar_str[21];
+        memset(bar_str, '*', bar_len);
+        bar_str[bar_len] = '\0';
+
+        printf("  Bucket %-2d [%s] : %-8zu [%-20s]\n", i, labels[i], stats.size_histogram[i], bar_str);
+    }
+    printf("=========================================================================\n\n");
 }
 
 static void print_arena_node(memory_pool_t* pool, int indent) {
