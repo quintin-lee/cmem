@@ -1189,6 +1189,28 @@ size_t mp_purge_lazy(memory_pool_t* pool) {
     return purged_bytes;
 }
 
+size_t mp_trim(memory_pool_t* pool, size_t pad) {
+    if (!pool) return 0;
+
+    size_t total_reclaimed = 0;
+
+    total_reclaimed += mp_compact(pool);
+    total_reclaimed += mp_purge_lazy(pool);
+
+    pool_lock(pool);
+    memory_pool_t* child = pool->first_child;
+    while (child) {
+        memory_pool_t* next = child->next_sibling;
+        pool_unlock(pool);
+        total_reclaimed += mp_trim(child, pad);
+        pool_lock(pool);
+        child = next;
+    }
+    pool_unlock(pool);
+
+    return total_reclaimed;
+}
+
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data) {
     if (!pool) return;
     pool_lock(pool);

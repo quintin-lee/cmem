@@ -151,6 +151,28 @@ void test_convenience_apis() {
     TEST_PASS("test_convenience_apis");
 }
 
+void test_mp_trim() {
+    printf("\n--- Test 33: Memory Trim & Page Reclaim (mp_trim) ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* ptrs[200];
+    for (int i = 0; i < 200; i++) {
+        ptrs[i] = mp_alloc(pool, 128);
+    }
+
+    for (int i = 0; i < 200; i++) {
+        mp_free(pool, ptrs[i]);
+    }
+
+    size_t trimmed = mp_trim(pool, 0);
+    printf("  mp_trim reclaimed %zu bytes of unused capacity back to OS!\n", trimmed);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_mp_trim");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -831,6 +853,7 @@ int main() {
     test_tlsf_inplace_realloc();
     test_reallocarray();
     test_convenience_apis();
+    test_mp_trim();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();

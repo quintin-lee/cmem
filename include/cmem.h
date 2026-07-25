@@ -259,6 +259,11 @@ size_t mp_compact(memory_pool_t* pool);
 size_t mp_purge_lazy(memory_pool_t* pool);
 
 /**
+ * @brief Trims and reclaims unused memory capacity back to the system, keeping pad bytes buffer.
+ */
+size_t mp_trim(memory_pool_t* pool, size_t pad);
+
+/**
  * @brief Registers an event callback function for real-time profiling and debugging.
  */
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data);
