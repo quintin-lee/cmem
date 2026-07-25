@@ -121,6 +121,7 @@ typedef struct mp_slab_page {
 
 typedef struct {
     size_t slot_size;
+    pthread_mutex_t lock;
     mp_slab_page_t* partial_pages; // Pages with available free slots
     mp_slab_page_t* full_pages;    // Completely allocated pages
 } mp_slab_class_t;
@@ -159,6 +160,7 @@ typedef struct tlsf_pool {
 /* --- Main Memory Pool Struct --- */
 struct memory_pool {
     mp_flags_t flags;
+    pthread_rwlock_t rwlock;
     pthread_mutex_t lock;
     char arena_name[64];
 
@@ -206,16 +208,36 @@ struct memory_pool {
 };
 
 /* Lock Utilities */
-static inline void pool_lock(memory_pool_t* pool) {
-    if (pool->flags & MP_FLAG_THREAD_SAFE) {
-        pthread_mutex_lock(&pool->lock);
+static inline void pool_rdlock(memory_pool_t* pool) {
+    if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
+        pthread_rwlock_rdlock(&pool->rwlock);
     }
 }
 
-static inline void pool_unlock(memory_pool_t* pool) {
-    if (pool->flags & MP_FLAG_THREAD_SAFE) {
-        pthread_mutex_unlock(&pool->lock);
+static inline void pool_rdunlock(memory_pool_t* pool) {
+    if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
+        pthread_rwlock_unlock(&pool->rwlock);
     }
+}
+
+static inline void pool_wrlock(memory_pool_t* pool) {
+    if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
+        pthread_rwlock_wrlock(&pool->rwlock);
+    }
+}
+
+static inline void pool_wrunlock(memory_pool_t* pool) {
+    if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
+        pthread_rwlock_unlock(&pool->rwlock);
+    }
+}
+
+static inline void pool_lock(memory_pool_t* pool) {
+    pool_wrlock(pool);
+}
+
+static inline void pool_unlock(memory_pool_t* pool) {
+    pool_wrunlock(pool);
 }
 
 /* Event Profiling Dispatcher */
@@ -329,6 +351,7 @@ static void tlsf_mapping_search(size_t size, int* fl, int* sl) {
 static bool slab_init(memory_pool_t* pool) {
     for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
         pool->slab_classes[i].slot_size = kSlabSizes[i];
+        pthread_mutex_init(&pool->slab_classes[i].lock, NULL);
         pool->slab_classes[i].partial_pages = NULL;
         pool->slab_classes[i].full_pages = NULL;
     }
@@ -372,11 +395,20 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx) 
 
 static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size) {
     mp_slab_class_t* sc = &pool->slab_classes[class_idx];
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+
     mp_slab_page_t* page = sc->partial_pages;
 
     if (!page) {
         page = slab_create_page(pool, class_idx);
-        if (!page) return NULL;
+        if (!page) {
+            if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                pthread_mutex_unlock(&sc->lock);
+            }
+            return NULL;
+        }
 
         page->next = sc->partial_pages;
         if (sc->partial_pages) sc->partial_pages->prev = page;
@@ -395,6 +427,12 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
         page->prev = NULL;
         if (sc->full_pages) sc->full_pages->prev = page;
         sc->full_pages = page;
+    }
+
+    pool->stats.slab_allocated_bytes += sc->slot_size;
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_unlock(&sc->lock);
     }
 
     mp_block_header_t* header = (mp_block_header_t*)slot;
@@ -422,13 +460,16 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
         memset(payload, 0, req_size);
     }
 
-    pool->stats.slab_allocated_bytes += sc->slot_size;
     return payload;
 }
 
 static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
     uint8_t class_idx = header->slab_class;
     mp_slab_class_t* sc = &pool->slab_classes[class_idx];
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
 
     uintptr_t ptr_val = (uintptr_t)header->raw_base;
     uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
@@ -452,6 +493,10 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
         page->prev = NULL;
         if (sc->partial_pages) sc->partial_pages->prev = page;
         sc->partial_pages = page;
+    }
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_unlock(&sc->lock);
     }
 }
 
@@ -954,6 +999,7 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const
     }
 
     if (flags & MP_FLAG_THREAD_SAFE) {
+        pthread_rwlock_init(&pool->rwlock, NULL);
         pthread_mutex_init(&pool->lock, NULL);
     }
 
@@ -1018,27 +1064,27 @@ memory_pool_t* mp_get_parent(memory_pool_t* pool) {
 
 size_t mp_get_child_count(memory_pool_t* pool) {
     if (!pool) return 0;
-    pool_lock(pool);
+    pool_rdlock(pool);
     size_t count = 0;
     memory_pool_t* child = pool->first_child;
     while (child) {
         count++;
         child = child->next_sibling;
     }
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     return count;
 }
 
 double mp_pressure(memory_pool_t* pool) {
     if (!pool) return 0.0;
-    pool_lock(pool);
+    pool_rdlock(pool);
     double ratio = 0.0;
     if (pool->stats.max_memory_limit > 0) {
         ratio = (double)pool->stats.active_bytes / (double)pool->stats.max_memory_limit;
     } else if (pool->stats.total_pool_size > 0) {
         ratio = (double)pool->stats.active_bytes / (double)pool->stats.total_pool_size;
     }
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     if (ratio < 0.0) ratio = 0.0;
     if (ratio > 1.0) ratio = 1.0;
     return ratio;
@@ -1046,7 +1092,7 @@ double mp_pressure(memory_pool_t* pool) {
 
 size_t mp_freeable(memory_pool_t* pool) {
     if (!pool) return 0;
-    pool_lock(pool);
+    pool_rdlock(pool);
     size_t freeable_bytes = 0;
 
     for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
@@ -1060,15 +1106,15 @@ size_t mp_freeable(memory_pool_t* pool) {
         }
     }
 
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     return freeable_bytes;
 }
 
 size_t mp_resident(memory_pool_t* pool) {
     if (!pool) return 0;
-    pool_lock(pool);
+    pool_rdlock(pool);
     size_t res = pool->stats.total_pool_size;
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     return res;
 }
 
@@ -1131,7 +1177,12 @@ void mp_destroy(memory_pool_t* pool) {
             tcurr = tnext;
         }
 
+        for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+            pthread_mutex_destroy(&pool->slab_classes[i].lock);
+        }
+
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            pthread_rwlock_destroy(&pool->rwlock);
             pthread_mutex_destroy(&pool->lock);
         }
 
@@ -1913,36 +1964,36 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
 
 size_t mp_usable_size(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr) return 0;
-    pool_lock(pool);
+    pool_rdlock(pool);
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
     if (header->magic != MP_MAGIC_HEAD) {
-        pool_unlock(pool);
+        pool_rdunlock(pool);
         return 0;
     }
     size_t sz = header->usable_size;
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     return sz;
 }
 
 size_t mp_alloc_size(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr) return 0;
-    pool_lock(pool);
+    pool_rdlock(pool);
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
     if (header->magic != MP_MAGIC_HEAD) {
-        pool_unlock(pool);
+        pool_rdunlock(pool);
         return 0;
     }
     size_t sz = header->requested_size;
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     return sz;
 }
 
 bool mp_ptr_valid(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr) return false;
-    pool_lock(pool);
+    pool_rdlock(pool);
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
     if (header->magic != MP_MAGIC_HEAD) {
-        pool_unlock(pool);
+        pool_rdunlock(pool);
         return false;
     }
     bool found = false;
@@ -1954,7 +2005,7 @@ bool mp_ptr_valid(memory_pool_t* pool, void* ptr) {
         }
         curr = curr->next;
     }
-    pool_unlock(pool);
+    pool_rdunlock(pool);
     return found;
 }
 
