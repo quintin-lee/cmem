@@ -3,7 +3,9 @@
  * @brief cmem - Universal Tiered Memory Manager Implementation (Slab + TLSF + OS + Child Arenas + Diagnostics).
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 
 #include "cmem.h"
