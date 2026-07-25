@@ -1963,29 +1963,15 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
 }
 
 size_t mp_usable_size(memory_pool_t* pool, void* ptr) {
-    if (!pool || !ptr) return 0;
-    pool_rdlock(pool);
+    if (!pool || !ptr || !mp_ptr_valid(pool, ptr)) return 0;
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
-    if (header->magic != MP_MAGIC_HEAD) {
-        pool_rdunlock(pool);
-        return 0;
-    }
-    size_t sz = header->usable_size;
-    pool_rdunlock(pool);
-    return sz;
+    return header->usable_size;
 }
 
 size_t mp_alloc_size(memory_pool_t* pool, void* ptr) {
-    if (!pool || !ptr) return 0;
-    pool_rdlock(pool);
+    if (!pool || !ptr || !mp_ptr_valid(pool, ptr)) return 0;
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
-    if (header->magic != MP_MAGIC_HEAD) {
-        pool_rdunlock(pool);
-        return 0;
-    }
-    size_t sz = header->requested_size;
-    pool_rdunlock(pool);
-    return sz;
+    return header->requested_size;
 }
 
 bool mp_ptr_valid(memory_pool_t* pool, void* ptr) {
