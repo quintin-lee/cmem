@@ -1,0 +1,62 @@
+name: cmem Continuous Integration
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.compiler.cc }}, ${{ matrix.build_type }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: "gcc", cxx: "g++" }
+          - { cc: "clang", cxx: "clang++" }
+        build_type: [ "Debug", "Release" ]
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies & Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build valgrind gcc g++ clang
+
+      - name: Run Makefile Build & Sanitizer Unit Tests
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+        run: |
+          make clean
+          make all
+          make test
+          make test_cpp
+          make bench
+          make examples
+
+      - name: Configure CMake Build
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+        run: |
+          cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build CMake Targets
+        run: |
+          cmake --build build_cmake
+
+      - name: Execute CTest Test Suite
+        run: |
+          ctest --test-dir build_cmake --output-on-failure
+
+      - name: Valgrind Memory Safety & Leak Check Audit
+        if: matrix.build_type == 'Debug' && matrix.compiler.cc == 'gcc'
+        run: |
+          valgrind --leak-check=full --error-exitcode=1 ./build_cmake/unit_tests
+          valgrind --leak-check=full --error-exitcode=1 ./build_cmake/cpp_tests
