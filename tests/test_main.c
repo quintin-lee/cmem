@@ -33,6 +33,28 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_prometheus_metrics() {
+    printf("\n--- Test 22: Prometheus / OpenTelemetry Metrics Exporter ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 1024);
+    assert(p1 != NULL);
+
+    char prom_buf[2048];
+    size_t len = mp_export_prometheus_metrics(pool, prom_buf, sizeof(prom_buf));
+    assert(len > 0);
+    assert(strstr(prom_buf, "cmem_active_bytes{arena=\"RootArena\"}") != NULL);
+    assert(strstr(prom_buf, "cmem_alloc_ops_total{arena=\"RootArena\"}") != NULL);
+
+    printf("  Prometheus exposition metrics formatted & exported cleanly!\n");
+
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_prometheus_metrics");
+}
+
 void test_typed_object_pool() {
     printf("\n--- Test 21: 0-Overhead Typed Object Pool Allocator ---\n");
     mp_typed_pool_t* tpool = mp_typed_pool_create(sizeof(test_node_t), 128);
@@ -526,6 +548,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_prometheus_metrics();
     test_typed_object_pool();
     test_env_conf_tuning();
     test_ring_buffer_alloc();

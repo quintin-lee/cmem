@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - Prometheus / OpenTelemetry Standard Metrics Exporter (mp_export_prometheus_metrics)
  *  - 0-Overhead Typed Object Pool Allocator (mp_typed_pool_create / mp_typed_alloc / mp_typed_free)
  *  - CMEM_CONF Environment Variable Runtime Auto-Tuning (mp_parse_env_flags)
  *  - DPDK-Style Lock-Free Atomic Ring Buffer Allocator (mp_ring_create / mp_ring_alloc / mp_ring_free)
@@ -117,8 +118,6 @@ mp_flags_t mp_parse_env_flags(mp_flags_t default_flags);
 
 /**
  * @brief Creates a 0-overhead fixed-size object pool allocator.
- * @param elem_size Size of each individual typed object in bytes.
- * @param capacity Maximum number of pre-allocated elements.
  */
 mp_typed_pool_t* mp_typed_pool_create(size_t elem_size, size_t capacity);
 
@@ -265,6 +264,11 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath);
  * @brief Exports an interactive visual HTML report.
  */
 bool mp_export_html_report(memory_pool_t* pool, const char* filepath);
+
+/**
+ * @brief Formats and dumps memory pool metrics into Prometheus text exposition format.
+ */
+size_t mp_export_prometheus_metrics(memory_pool_t* pool, char* out_buf, size_t max_len);
 
 /**
  * @brief Exports a binary post-mortem memory crash snapshot dump to file.

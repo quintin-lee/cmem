@@ -1848,6 +1848,45 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
     return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
+size_t mp_export_prometheus_metrics(memory_pool_t* pool, char* out_buf, size_t max_len) {
+    if (!pool || !out_buf || max_len == 0) return 0;
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+
+    int len = snprintf(out_buf, max_len,
+        "# HELP cmem_total_pool_bytes Total reserved bytes from OS.\n"
+        "# TYPE cmem_total_pool_bytes gauge\n"
+        "cmem_total_pool_bytes{arena=\"%s\"} %zu\n\n"
+        "# HELP cmem_active_bytes Currently allocated active payload bytes.\n"
+        "# TYPE cmem_active_bytes gauge\n"
+        "cmem_active_bytes{arena=\"%s\"} %zu\n\n"
+        "# HELP cmem_active_allocations Active outstanding allocation count.\n"
+        "# TYPE cmem_active_allocations gauge\n"
+        "cmem_active_allocations{arena=\"%s\"} %zu\n\n"
+        "# HELP cmem_alloc_ops_total Cumulative count of allocation operations.\n"
+        "# TYPE cmem_alloc_ops_total counter\n"
+        "cmem_alloc_ops_total{arena=\"%s\"} %zu\n\n"
+        "# HELP cmem_alloc_qps Real-time allocation QPS rate.\n"
+        "# TYPE cmem_alloc_qps gauge\n"
+        "cmem_alloc_qps{arena=\"%s\"} %.2f\n\n"
+        "# HELP cmem_bandwidth_mbps Real-time allocation bandwidth throughput in MB/s.\n"
+        "# TYPE cmem_bandwidth_mbps gauge\n"
+        "cmem_bandwidth_mbps{arena=\"%s\"} %.2f\n\n"
+        "# HELP cmem_fragmentation_ratio Memory fragmentation ratio (0.0 to 1.0).\n"
+        "# TYPE cmem_fragmentation_ratio gauge\n"
+        "cmem_fragmentation_ratio{arena=\"%s\"} %.4f\n",
+        pool->arena_name, stats.total_pool_size,
+        pool->arena_name, stats.active_bytes,
+        pool->arena_name, stats.active_allocations,
+        pool->arena_name, stats.total_alloc_ops,
+        pool->arena_name, stats.alloc_qps,
+        pool->arena_name, stats.bandwidth_mbps,
+        pool->arena_name, stats.fragmentation_ratio
+    );
+
+    return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
+}
+
 bool mp_check_leaks(memory_pool_t* pool) {
     if (!pool) return true;
     pool_lock(pool);
