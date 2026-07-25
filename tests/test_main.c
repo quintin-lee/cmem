@@ -33,6 +33,32 @@ typedef struct {
     double value;
 } test_node_t;
 
+void test_purge_lazy() {
+    printf("\n--- Test 23: Linux madvise MADV_DONTNEED Lazy RSS Physical Memory Purging ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* ptrs[200];
+    for (int i = 0; i < 200; i++) {
+        ptrs[i] = mp_alloc(pool, 128);
+    }
+
+    for (int i = 50; i < 200; i++) {
+        mp_free(pool, ptrs[i]);
+    }
+
+    size_t purged = mp_purge_lazy(pool);
+    printf("  Lazy RSS purge executed cleanly (Purged: %zu bytes)!\n", purged);
+
+    for (int i = 0; i < 50; i++) {
+        mp_free(pool, ptrs[i]);
+    }
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_purge_lazy");
+}
+
 void test_prometheus_metrics() {
     printf("\n--- Test 22: Prometheus / OpenTelemetry Metrics Exporter ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -548,6 +574,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_purge_lazy();
     test_prometheus_metrics();
     test_typed_object_pool();
     test_env_conf_tuning();

@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - Linux madvise MADV_DONTNEED / MADV_FREE Lazy RSS Physical Memory Purging (mp_purge_lazy)
  *  - Prometheus / OpenTelemetry Standard Metrics Exporter (mp_export_prometheus_metrics)
  *  - 0-Overhead Typed Object Pool Allocator (mp_typed_pool_create / mp_typed_alloc / mp_typed_free)
  *  - CMEM_CONF Environment Variable Runtime Auto-Tuning (mp_parse_env_flags)
@@ -205,6 +206,11 @@ void mp_set_memory_limit(memory_pool_t* pool, size_t max_bytes);
  * @brief Compacts memory pool by releasing empty, unused system memory pages back to OS.
  */
 size_t mp_compact(memory_pool_t* pool);
+
+/**
+ * @brief Purges unused memory pages using Linux madvise MADV_DONTNEED / MADV_FREE to reduce physical RSS.
+ */
+size_t mp_purge_lazy(memory_pool_t* pool);
 
 /**
  * @brief Registers an event callback function for real-time profiling and debugging.

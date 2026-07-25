@@ -1061,6 +1061,43 @@ size_t mp_compact(memory_pool_t* pool) {
     return freed_bytes;
 }
 
+size_t mp_purge_lazy(memory_pool_t* pool) {
+    if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) return 0;
+    pool_lock(pool);
+
+    size_t purged_bytes = 0;
+    long page_sz = sysconf(_SC_PAGESIZE);
+    if (page_sz <= 0) page_sz = 4096;
+
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            if (curr->free_count > 0 && curr->page_raw_mem) {
+                uintptr_t start = (uintptr_t)curr->page_raw_mem + sizeof(mp_slab_page_t);
+                uintptr_t aligned_start = (start + page_sz - 1) & ~((uintptr_t)page_sz - 1);
+                uintptr_t end = (uintptr_t)curr->page_raw_mem + SLAB_PAGE_SIZE;
+                uintptr_t aligned_end = end & ~((uintptr_t)page_sz - 1);
+
+                if (aligned_end > aligned_start) {
+                    size_t purge_sz = aligned_end - aligned_start;
+#ifdef MADV_DONTNEED
+                    madvise((void*)aligned_start, purge_sz, MADV_DONTNEED);
+                    purged_bytes += purge_sz;
+#else
+                    (void)purge_sz;
+#endif
+                }
+            }
+            curr = curr->next;
+        }
+    }
+
+    pool_unlock(pool);
+    printf("[CMEM PERF] Lazy RSS physical memory purge completed: %zu bytes released to Linux kernel\n", purged_bytes);
+    return purged_bytes;
+}
+
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data) {
     if (!pool) return;
     pool_lock(pool);
