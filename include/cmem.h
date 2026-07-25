@@ -290,6 +290,16 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size);
 void mp_free(memory_pool_t* pool, void* ptr);
 
 /**
+ * @brief Convenience functions for string/memory duplicating and formatting.
+ */
+char* mp_strdup(memory_pool_t* pool, const char* str);
+char* mp_strdup_loc(memory_pool_t* pool, const char* str, const char* file, int line, const char* func);
+void* mp_memdup(memory_pool_t* pool, const void* src, size_t n);
+void* mp_memdup_loc(memory_pool_t* pool, const void* src, size_t n, const char* file, int line, const char* func);
+char* mp_asprintf(memory_pool_t* pool, const char* fmt, ...);
+char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const char* func, const char* fmt, ...);
+
+/**
  * @brief Returns the usable allocated capacity of a pointer block.
  */
 size_t mp_usable_size(memory_pool_t* pool, void* ptr);

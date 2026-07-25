@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <pthread.h>
 #include <assert.h>
 #include <stdint.h>
@@ -1644,6 +1645,77 @@ void* mp_reallocarray(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size)
         return NULL;
     }
     return mp_realloc(pool, ptr, nmemb * size);
+}
+
+char* mp_strdup_loc(memory_pool_t* pool, const char* str, const char* file, int line, const char* func) {
+    if (!str) return NULL;
+    size_t len = strlen(str);
+    char* dup = (char*)mp_alloc_loc(pool, len + 1, file, line, func);
+    if (dup) {
+        memcpy(dup, str, len + 1);
+    }
+    return dup;
+}
+
+char* mp_strdup(memory_pool_t* pool, const char* str) {
+    return mp_strdup_loc(pool, str, NULL, 0, NULL);
+}
+
+void* mp_memdup_loc(memory_pool_t* pool, const void* src, size_t n, const char* file, int line, const char* func) {
+    if (!src || n == 0) return NULL;
+    void* dup = mp_alloc_loc(pool, n, file, line, func);
+    if (dup) {
+        memcpy(dup, src, n);
+    }
+    return dup;
+}
+
+void* mp_memdup(memory_pool_t* pool, const void* src, size_t n) {
+    return mp_memdup_loc(pool, src, n, NULL, 0, NULL);
+}
+
+char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const char* func, const char* fmt, ...) {
+    if (!fmt) return NULL;
+    va_list args;
+    va_start(args, fmt);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+
+    if (len < 0) {
+        va_end(args_copy);
+        return NULL;
+    }
+
+    char* buf = (char*)mp_alloc_loc(pool, (size_t)len + 1, file, line, func);
+    if (buf) {
+        vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
+    }
+    va_end(args_copy);
+    return buf;
+}
+
+char* mp_asprintf(memory_pool_t* pool, const char* fmt, ...) {
+    if (!fmt) return NULL;
+    va_list args;
+    va_start(args, fmt);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+
+    if (len < 0) {
+        va_end(args_copy);
+        return NULL;
+    }
+
+    char* buf = (char*)mp_alloc(pool, (size_t)len + 1);
+    if (buf) {
+        vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
+    }
+    va_end(args_copy);
+    return buf;
 }
 
 void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {

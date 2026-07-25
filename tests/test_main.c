@@ -122,6 +122,35 @@ void test_reallocarray() {
     TEST_PASS("test_reallocarray");
 }
 
+void test_convenience_apis() {
+    printf("\n--- Test 32: Convenience String & Memory Helper APIs (mp_strdup, mp_memdup, mp_asprintf) ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    char* str_dup = mp_strdup(pool, "cmem Universal Tiered Allocator");
+    assert(str_dup != NULL);
+    assert(strcmp(str_dup, "cmem Universal Tiered Allocator") == 0);
+
+    int src_data[5] = {10, 20, 30, 40, 50};
+    int* data_dup = (int*)mp_memdup(pool, src_data, sizeof(src_data));
+    assert(data_dup != NULL);
+    assert(memcmp(data_dup, src_data, sizeof(src_data)) == 0);
+
+    char* formatted = mp_asprintf(pool, "Arena [%s] active allocations: %d, QPS: %.2f", "RootArena", 42, 99999.9);
+    assert(formatted != NULL);
+    assert(strstr(formatted, "Arena [RootArena]") != NULL);
+
+    printf("  Convenience APIs verified cleanly: '%s'\n", formatted);
+
+    mp_free(pool, str_dup);
+    mp_free(pool, data_dup);
+    mp_free(pool, formatted);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_convenience_apis");
+}
+
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -801,6 +830,7 @@ int main() {
     test_introspection_apis();
     test_tlsf_inplace_realloc();
     test_reallocarray();
+    test_convenience_apis();
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();
