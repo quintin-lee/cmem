@@ -52,6 +52,25 @@ void test_slab_small_allocs() {
     TEST_PASS("test_slab_small_allocs");
 }
 
+void test_ring_buffer_alloc() {
+    printf("\n--- Test 19: DPDK-Style Ultra-Fast Lock-Free Ring Buffer Allocator ---\n");
+    cmem_ring_buffer_t* ring = mp_ring_create(128, 64);
+    assert(ring != NULL);
+
+    void* p1 = mp_ring_alloc(ring);
+    void* p2 = mp_ring_alloc(ring);
+    assert(p1 != NULL && p2 != NULL && p1 != p2);
+
+    strcpy((char*)p1, "Lock-Free Ring Buffer Payload");
+    assert(strcmp((char*)p1, "Lock-Free Ring Buffer Payload") == 0);
+
+    assert(mp_ring_free(ring, p1) == true);
+    assert(mp_ring_free(ring, p2) == true);
+
+    mp_ring_destroy(ring);
+    TEST_PASS("test_ring_buffer_alloc");
+}
+
 void test_binary_snapshot() {
     printf("\n--- Test 18: Binary Crash Memory Snapshot Dump & Parser ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
@@ -454,6 +473,7 @@ int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
+    test_ring_buffer_alloc();
     test_huge_pages_alloc();
     test_binary_snapshot();
     test_shared_memory_ipc();

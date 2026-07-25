@@ -4,6 +4,7 @@
  * 
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
+ *  - DPDK-Style Lock-Free Atomic Ring Buffer Allocator (mp_ring_create / mp_ring_alloc / mp_ring_free)
  *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
  *  - Linux HugePages (2MB / 1GB) Support for TLB Performance Acceleration (MP_FLAG_HUGE_PAGES)
  *  - Post-Mortem Binary Crash Memory Snapshot Dump & Parser (mp_export_binary_snapshot / mp_parse_binary_snapshot)
@@ -70,6 +71,7 @@ typedef enum {
 } mp_event_type_t;
 
 typedef struct memory_pool memory_pool_t;
+typedef struct cmem_ring_buffer cmem_ring_buffer_t;
 
 /**
  * Event Callback function pointer for telemetry profiling.
@@ -109,6 +111,28 @@ typedef struct {
  * @brief Creates a new cmem memory pool instance using default OS memory.
  */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
+
+/**
+ * @brief Creates a lock-free DPDK-style Ring Buffer Allocator.
+ * @param slot_size Fixed payload size of each slot in bytes.
+ * @param capacity Maximum number of slot elements (must be power of 2).
+ */
+cmem_ring_buffer_t* mp_ring_create(size_t slot_size, size_t capacity);
+
+/**
+ * @brief Allocates a slot pointer from the lock-free ring buffer.
+ */
+void* mp_ring_alloc(cmem_ring_buffer_t* ring);
+
+/**
+ * @brief Returns a slot pointer back to the lock-free ring buffer.
+ */
+bool mp_ring_free(cmem_ring_buffer_t* ring, void* ptr);
+
+/**
+ * @brief Destroys the lock-free ring buffer allocator instance.
+ */
+void mp_ring_destroy(cmem_ring_buffer_t* ring);
 
 /**
  * @brief Creates a POSIX shared memory pool in /dev/shm for zero-copy Inter-Process Communication (IPC).

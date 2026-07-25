@@ -19,6 +19,26 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifdef __cplusplus
+#include <atomic>
+typedef std::atomic<size_t> cmem_atomic_size_t;
+#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) std::atomic_fetch_add_explicit(obj, arg, order)
+#define CMEM_ATOMIC_LOAD(obj, order) std::atomic_load_explicit(obj, order)
+#define CMEM_ATOMIC_INIT(obj, val) std::atomic_init(obj, val)
+#define CMEM_ORDER_RELAXED std::memory_order_relaxed
+#define CMEM_ORDER_ACQUIRE std::memory_order_acquire
+#define CMEM_ORDER_RELEASE std::memory_order_release
+#else
+#include <stdatomic.h>
+typedef atomic_size_t cmem_atomic_size_t;
+#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) atomic_fetch_add_explicit(obj, arg, order)
+#define CMEM_ATOMIC_LOAD(obj, order) atomic_load_explicit(obj, order)
+#define CMEM_ATOMIC_INIT(obj, val) atomic_init(obj, val)
+#define CMEM_ORDER_RELAXED memory_order_relaxed
+#define CMEM_ORDER_ACQUIRE memory_order_acquire
+#define CMEM_ORDER_RELEASE memory_order_release
+#endif
+
 #define MP_MAGIC_HEAD 0x4D504F4F  // "MPOO" in ASCII
 #define MP_CANARY_BYTE 0xDE
 #define MP_POISON_BYTE 0xDD
@@ -617,6 +637,73 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
     next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
 
     tlsf_insert_free_block(tpool, block);
+}
+
+/* --- Lock-Free Ring Buffer Allocator Implementation --- */
+struct cmem_ring_buffer {
+    size_t slot_size;
+    size_t capacity;
+    size_t mask;
+    cmem_atomic_size_t head;
+    cmem_atomic_size_t tail;
+    void** slots;
+    void* buffer;
+};
+
+cmem_ring_buffer_t* mp_ring_create(size_t slot_size, size_t capacity) {
+    if (slot_size == 0 || capacity == 0) return NULL;
+    size_t real_cap = 1;
+    while (real_cap < capacity) real_cap <<= 1;
+
+    cmem_ring_buffer_t* ring = (cmem_ring_buffer_t*)calloc(1, sizeof(cmem_ring_buffer_t));
+    if (!ring) return NULL;
+
+    ring->slot_size = slot_size;
+    ring->capacity = real_cap;
+    ring->mask = real_cap - 1;
+    CMEM_ATOMIC_INIT(&ring->head, 0);
+    CMEM_ATOMIC_INIT(&ring->tail, real_cap);
+
+    ring->slots = (void**)calloc(real_cap, sizeof(void*));
+    size_t total_buf = slot_size * real_cap;
+    if (posix_memalign(&ring->buffer, 64, total_buf) != 0) {
+        free(ring->slots);
+        free(ring);
+        return NULL;
+    }
+
+    uint8_t* base = (uint8_t*)ring->buffer;
+    for (size_t i = 0; i < real_cap; i++) {
+        ring->slots[i] = base + i * slot_size;
+    }
+
+    return ring;
+}
+
+void* mp_ring_alloc(cmem_ring_buffer_t* ring) {
+    if (!ring) return NULL;
+    size_t head = CMEM_ATOMIC_FETCH_ADD(&ring->head, 1, CMEM_ORDER_RELAXED);
+    size_t tail = CMEM_ATOMIC_LOAD(&ring->tail, CMEM_ORDER_ACQUIRE);
+
+    if (head >= tail) {
+        return NULL;
+    }
+
+    return ring->slots[head & ring->mask];
+}
+
+bool mp_ring_free(cmem_ring_buffer_t* ring, void* ptr) {
+    if (!ring || !ptr) return false;
+    size_t tail = CMEM_ATOMIC_FETCH_ADD(&ring->tail, 1, CMEM_ORDER_RELEASE);
+    ring->slots[tail & ring->mask] = ptr;
+    return true;
+}
+
+void mp_ring_destroy(cmem_ring_buffer_t* ring) {
+    if (!ring) return;
+    if (ring->slots) free(ring->slots);
+    if (ring->buffer) free(ring->buffer);
+    free(ring);
 }
 
 /* --- Public API Implementation --- */
