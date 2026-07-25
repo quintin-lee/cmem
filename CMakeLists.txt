@@ -42,6 +42,7 @@ set_target_properties(cmem PROPERTIES
 
 # 安装配置
 install(TARGETS cmem
+    EXPORT cmemTargets
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
@@ -55,6 +56,8 @@ install(FILES
     include/cmem_override.h
     DESTINATION include
 )
+
+include(CMakePackageConfigHelpers)
 
 # 生成 cmemConfig.cmake 用于 find_package 支持
 configure_package_config_file(
