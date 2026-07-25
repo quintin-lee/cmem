@@ -142,6 +142,9 @@ struct memory_pool {
     // Diagnostics & Statistics
     mp_stats_t stats;
     mp_block_header_t* active_head; // Linked list of current active allocations for leak detection
+    uint64_t window_alloc_ops;
+    uint64_t window_alloc_bytes;
+    struct timespec window_start_time;
 
     // Tier 1: Slab Allocators (8B - 512B)
     mp_slab_class_t slab_classes[SLAB_CLASS_COUNT];
@@ -1037,6 +1040,12 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         pool->stats.active_allocations++;
         pool->stats.total_alloc_ops++;
 
+        if (pool->window_start_time.tv_sec == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &pool->window_start_time);
+        }
+        pool->window_alloc_ops++;
+        pool->window_alloc_bytes += size;
+
         int bucket = 0;
         if (size <= 16) bucket = 0;
         else if (size <= 32) bucket = 1;
@@ -1434,6 +1443,17 @@ void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     *stats = pool->stats;
     size_t total_sys = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
     stats->fragmentation_ratio = 1.0 - ((double)pool->stats.active_bytes / (double)total_sys);
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double elapsed = (now.tv_sec - pool->window_start_time.tv_sec) + (now.tv_nsec - pool->window_start_time.tv_nsec) / 1e9;
+    if (elapsed > 0.0001 && pool->window_alloc_ops > 0) {
+        stats->alloc_qps = (double)pool->window_alloc_ops / elapsed;
+        stats->bandwidth_mbps = ((double)pool->window_alloc_bytes / (1024.0 * 1024.0)) / elapsed;
+    } else {
+        stats->alloc_qps = 0.0;
+        stats->bandwidth_mbps = 0.0;
+    }
     pool_unlock(pool);
 }
 
@@ -1448,6 +1468,8 @@ void mp_dump_info(memory_pool_t* pool) {
     printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", stats.peak_bytes, stats.peak_bytes / 1024.0);
     printf("  Max Memory Budget Limit     : %zu bytes (%s)\n", stats.max_memory_limit, stats.max_memory_limit > 0 ? "Enforced" : "Unlimited");
     printf("  Estimated Fragmentation     : %.2f%%\n", stats.fragmentation_ratio * 100.0);
+    printf("  Real-time Alloc Rate (QPS)  : %.2f ops/sec\n", stats.alloc_qps);
+    printf("  Real-time Bandwidth         : %.2f MB/sec\n", stats.bandwidth_mbps);
     printf("  Cumulative Stats            : %zu Allocations, %zu Frees\n", stats.total_alloc_ops, stats.total_free_ops);
     printf("  Allocation Tier Breakdown   :\n");
     printf("    - Slab Pool (Small <=512B): %zu bytes\n", stats.slab_allocated_bytes);

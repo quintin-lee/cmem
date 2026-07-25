@@ -5,6 +5,7 @@
  * Features:
  *  - Tiered allocation: Slab (Small), TLSF (Medium), Direct OS (Large)
  *  - POSIX Shared Memory IPC Arenas for Zero-Copy Inter-Process Communication (mp_create_shared)
+ *  - Real-Time Allocation QPS & Bandwidth Throughput Meter (alloc_qps, bandwidth_mbps)
  *  - O(1) Allocation and Free performance
  *  - Thread-Local Caching (Lock-Free fast path for small objects)
  *  - Cache Line 64B Alignment & False Sharing Elimination (MP_FLAG_CACHE_ALIGNED)
@@ -96,6 +97,8 @@ typedef struct {
     size_t tlsf_allocated_bytes;  /**< Payload bytes in medium-object TLSF allocator */
     size_t os_allocated_bytes;    /**< Payload bytes in direct OS fallback allocator */
     double fragmentation_ratio;   /**< Estimated memory fragmentation ratio (0.0 to 1.0) */
+    double alloc_qps;             /**< Real-time allocation operations per second (QPS) */
+    double bandwidth_mbps;        /**< Real-time allocation bandwidth throughput (MB/s) */
     size_t size_histogram[CMEM_HISTOGRAM_BUCKETS]; /**< Allocation size distribution histogram */
 } mp_stats_t;
 
@@ -106,9 +109,6 @@ memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags);
 
 /**
  * @brief Creates a POSIX shared memory pool in /dev/shm for zero-copy Inter-Process Communication (IPC).
- * @param shm_name POSIX shared memory name (e.g. "/cmem_ipc_arena").
- * @param capacity Memory capacity size in bytes.
- * @param flags Memory pool configuration flags.
  */
 memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_t flags);
 

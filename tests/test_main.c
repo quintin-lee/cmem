@@ -51,6 +51,32 @@ void test_slab_small_allocs() {
     TEST_PASS("test_slab_small_allocs");
 }
 
+void test_realtime_throughput_meter() {
+    printf("\n--- Test 15: Real-Time Allocation QPS & Bandwidth Throughput Meter ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* ptrs[500];
+    for (int i = 0; i < 500; i++) {
+        ptrs[i] = mp_alloc(pool, 1024);
+    }
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.alloc_qps > 0.0);
+    assert(stats.bandwidth_mbps > 0.0);
+    printf("  Measured Real-Time Alloc QPS: %.2f ops/sec, Bandwidth: %.2f MB/sec!\n",
+           stats.alloc_qps, stats.bandwidth_mbps);
+
+    for (int i = 0; i < 500; i++) {
+        mp_free(pool, ptrs[i]);
+    }
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_realtime_throughput_meter");
+}
+
 void test_shared_memory_ipc() {
     printf("\n--- Test 14: POSIX Shared Memory Pool & Zero-Copy IPC ---\n");
     const char* shm_name = "/cmem_test_shm_pool";
@@ -374,6 +400,7 @@ int main() {
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_shared_memory_ipc();
+    test_realtime_throughput_meter();
     test_realloc_and_aligned();
     test_cache_aligned_alloc();
     test_guard_pages_protection();
