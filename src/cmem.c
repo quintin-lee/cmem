@@ -2334,7 +2334,7 @@ size_t mp_resident(memory_pool_t* pool) {
  * @return Merged flags value after applying environment changes
  */
 mp_flags_t mp_reparse_env_flags(memory_pool_t* pool) {
-    if (!pool) return 0;
+    if (!pool) return (mp_flags_t)0;
     mp_flags_t new_flags = mp_parse_env_flags(pool->flags);
     if (new_flags == pool->flags) return pool->flags;
 
