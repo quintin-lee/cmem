@@ -3,10 +3,11 @@
 
 CC = gcc
 CXX = g++
-CFLAGS = -Wall -Wextra -O3 -std=c11 -I./include -pthread -lrt
-CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include -pthread -lrt
-CFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c11 -I./include -pthread -lrt -fsanitize=address,undefined
-CXXFLAGS_DEBUG = -Wall -Wextra -g -O0 -std=c++17 -I./include -pthread -lrt -fsanitize=address,undefined
+LDFLAGS = -pthread -lrt
+CFLAGS = -Wall -Wextra -O3 -std=c11 -I./include
+CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include
+CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -I./include
+CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include
 
 # 版本信息
 VERSION = 1.0.0
@@ -58,35 +59,35 @@ lib: $(SRC) | $(BUILD_DIR)
 
 # 共享库
 lib_shared: $(SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -fPIC -shared $(SRC) -o $(BUILD_DIR)/$(SONAME) -pthread -lrt
+	$(CC) $(CFLAGS) -fPIC -shared $(SRC) -o $(BUILD_DIR)/$(SONAME) $(LDFLAGS)
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
 	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
 
 # C 单元测试
 test: $(SRC) $(TEST_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests
+	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests $(LDFLAGS)
 	@echo "Running C unit tests..."
 	./$(BUILD_DIR)/unit_tests
 
 # C++ 测试
 test_cpp: $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS_DEBUG) $(SRC) $(CPP_TEST_SRC) -o $(BUILD_DIR)/cpp_tests
+	$(CXX) $(CXXFLAGS_DEBUG) $(SRC) $(CPP_TEST_SRC) -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
 	@echo "Running C++ tests..."
 	./$(BUILD_DIR)/cpp_tests
 
 # 性能基准测试
 bench: $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(SRC) $(BENCH_SRC) -o $(BUILD_DIR)/benchmark
+	$(CC) $(CFLAGS) $(SRC) $(BENCH_SRC) -o $(BUILD_DIR)/benchmark $(LDFLAGS)
 	@echo "Running benchmarks..."
 	./$(BUILD_DIR)/benchmark
 
 # 示例程序
 examples: $(SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic
-	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded
-	$(CC) $(CFLAGS) $(SRC) examples/example_leak_analysis.c -o $(BUILD_DIR)/example_leak_analysis
-	$(CC) $(CFLAGS) $(SRC) examples/example_arena_tree.c -o $(BUILD_DIR)/example_arena_tree
+	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic $(LDFLAGS)
+	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded $(LDFLAGS)
+	$(CC) $(CFLAGS) $(SRC) examples/example_leak_analysis.c -o $(BUILD_DIR)/example_leak_analysis $(LDFLAGS)
+	$(CC) $(CFLAGS) $(SRC) examples/example_arena_tree.c -o $(BUILD_DIR)/example_arena_tree $(LDFLAGS)
 	@echo "Running examples..."
 	./$(BUILD_DIR)/example_basic
 	./$(BUILD_DIR)/example_embedded
