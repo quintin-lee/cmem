@@ -1220,6 +1220,82 @@ void mp_set_error_recovery_callback(memory_pool_t* pool, mp_watermark_callback_t
 bool mp_isolate_bad_block(memory_pool_t* pool, void* ptr);
 
 /* ========================================================================== */
+/*  Thread-Level Quota & Circuit Breaker                                         */
+/* ========================================================================== */
+
+/**
+ * @brief Sets a per-thread memory quota limit.
+ *
+ * When a thread's cumulative allocations exceed this limit, the circuit breaker
+ * will trip and reject further allocations from that thread.
+ *
+ * @param pool Pointer to the memory pool
+ * @param quota_bytes Maximum bytes a single thread can allocate (0 for unlimited)
+ */
+void mp_set_thread_quota(memory_pool_t* pool, size_t quota_bytes);
+
+/**
+ * @brief Enables or disables the circuit breaker for thread quota enforcement.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ */
+void mp_set_circuit_breaker(memory_pool_t* pool, bool enable);
+
+/**
+ * @brief Returns the current thread's allocated bytes from the pool.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of bytes allocated by the current thread
+ */
+size_t mp_get_thread_allocated_bytes(memory_pool_t* pool);
+
+/**
+ * @brief Resets the current thread's allocation counter.
+ *
+ * @param pool Pointer to the memory pool
+ */
+void mp_reset_thread_quota(memory_pool_t* pool);
+
+/**
+ * @brief Returns whether the circuit breaker is tripped for the current thread.
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if tripped, false otherwise
+ */
+bool mp_is_circuit_breaker_tripped(memory_pool_t* pool);
+
+/* ========================================================================== */
+/*  ABI Versioning & Container cgroup Awareness                                  */
+/* ========================================================================== */
+
+/**
+ * @brief Returns the ABI version of the cmem library.
+ *
+ * @return ABI version number
+ */
+uint32_t mp_abi_version(void);
+
+/**
+ * @brief Enables or disables container cgroup memory limit awareness.
+ *
+ * When enabled, the pool will read cgroup memory limits and adjust its
+ * behavior accordingly.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ */
+void mp_set_cgroup_aware(memory_pool_t* pool, bool enable);
+
+/**
+ * @brief Returns the detected cgroup memory limit in bytes.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Cgroup memory limit in bytes, or 0 if not available
+ */
+size_t mp_get_cgroup_mem_limit(memory_pool_t* pool);
+
+/* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */
 /* ========================================================================== */
 

@@ -148,6 +148,13 @@ typedef struct {
 
 static MP_THREAD_LOCAL thread_cache_t tls_cache = {{0}, {0}};
 
+typedef struct {
+    size_t alloc_bytes;
+    size_t alloc_count;
+} mp_thread_quota_t;
+
+static MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
+
 /* --- TLSF Structs --- */
 typedef struct tlsf_block {
     size_t size_and_flags;
@@ -256,6 +263,18 @@ struct memory_pool {
     bool is_dirty;
     mp_watermark_callback_t error_recovery_cb;
     void* error_recovery_user_data;
+
+    // Thread-Level Quota & Circuit Breaker
+    size_t thread_quota_bytes;
+    bool circuit_breaker_enabled;
+    bool circuit_breaker_tripped;
+
+    // ABI Versioning
+    uint32_t abi_version;
+
+    // Container cgroup awareness
+    bool cgroup_aware;
+    size_t cgroup_mem_limit;
 };
 
 /* Lock Utilities */
@@ -995,6 +1014,114 @@ bool mp_isolate_bad_block(memory_pool_t* pool, void* ptr) {
     return true;
 }
 
+/* ========================================================================== */
+/*  Thread-Level Quota & Circuit Breaker Public API                            */
+/* ========================================================================== */
+/**
+ * @brief Sets a per-thread memory quota limit.
+ * @param pool Pointer to the memory pool
+ * @param quota_bytes Maximum bytes a single thread can allocate (0 for unlimited)
+ */
+void mp_set_thread_quota(memory_pool_t* pool, size_t quota_bytes) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->thread_quota_bytes = quota_bytes;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Enables or disables the circuit breaker for thread quota enforcement.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ */
+void mp_set_circuit_breaker(memory_pool_t* pool, bool enable) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->circuit_breaker_enabled = enable;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Returns the current thread's allocated bytes from the pool.
+ * @param pool Pointer to the memory pool
+ * @return Number of bytes allocated by the current thread
+ */
+size_t mp_get_thread_allocated_bytes(memory_pool_t* pool) {
+    if (!pool) return 0;
+    return thread_quota.alloc_bytes;
+}
+
+/**
+ * @brief Resets the current thread's allocation counter.
+ * @param pool Pointer to the memory pool
+ */
+void mp_reset_thread_quota(memory_pool_t* pool) {
+    if (!pool) return;
+    thread_quota.alloc_bytes = 0;
+    thread_quota.alloc_count = 0;
+}
+
+/**
+ * @brief Returns whether the circuit breaker is tripped for the current thread.
+ * @param pool Pointer to the memory pool
+ * @return true if tripped, false otherwise
+ */
+bool mp_is_circuit_breaker_tripped(memory_pool_t* pool) {
+    if (!pool) return false;
+    pool_rdlock(pool);
+    bool tripped = pool->circuit_breaker_tripped;
+    pool_rdunlock(pool);
+    return tripped;
+}
+
+/* ========================================================================== */
+/*  ABI Versioning & Container cgroup Awareness Public API                     */
+/* ========================================================================== */
+/**
+ * @brief Returns the ABI version of the cmem library.
+ * @return ABI version number
+ */
+uint32_t mp_abi_version(void) {
+    return 1;
+}
+
+/**
+ * @brief Enables or disables container cgroup memory limit awareness.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ */
+void mp_set_cgroup_aware(memory_pool_t* pool, bool enable) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->cgroup_aware = enable;
+    if (enable) {
+        FILE* f = fopen("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r");
+        if (!f) f = fopen("/sys/fs/cgroup/memory.max", "r");
+        if (f) {
+            unsigned long long limit = 0;
+            if (fscanf(f, "%llu", &limit) == 1 && limit > 0) {
+                pool->cgroup_mem_limit = (size_t)limit;
+            }
+            fclose(f);
+        }
+    }
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Returns the detected cgroup memory limit in bytes.
+ * @param pool Pointer to the memory pool
+ * @return Cgroup memory limit in bytes, or 0 if not available
+ */
+size_t mp_get_cgroup_mem_limit(memory_pool_t* pool) {
+    if (!pool) return 0;
+    pool_rdlock(pool);
+    size_t limit = pool->cgroup_mem_limit;
+    pool_rdunlock(pool);
+    return limit;
+}
+
+/* --- TLSF Implementation --- */
 /**
  * @brief Inserts a free block into the TLSF free-list bitmap structure.
  * @param tpool Pointer to the TLSF pool
@@ -2692,6 +2819,10 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         return NULL;
     }
 
+    if (pool->circuit_breaker_enabled && pool->circuit_breaker_tripped) {
+        return NULL;
+    }
+
     if ((pool->flags & MP_FLAG_PERCPU_FREELIST) && size <= SLAB_MAX_SIZE) {
         uint8_t class_idx = get_slab_class_index(pool, size);
         int cpu = percpu_cpu_index();
@@ -2953,7 +3084,17 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
     if (pool->flags & MP_FLAG_CACHE_ALIGNED) {
         return mp_aligned_alloc(pool, 64, size);
     }
-    return mp_alloc_internal(pool, size);
+    void* ptr = mp_alloc_internal(pool, size);
+    if (ptr && pool->circuit_breaker_enabled) {
+        thread_quota.alloc_bytes += size;
+        thread_quota.alloc_count++;
+        if (pool->thread_quota_bytes > 0 && thread_quota.alloc_bytes >= pool->thread_quota_bytes) {
+            pool_lock(pool);
+            pool->circuit_breaker_tripped = true;
+            pool_unlock(pool);
+        }
+    }
+    return ptr;
 }
 
 /**
@@ -3329,6 +3470,16 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     size_t total_size = size + alignment + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
     void* raw_ptr = mp_alloc_internal(pool, total_size);
     if (!raw_ptr) return NULL;
+
+    if (pool->circuit_breaker_enabled) {
+        thread_quota.alloc_bytes += size;
+        thread_quota.alloc_count++;
+        if (pool->thread_quota_bytes > 0 && thread_quota.alloc_bytes >= pool->thread_quota_bytes) {
+            pool_lock(pool);
+            pool->circuit_breaker_tripped = true;
+            pool_unlock(pool);
+        }
+    }
 
     uintptr_t raw_addr = (uintptr_t)raw_ptr;
     uintptr_t aligned_addr = (raw_addr + sizeof(mp_block_header_t) + (alignment - 1)) & ~(alignment - 1);
