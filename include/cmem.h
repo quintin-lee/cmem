@@ -1172,6 +1172,54 @@ void mp_set_gc_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* u
 void mp_set_eviction_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data);
 
 /* ========================================================================== */
+/*  Memory Error Recovery                                                      */
+/* ========================================================================== */
+
+/**
+ * @brief Marks the memory pool as dirty after detecting a memory error.
+ *
+ * A dirty pool will reject new allocations unless fallback mode is enabled.
+ *
+ * @param pool Pointer to the memory pool
+ */
+void mp_mark_pool_dirty(memory_pool_t* pool);
+
+/**
+ * @brief Clears the dirty state of the memory pool after recovery.
+ *
+ * @param pool Pointer to the memory pool
+ */
+void mp_clear_pool_dirty(memory_pool_t* pool);
+
+/**
+ * @brief Checks if the memory pool is in a dirty (error) state.
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if pool is dirty, false otherwise
+ */
+bool mp_is_pool_dirty(memory_pool_t* pool);
+
+/**
+ * @brief Registers a callback for memory error recovery.
+ *
+ * The callback is invoked when canary corruption or double free is detected.
+ *
+ * @param pool Pointer to the memory pool
+ * @param cb Error recovery callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_error_recovery_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data);
+
+/**
+ * @brief Isolates a bad memory block by marking it as freed and removing it from active tracking.
+ *
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the bad block payload
+ * @return true if block was isolated, false if invalid
+ */
+bool mp_isolate_bad_block(memory_pool_t* pool, void* ptr);
+
+/* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */
 /* ========================================================================== */
 

@@ -251,6 +251,11 @@ struct memory_pool {
     mp_watermark_callback_t eviction_cb;
     void* eviction_user_data;
     bool fallback_to_sys_alloc_on_oom;
+
+    // Memory Error Recovery
+    bool is_dirty;
+    mp_watermark_callback_t error_recovery_cb;
+    void* error_recovery_user_data;
 };
 
 /* Lock Utilities */
@@ -910,6 +915,84 @@ static tlsf_pool_t* tlsf_create_pool_custom(memory_pool_t* pool, size_t size, vo
     tpool->blocks[fl][sl] = block;
 
     return tpool;
+}
+
+/* ========================================================================== */
+/*  Memory Error Recovery Public API                                           */
+/* ========================================================================== */
+/**
+ * @brief Marks the memory pool as dirty after detecting a memory error.
+ * @param pool Pointer to the memory pool
+ */
+void mp_mark_pool_dirty(memory_pool_t* pool) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->is_dirty = true;
+    pool_unlock(pool);
+    fprintf(stderr, "[CMEM ERROR] Pool [%s] marked as DIRTY due to memory corruption\n", pool->arena_name);
+}
+
+/**
+ * @brief Clears the dirty state of the memory pool after recovery.
+ * @param pool Pointer to the memory pool
+ */
+void mp_clear_pool_dirty(memory_pool_t* pool) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->is_dirty = false;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Checks if the memory pool is in a dirty (error) state.
+ * @param pool Pointer to the memory pool
+ * @return true if pool is dirty, false otherwise
+ */
+bool mp_is_pool_dirty(memory_pool_t* pool) {
+    if (!pool) return false;
+    pool_rdlock(pool);
+    bool dirty = pool->is_dirty;
+    pool_rdunlock(pool);
+    return dirty;
+}
+
+/**
+ * @brief Registers a callback for memory error recovery.
+ * @param pool Pointer to the memory pool
+ * @param cb Error recovery callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_error_recovery_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->error_recovery_cb = cb;
+    pool->error_recovery_user_data = user_data;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Isolates a bad memory block by marking it as freed and removing it from active tracking.
+ * @param pool Pointer to the memory pool
+  * @param ptr Pointer to the bad block payload
+  * @return true if block was isolated, false if invalid
+  */
+static void active_list_remove(memory_pool_t* pool, mp_block_header_t* header);
+
+bool mp_isolate_bad_block(memory_pool_t* pool, void* ptr) {
+    if (!pool || !ptr) return false;
+    mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD) return false;
+
+    pool_lock(pool);
+    active_list_remove(pool, header);
+    pool->stats.active_bytes -= header->requested_size;
+    pool->stats.active_allocations--;
+    pool->stats.total_free_ops++;
+    header->magic = 0xDEADBEEF;
+    pool_unlock(pool);
+
+    trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
+    return true;
 }
 
 /**
@@ -2605,6 +2688,10 @@ static inline uint8_t get_slab_class_index(memory_pool_t* pool, size_t size) {
 static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
+    if (mp_is_pool_dirty(pool) && !pool->fallback_to_sys_alloc_on_oom) {
+        return NULL;
+    }
+
     if ((pool->flags & MP_FLAG_PERCPU_FREELIST) && size <= SLAB_MAX_SIZE) {
         uint8_t class_idx = get_slab_class_index(pool, size);
         int cpu = percpu_cpu_index();
@@ -2933,6 +3020,10 @@ void mp_free(memory_pool_t* pool, void* ptr) {
     if (header->magic != MP_MAGIC_HEAD) {
         fprintf(stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
         trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
+        mp_mark_pool_dirty(pool);
+        if (pool->error_recovery_cb) {
+            pool->error_recovery_cb(pool, true, pool->stats.active_bytes, pool->stats.max_memory_limit, pool->error_recovery_user_data);
+        }
         return;
     }
 
@@ -3000,6 +3091,10 @@ void mp_free(memory_pool_t* pool, void* ptr) {
         if (*canary != MP_CANARY_BYTE) {
             fprintf(stderr, "[MEMORY_POOL BUG] Buffer overflow detected at pointer %p!\n", ptr);
             trigger_event(pool, MP_EVENT_CANARY_CORRUPTION, ptr, header->requested_size);
+            mp_mark_pool_dirty(pool);
+            if (pool->error_recovery_cb) {
+                pool->error_recovery_cb(pool, true, pool->stats.active_bytes, pool->stats.max_memory_limit, pool->error_recovery_user_data);
+            }
         }
     }
 
