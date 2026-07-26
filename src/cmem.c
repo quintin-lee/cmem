@@ -4247,7 +4247,11 @@ bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path,
     if (count_a > 0) {
         recs_a = (cmem_snapshot_record_t*)calloc(count_a, sizeof(cmem_snapshot_record_t));
         if (recs_a) {
-            fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa);
+            if (fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa) != count_a) {
+                free(recs_a);
+                recs_a = NULL;
+                count_a = 0;
+            }
         }
     }
     fclose(fa);
