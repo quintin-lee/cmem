@@ -1456,6 +1456,38 @@ bool mp_asan_check_memory(memory_pool_t* pool, void* ptr, size_t size);
 void mp_set_asan_integration(memory_pool_t* pool, bool enable);
 
 /* ========================================================================== */
+/*  Online Pool Expansion                                                     */
+/* ========================================================================== */
+
+/**
+ * @brief Expands the memory pool by adding additional capacity without service interruption.
+ *
+ * This creates a new TLSF pool and links it to the existing pool, allowing
+ * concurrent allocations to continue during the expansion.
+ *
+ * @param pool Pointer to the memory pool
+ * @param additional_bytes Number of additional bytes to add
+ * @return true on success, false on failure
+ */
+bool mp_expand_pool(memory_pool_t* pool, size_t additional_bytes);
+
+/**
+ * @brief Checks if the pool can be expanded further.
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if expansion is possible, false otherwise
+ */
+bool mp_can_expand(memory_pool_t* pool);
+
+/**
+ * @brief Returns the total expandable capacity of the pool.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Total bytes that can still be added
+ */
+size_t mp_get_expandable_size(memory_pool_t* pool);
+
+/* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */
 /* ========================================================================== */
 

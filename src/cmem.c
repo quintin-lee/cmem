@@ -175,6 +175,8 @@ typedef struct tlsf_pool {
     struct tlsf_pool* next;
 } tlsf_pool_t;
 
+static tlsf_pool_t* tlsf_create_pool_custom(memory_pool_t* pool, size_t size, void* custom_mem);
+
 /* --- Per-CPU Lock-Free Freelist Entry --- */
 typedef struct {
     cmem_atomic_size_t head;
@@ -831,30 +833,58 @@ void mp_set_percpu_freelist(memory_pool_t* pool, bool enable) {
     pool_unlock(pool);
 }
 
+/* ========================================================================== */
+/*  Online Pool Expansion                                                     */
+/* ========================================================================== */
 /**
- * @brief Returns whether the per-CPU lock-free freelist is enabled.
+ * @brief Expands the memory pool by adding additional capacity without service interruption.
  * @param pool Pointer to the memory pool
- * @return true if enabled, false otherwise
+ * @param additional_bytes Number of additional bytes to add
+ * @return true on success, false on failure
  */
-bool mp_get_percpu_freelist(memory_pool_t* pool) {
-    if (!pool) return false;
-    pool_rdlock(pool);
-    bool enabled = (pool->flags & MP_FLAG_PERCPU_FREELIST) != 0;
-    pool_rdunlock(pool);
-    return enabled;
+bool mp_expand_pool(memory_pool_t* pool, size_t additional_bytes) {
+    if (!pool || additional_bytes == 0) return false;
+    if (pool->flags & MP_FLAG_STATIC_BUFFER) return false;
+
+    pool_lock(pool);
+    tlsf_pool_t* new_tlsf = tlsf_create_pool_custom(pool, additional_bytes, NULL);
+    if (!new_tlsf) {
+        pool_unlock(pool);
+        return false;
+    }
+
+    new_tlsf->next = pool->tlsf_root;
+    pool->tlsf_root = new_tlsf;
+    pool->stats.total_pool_size += additional_bytes + sizeof(tlsf_pool_t);
+    pool_unlock(pool);
+
+    trigger_event(pool, MP_EVENT_ALLOC, NULL, additional_bytes);
+    return true;
 }
 
 /**
- * @brief Returns the number of CPUs detected for per-CPU freelist partitioning.
+ * @brief Checks if the pool can be expanded further.
  * @param pool Pointer to the memory pool
- * @return Number of CPUs, or 0 if per-CPU freelist is not initialized
+ * @return true if expansion is possible, false otherwise
  */
-int mp_get_percpu_cpu_count(memory_pool_t* pool) {
+bool mp_can_expand(memory_pool_t* pool) {
+    if (!pool) return false;
+    if (pool->flags & MP_FLAG_STATIC_BUFFER) return false;
+    return true;
+}
+
+/**
+ * @brief Returns the total expandable capacity of the pool.
+ * @param pool Pointer to the memory pool
+ * @return Total bytes that can still be added
+ */
+size_t mp_get_expandable_size(memory_pool_t* pool) {
     if (!pool) return 0;
     pool_rdlock(pool);
-    int count = pool->num_cpus;
+    size_t expandable = pool->stats.max_memory_limit > 0 ?
+                        (pool->stats.max_memory_limit - pool->stats.total_pool_size) : 0;
     pool_rdunlock(pool);
-    return count;
+    return expandable > 0 ? expandable : 0;
 }
 
 /* ========================================================================== */
@@ -1018,49 +1048,6 @@ size_t mp_separate_hot_cold_pages(memory_pool_t* pool) {
     }
     pool_unlock(pool);
     return separated;
-}
-
-/* ========================================================================== */
-/*  Graceful Degradation Public API                                            */
-/* ========================================================================== */
-/**
- * @brief Configures graceful degradation behavior when the pool is over its memory limit.
- * @param pool Pointer to the memory pool
- * @param enable true to enable fallback to system malloc on OOM
- */
-void mp_set_fallback_on_oom(memory_pool_t* pool, bool enable) {
-    if (!pool) return;
-    pool_lock(pool);
-    pool->fallback_to_sys_alloc_on_oom = enable;
-    pool_unlock(pool);
-}
-
-/**
- * @brief Registers a garbage collection callback invoked before OOM rejection.
- * @param pool Pointer to the memory pool
- * @param cb GC callback function pointer
- * @param user_data Optional user data passed to the callback
- */
-void mp_set_gc_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data) {
-    if (!pool) return;
-    pool_lock(pool);
-    pool->gc_cb = cb;
-    pool->gc_user_data = user_data;
-    pool_unlock(pool);
-}
-
-/**
- * @brief Registers an eviction callback for low-priority object eviction under pressure.
- * @param pool Pointer to the memory pool
- * @param cb Eviction callback function pointer
- * @param user_data Optional user data passed to the callback
- */
-void mp_set_eviction_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data) {
-    if (!pool) return;
-    pool_lock(pool);
-    pool->eviction_cb = cb;
-    pool->eviction_user_data = user_data;
-    pool_unlock(pool);
 }
 
 /* --- TLSF Implementation --- */
