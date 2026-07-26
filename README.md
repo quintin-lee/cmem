@@ -598,8 +598,31 @@ typedef enum {
 - 提供 `construct` / `destroy` / `rebind` 完整接口
 
 #### `cmem::pmr_resource` (C++17 PMR)
+| 方法 | 说明 |
+| :--- | :--- |
+| `pmr_resource(pool)` | 构造 PMR 资源适配器 |
+| `pool()` | 获取底层 `memory_pool_t*` |
+| `do_allocate(bytes, alignment)` | 从 cmem 池分配内存（继承自 `memory_resource`） |
+| `do_deallocate(p, bytes, alignment)` | 归还内存到 cmem 池（继承自 `memory_resource`） |
+| `do_is_equal(other)` | 比较是否包装同一个 cmem 池（继承自 `memory_resource`） |
+
 - 继承自 `std::pmr::memory_resource`
 - 适配 `std::pmr::vector`、`std::pmr::string`、`std::pmr::map` 等多态容器
+- 当 alignment > sizeof(void*) 时自动调用 `mp_aligned_alloc`
+- 通过 `dynamic_cast` 实现基于底层池指针的相等性比较
+
+**典型用法：**
+```cpp
+cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
+cmem::pmr_resource res(pool.get());
+
+// 所有 std::pmr 容器自动使用 cmem 作为后端分配器
+std::pmr::vector<std::pmr::string> vec(&res);
+std::pmr::unordered_map<int, std::pmr::string> map(&res);
+
+vec.push_back(std::pmr::string("Hello", &res));
+map[1] = std::pmr::string("cmem PMR", &res);
+```
 
 ---
 
