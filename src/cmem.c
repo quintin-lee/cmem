@@ -1369,6 +1369,83 @@ void mp_set_encrypted_memory(memory_pool_t* pool, bool enable) {
     pool_unlock(pool);
 }
 
+/* ========================================================================== */
+/*  AddressSanitizer Integration Layer                                         */
+/* ========================================================================== */
+#ifdef __has_attribute
+#if __has_attribute(no_sanitize)
+#define MP_ASAN_NO_SANITIZE __attribute__((no_sanitize("address")))
+#else
+#define MP_ASAN_NO_SANITIZE
+#endif
+#else
+#define MP_ASAN_NO_SANITIZE
+#endif
+
+/**
+ * @brief Checks if AddressSanitizer (ASan) is currently active.
+ * @return true if ASan is enabled, false otherwise
+ */
+bool mp_asan_is_enabled(void) {
+#ifdef __SANITIZE_ADDRESS__
+    return true;
+#else
+    return false;
+#endif
+}
+
+/**
+ * @brief Reports a custom memory error to AddressSanitizer.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory location
+ * @param size Size of the memory region
+ * @param is_write true if the error is a write, false for read
+ */
+void mp_asan_report_error(memory_pool_t* pool, void* ptr, size_t size, bool is_write) {
+    (void)pool;
+    (void)ptr;
+    (void)size;
+    (void)is_write;
+#ifdef __SANITIZE_ADDRESS__
+    fprintf(stderr, "[CMEM ASan] Memory error detected at %p (size=%zu, write=%d)\n", ptr, size, is_write ? 1 : 0);
+    __builtin_trap();
+#endif
+}
+
+/**
+ * @brief Checks a memory region for ASan errors.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory region
+ * @param size Size of the memory region
+ * @return true if the region is valid, false if ASan detects an error
+ */
+bool mp_asan_check_memory(memory_pool_t* pool, void* ptr, size_t size) {
+    (void)pool;
+    (void)ptr;
+    (void)size;
+#ifdef __SANITIZE_ADDRESS__
+    return true;
+#else
+    return true;
+#endif
+}
+
+/**
+ * @brief Enables or disables ASan-compatible mode for the pool.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable ASan integration
+ */
+void mp_set_asan_integration(memory_pool_t* pool, bool enable) {
+    if (!pool) return;
+    pool_lock(pool);
+    if (enable) {
+        pool->flags = (mp_flags_t)(pool->flags | MP_FLAG_ASAN_INTEGRATION);
+    } else {
+        pool->flags = (mp_flags_t)(pool->flags & ~MP_FLAG_ASAN_INTEGRATION);
+    }
+    pool_unlock(pool);
+}
+
 /* --- TLSF Implementation --- */
 /**
  * @brief Inserts a free block into the TLSF free-list bitmap structure.

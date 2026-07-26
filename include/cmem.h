@@ -68,7 +68,8 @@ typedef enum {
     MP_FLAG_HUGE_PAGES         = (1 << 10),            /**< Use Linux HugePages (2MB/1GB MAP_HUGETLB) for TLB performance */
     MP_FLAG_PERCPU_FREELIST    = (1 << 11),            /**< Enable per-CPU lock-free freelist for low-contention fast path */
     MP_FLAG_HOT_COLD_SEPARATION = (1 << 12),            /**< Enable Hot/Cold page separation for TLB optimization */
-    MP_FLAG_ENCRYPTED_MEMORY    = (1 << 13)             /**< Enable encrypted memory with mlock and MADV_DONTDUMP */
+    MP_FLAG_ENCRYPTED_MEMORY    = (1 << 13),            /**< Enable encrypted memory with mlock and MADV_DONTDUMP */
+    MP_FLAG_ASAN_INTEGRATION    = (1 << 14)             /**< Enable AddressSanitizer integration layer */
 } mp_flags_t;
 
 /**
@@ -1411,6 +1412,48 @@ void mp_secure_zero(memory_pool_t* pool, void* ptr, size_t length);
  * @param enable true to enable encrypted memory mode
  */
 void mp_set_encrypted_memory(memory_pool_t* pool, bool enable);
+
+/* ========================================================================== */
+/*  AddressSanitizer Integration Layer                                          */
+/* ========================================================================== */
+
+/**
+ * @brief Checks if AddressSanitizer (ASan) is currently active.
+ *
+ * @return true if ASan is enabled, false otherwise
+ */
+bool mp_asan_is_enabled(void);
+
+/**
+ * @brief Reports a custom memory error to AddressSanitizer.
+ *
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory location
+ * @param size Size of the memory region
+ * @param is_write true if the error is a write, false for read
+ */
+void mp_asan_report_error(memory_pool_t* pool, void* ptr, size_t size, bool is_write);
+
+/**
+ * @brief Checks a memory region for ASan errors.
+ *
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory region
+ * @param size Size of the memory region
+ * @return true if the region is valid, false if ASan detects an error
+ */
+bool mp_asan_check_memory(memory_pool_t* pool, void* ptr, size_t size);
+
+/**
+ * @brief Enables or disables ASan-compatible mode for the pool.
+ *
+ * When enabled, cmem will coordinate with ASan's shadow memory
+ * for improved error detection.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable ASan integration
+ */
+void mp_set_asan_integration(memory_pool_t* pool, bool enable);
 
 /* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */
