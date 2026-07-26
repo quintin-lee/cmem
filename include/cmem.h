@@ -1102,6 +1102,86 @@ uint64_t mp_get_latency_avg(memory_pool_t* pool);
  */
 void mp_reset_latency_stats(memory_pool_t* pool);
 
+/* ========================================================================== */
+/*  Structured Event Log Ring Buffer & pprof Export                             */
+/* ========================================================================== */
+
+/**
+ * @brief Structured event log record for lock-free ring buffer tracing.
+ */
+typedef struct {
+    uint64_t timestamp_ns;      /**< Monotonic timestamp in nanoseconds */
+    mp_event_type_t event_type; /**< Event type (alloc, free, realloc, etc.) */
+    size_t size;                /**< Allocation size in bytes */
+    uintptr_t ptr;              /**< Pointer involved in the event */
+} mp_event_log_entry_t;
+
+/**
+ * @brief Opaque handle to a structured event log ring buffer.
+ */
+typedef struct mp_event_log mp_event_log_t;
+
+/**
+ * @brief Creates a structured event log with a lock-free ring buffer.
+ *
+ * @param capacity Number of entries in the ring buffer (must be power of two)
+ * @return Pointer to the event log, or NULL on failure
+ */
+mp_event_log_t* mp_event_log_create(size_t capacity);
+
+/**
+ * @brief Destroys the event log and frees all associated memory.
+ * @param log Pointer to the event log
+ */
+void mp_event_log_destroy(mp_event_log_t* log);
+
+/**
+ * @brief Records an event into the structured event log ring buffer.
+ *
+ * @param log Pointer to the event log
+ * @param event_type Event type
+ * @param ptr Pointer involved in the event
+ * @param size Size of the allocation
+ * @return true on success, false if ring buffer is full
+ */
+bool mp_event_log_record(mp_event_log_t* log, mp_event_type_t event_type, void* ptr, size_t size);
+
+/**
+ * @brief Consumes and returns the next event from the ring buffer.
+ *
+ * @param log Pointer to the event log
+ * @param entry Output event entry
+ * @return true if an event was consumed, false if buffer is empty
+ */
+bool mp_event_log_consume(mp_event_log_t* log, mp_event_log_entry_t* entry);
+
+/**
+ * @brief Returns the number of unread events in the ring buffer.
+ *
+ * @param log Pointer to the event log
+ * @return Number of pending events
+ */
+size_t mp_event_log_pending(mp_event_log_t* log);
+
+/**
+ * @brief Clears all pending events from the ring buffer.
+ *
+ * @param log Pointer to the event log
+ */
+void mp_event_log_clear(mp_event_log_t* log);
+
+/**
+ * @brief Exports allocation events in pprof-compatible text format.
+ *
+ * Output can be processed by pprof tools for flame graph generation.
+ *
+ * @param pool Pointer to the memory pool
+ * @param out_buf Output buffer for pprof text
+ * @param max_len Maximum length of the output buffer
+ * @return Number of bytes written to out_buf
+ */
+size_t mp_export_pprof(memory_pool_t* pool, char* out_buf, size_t max_len);
+
 #ifdef MP_ENABLE_LOCATION_MACROS
 #define mp_alloc(pool, sz) mp_alloc_loc(pool, sz, __FILE__, __LINE__, __func__)
 #define mp_calloc(pool, num, sz) mp_calloc_loc(pool, num, sz, __FILE__, __LINE__, __func__)

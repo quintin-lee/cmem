@@ -37,7 +37,9 @@
 #include <atomic>
 typedef std::atomic<size_t> cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) std::atomic_fetch_add_explicit(obj, arg, order)
+#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) std::atomic_fetch_sub_explicit(obj, arg, order)
 #define CMEM_ATOMIC_LOAD(obj, order) std::atomic_load_explicit(obj, order)
+#define CMEM_ATOMIC_STORE(obj, val, order) std::atomic_store_explicit(obj, val, order)
 #define CMEM_ATOMIC_INIT(obj, val) std::atomic_init(obj, val)
 #define CMEM_ORDER_RELAXED std::memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE std::memory_order_acquire
@@ -46,7 +48,9 @@ typedef std::atomic<size_t> cmem_atomic_size_t;
 #include <stdatomic.h>
 typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) atomic_fetch_add_explicit(obj, arg, order)
+#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) atomic_fetch_sub_explicit(obj, arg, order)
 #define CMEM_ATOMIC_LOAD(obj, order) atomic_load_explicit(obj, order)
+#define CMEM_ATOMIC_STORE(obj, val, order) atomic_store_explicit(obj, val, order)
 #define CMEM_ATOMIC_INIT(obj, val) atomic_init(obj, val)
 #define CMEM_ORDER_RELAXED memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE memory_order_acquire
@@ -1036,6 +1040,139 @@ void mp_ring_destroy(cmem_ring_buffer_t* ring) {
     if (ring->slots) free(ring->slots);
     if (ring->buffer) free(ring->buffer);
     free(ring);
+}
+
+/* --- Structured Event Log Ring Buffer Implementation --- */
+/**
+ * @brief Structured event log structure with embedded lock-free ring buffer.
+ */
+struct mp_event_log {
+    cmem_ring_buffer_t* ring;
+    size_t capacity;
+    cmem_atomic_size_t count;
+};
+
+/**
+ * @brief Creates a structured event log with a lock-free ring buffer.
+ * @param capacity Number of entries in the ring buffer (must be power of two)
+ * @return Pointer to the event log, or NULL on failure
+ */
+mp_event_log_t* mp_event_log_create(size_t capacity) {
+    mp_event_log_t* log = (mp_event_log_t*)calloc(1, sizeof(mp_event_log_t));
+    if (!log) return NULL;
+
+    log->ring = mp_ring_create(sizeof(mp_event_log_entry_t), capacity);
+    if (!log->ring) {
+        free(log);
+        return NULL;
+    }
+    log->capacity = capacity;
+    CMEM_ATOMIC_INIT(&log->count, 0);
+    return log;
+}
+
+/**
+ * @brief Destroys the event log and frees all associated memory.
+ * @param log Pointer to the event log
+ */
+void mp_event_log_destroy(mp_event_log_t* log) {
+    if (!log) return;
+    if (log->ring) mp_ring_destroy(log->ring);
+    free(log);
+}
+
+/**
+ * @brief Records an event into the structured event log ring buffer.
+ * @param log Pointer to the event log
+ * @param event_type Event type
+ * @param ptr Pointer involved in the event
+ * @param size Size of the allocation
+ * @return true on success, false if ring buffer is full
+ */
+bool mp_event_log_record(mp_event_log_t* log, mp_event_type_t event_type, void* ptr, size_t size) {
+    if (!log || !log->ring) return false;
+
+    mp_event_log_entry_t* entry = (mp_event_log_entry_t*)mp_ring_alloc(log->ring);
+    if (!entry) return false;
+
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    entry->timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+    entry->event_type = event_type;
+    entry->size = size;
+    entry->ptr = (uintptr_t)ptr;
+
+    CMEM_ATOMIC_FETCH_ADD(&log->count, 1, CMEM_ORDER_RELAXED);
+    return true;
+}
+
+/**
+ * @brief Consumes and returns the next event from the ring buffer.
+ * @param log Pointer to the event log
+ * @param entry Output event entry
+ * @return true if an event was consumed, false if buffer is empty
+ */
+bool mp_event_log_consume(mp_event_log_t* log, mp_event_log_entry_t* entry) {
+    if (!log || !log->ring || !entry) return false;
+
+    mp_event_log_entry_t* slot = (mp_event_log_entry_t*)mp_ring_alloc(log->ring);
+    if (!slot) return false;
+
+    *entry = *slot;
+    CMEM_ATOMIC_FETCH_SUB(&log->count, 1, CMEM_ORDER_RELAXED);
+    return true;
+}
+
+/**
+ * @brief Returns the number of unread events in the ring buffer.
+ * @param log Pointer to the event log
+ * @return Number of pending events
+ */
+size_t mp_event_log_pending(mp_event_log_t* log) {
+    if (!log) return 0;
+    return (size_t)CMEM_ATOMIC_LOAD(&log->count, CMEM_ORDER_ACQUIRE);
+}
+
+/**
+ * @brief Clears all pending events from the ring buffer.
+ * @param log Pointer to the event log
+ */
+void mp_event_log_clear(mp_event_log_t* log) {
+    if (!log) return;
+    CMEM_ATOMIC_STORE(&log->count, 0, CMEM_ORDER_RELAXED);
+    mp_ring_destroy(log->ring);
+    log->ring = mp_ring_create(sizeof(mp_event_log_entry_t), log->capacity);
+}
+
+/**
+ * @brief Exports allocation events in pprof-compatible text format.
+ * @param pool Pointer to the memory pool
+ * @param out_buf Output buffer for pprof text
+ * @param max_len Maximum length of the output buffer
+ * @return Number of bytes written to out_buf
+ */
+size_t mp_export_pprof(memory_pool_t* pool, char* out_buf, size_t max_len) {
+    if (!pool || !out_buf || max_len == 0) return 0;
+
+    size_t total_alloc = pool->stats.total_alloc_ops;
+    size_t active = pool->stats.active_allocations;
+    size_t active_bytes = pool->stats.active_bytes;
+    size_t peak_bytes = pool->stats.peak_bytes;
+
+    int n = snprintf(out_buf, max_len,
+        "heap: %zu %zu\n"
+        "alloc_objects: total %zu\n"
+        "alloc_space: total %zu\n"
+        "inuse_objects: %zu\n"
+        "inuse_space: %zu\n"
+        "peak_space: %zu\n",
+        active_bytes, active,
+        total_alloc, total_alloc > 0 ? pool->stats.total_alloc_ops * sizeof(void*) : 0,
+        active, active_bytes,
+        peak_bytes);
+
+    if (n < 0 || (size_t)n >= max_len) return (size_t)n < 0 ? 0 : max_len;
+    return (size_t)n;
 }
 
 /* --- 0-Overhead Typed Object Pool Implementation --- */
