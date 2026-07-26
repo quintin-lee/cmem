@@ -65,7 +65,8 @@ typedef enum {
     MP_FLAG_CACHE_ALIGNED      = (1 << 7),             /**< Force 64-byte Cache Line alignment to prevent False Sharing */
     MP_FLAG_GUARD_PAGES        = (1 << 8),             /**< Add PROT_NONE Guard Pages to trap out-of-bounds page faults */
     MP_FLAG_SHARED_MEMORY      = (1 << 9),             /**< POSIX Shared Memory IPC Mode (/dev/shm zero-copy) */
-    MP_FLAG_HUGE_PAGES         = (1 << 10)             /**< Use Linux HugePages (2MB/1GB MAP_HUGETLB) for TLB performance */
+    MP_FLAG_HUGE_PAGES         = (1 << 10),            /**< Use Linux HugePages (2MB/1GB MAP_HUGETLB) for TLB performance */
+    MP_FLAG_PERCPU_FREELIST    = (1 << 11)             /**< Enable per-CPU lock-free freelist for low-contention fast path */
 } mp_flags_t;
 
 /**
@@ -1101,6 +1102,37 @@ uint64_t mp_get_latency_avg(memory_pool_t* pool);
  * @param pool Pointer to the memory pool
  */
 void mp_reset_latency_stats(memory_pool_t* pool);
+
+/* ========================================================================== */
+/*  Per-CPU Lock-Free Freelist                                                  */
+/* ========================================================================== */
+
+/**
+ * @brief Enables or disables the per-CPU lock-free freelist optimization.
+ *
+ * When enabled, small-object allocations and frees use per-CPU lock-free
+ * freelists to reduce contention on the global Slab class locks.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ */
+void mp_set_percpu_freelist(memory_pool_t* pool, bool enable);
+
+/**
+ * @brief Returns whether the per-CPU lock-free freelist is enabled.
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if enabled, false otherwise
+ */
+bool mp_get_percpu_freelist(memory_pool_t* pool);
+
+/**
+ * @brief Returns the number of CPUs detected for per-CPU freelist partitioning.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of CPUs, or 0 if per-CPU freelist is not initialized
+ */
+int mp_get_percpu_cpu_count(memory_pool_t* pool);
 
 /* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */

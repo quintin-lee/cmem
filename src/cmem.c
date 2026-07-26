@@ -40,6 +40,8 @@ typedef std::atomic<size_t> cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) std::atomic_fetch_sub_explicit(obj, arg, order)
 #define CMEM_ATOMIC_LOAD(obj, order) std::atomic_load_explicit(obj, order)
 #define CMEM_ATOMIC_STORE(obj, val, order) std::atomic_store_explicit(obj, val, order)
+#define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail) \
+    std::atomic_compare_exchange_weak_explicit(obj, expected, desired, succ, fail)
 #define CMEM_ATOMIC_INIT(obj, val) std::atomic_init(obj, val)
 #define CMEM_ORDER_RELAXED std::memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE std::memory_order_acquire
@@ -51,6 +53,8 @@ typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) atomic_fetch_sub_explicit(obj, arg, order)
 #define CMEM_ATOMIC_LOAD(obj, order) atomic_load_explicit(obj, order)
 #define CMEM_ATOMIC_STORE(obj, val, order) atomic_store_explicit(obj, val, order)
+#define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail) \
+    atomic_compare_exchange_weak_explicit(obj, expected, desired, succ, fail)
 #define CMEM_ATOMIC_INIT(obj, val) atomic_init(obj, val)
 #define CMEM_ORDER_RELAXED memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE memory_order_acquire
@@ -161,6 +165,12 @@ typedef struct tlsf_pool {
     struct tlsf_pool* next;
 } tlsf_pool_t;
 
+/* --- Per-CPU Lock-Free Freelist Entry --- */
+typedef struct {
+    cmem_atomic_size_t head;
+    uint16_t count;
+} mp_percpu_freelist_entry_t;
+
 /* --- Main Memory Pool Struct --- */
 struct memory_pool {
     mp_flags_t flags;
@@ -230,6 +240,10 @@ struct memory_pool {
     size_t arena_quota_limit;
     mp_watermark_callback_t arena_quota_cb;
     void* arena_quota_user_data;
+
+    // Per-CPU lock-free freelist for low-contention fast path
+    int num_cpus;
+    mp_percpu_freelist_entry_t* percpu_freelists;
 };
 
 /* Lock Utilities */
@@ -631,6 +645,181 @@ static inline void tls_cache_refill(memory_pool_t* pool, uint8_t class_idx) {
         tls_cache.slots[class_idx] = slot;
         tls_cache.counts[class_idx]++;
     }
+}
+
+/* --- Per-CPU Lock-Free Freelist Implementation --- */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <sched.h>
+
+#define MP_PERCPU_MAX_BATCH 16
+
+/**
+ * @brief Initializes the per-CPU lock-free freelist arrays.
+ * @param pool Pointer to the memory pool
+ */
+static void percpu_init(memory_pool_t* pool) {
+    if (!pool || pool->percpu_freelists) return;
+    pool->num_cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (pool->num_cpus <= 0) pool->num_cpus = 1;
+    if (pool->num_cpus > 256) pool->num_cpus = 256;
+
+    size_t sz = (size_t)pool->num_cpus * SLAB_CLASS_COUNT * sizeof(mp_percpu_freelist_entry_t);
+    pool->percpu_freelists = (mp_percpu_freelist_entry_t*)calloc(1, sz);
+    if (!pool->percpu_freelists) {
+        pool->num_cpus = 0;
+        return;
+    }
+}
+
+/**
+ * @brief Destroys the per-CPU lock-free freelist arrays.
+ * @param pool Pointer to the memory pool
+ */
+static void percpu_destroy(memory_pool_t* pool) {
+    if (!pool || !pool->percpu_freelists) return;
+    free(pool->percpu_freelists);
+    pool->percpu_freelists = NULL;
+    pool->num_cpus = 0;
+}
+
+/**
+ * @brief Returns the current CPU index for per-CPU freelist access.
+ * @return CPU index in range [0, num_cpus)
+ */
+static inline int percpu_cpu_index(void) {
+    int cpu = sched_getcpu();
+    if (cpu < 0) cpu = 0;
+    return cpu;
+}
+
+/**
+ * @brief Lock-free pop from per-CPU freelist for a given slab class.
+ * @param pool Pointer to the memory pool
+ * @param cpu CPU index
+ * @param class_idx Slab size class index
+ * @return Pointer to slot, or NULL if empty
+ */
+static inline mp_slab_slot_t* percpu_pop(memory_pool_t* pool, int cpu, uint8_t class_idx) {
+    if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) return NULL;
+    size_t idx = (size_t)cpu * SLAB_CLASS_COUNT + class_idx;
+    mp_percpu_freelist_entry_t* entry = &((mp_percpu_freelist_entry_t*)pool->percpu_freelists)[idx];
+    cmem_atomic_size_t* headp = &entry->head;
+    size_t head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
+    if (head == 0) return NULL;
+
+    mp_slab_slot_t* slot = (mp_slab_slot_t*)head;
+    mp_slab_slot_t* next = slot->next;
+    if (!CMEM_ATOMIC_COMPARE_EXCHANGE(headp, &head, (size_t)next, CMEM_ORDER_RELAXED, CMEM_ORDER_RELAXED)) {
+        return NULL;
+    }
+    entry->count--;
+    return slot;
+}
+
+/**
+ * @brief Lock-free push to per-CPU freelist for a given slab class.
+ * @param pool Pointer to the memory pool
+ * @param cpu CPU index
+ * @param class_idx Slab size class index
+ * @param slot Pointer to slot to push
+ * @return true if pushed, false if freelist is full (caller should use normal free path)
+ */
+static inline bool percpu_push(memory_pool_t* pool, int cpu, uint8_t class_idx, mp_slab_slot_t* slot) {
+    if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) return false;
+    size_t idx = (size_t)cpu * SLAB_CLASS_COUNT + class_idx;
+    mp_percpu_freelist_entry_t* entry = &((mp_percpu_freelist_entry_t*)pool->percpu_freelists)[idx];
+    if (entry->count >= MP_PERCPU_MAX_BATCH) return false;
+
+    cmem_atomic_size_t* headp = &entry->head;
+    size_t old_head;
+    do {
+        old_head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
+        slot->next = (mp_slab_slot_t*)old_head;
+    } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(headp, &old_head, (size_t)slot, CMEM_ORDER_RELAXED, CMEM_ORDER_RELAXED));
+    entry->count++;
+    return true;
+}
+
+/**
+ * @brief Batch refills per-CPU freelist from global Slab allocator.
+ * @param pool Pointer to the memory pool
+ * @param cpu CPU index
+ * @param class_idx Slab size class index
+ */
+static inline void percpu_refill(memory_pool_t* pool, int cpu, uint8_t class_idx) {
+    if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) return;
+    size_t idx = (size_t)cpu * SLAB_CLASS_COUNT + class_idx;
+    mp_percpu_freelist_entry_t* entry = &((mp_percpu_freelist_entry_t*)pool->percpu_freelists)[idx];
+    if (entry->count > MP_PERCPU_MAX_BATCH / 2) return;
+
+    mp_slab_slot_t* slots[MP_PERCPU_MAX_BATCH];
+    int got = 0;
+    for (int i = 0; i < MP_PERCPU_MAX_BATCH; i++) {
+        void* ptr = slab_alloc(pool, class_idx, pool->slab_classes[class_idx].slot_size);
+        if (!ptr) break;
+        mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
+        slots[got++] = (mp_slab_slot_t*)header->raw_base;
+    }
+    if (got == 0) return;
+
+    mp_slab_slot_t* head = slots[0];
+    mp_slab_slot_t* tail = head;
+    for (int i = 1; i < got; i++) {
+        tail->next = slots[i];
+        tail = slots[i];
+    }
+    tail->next = (mp_slab_slot_t*)CMEM_ATOMIC_LOAD(&entry->head, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&entry->head, (size_t)head, CMEM_ORDER_RELAXED);
+    entry->count += (uint16_t)got;
+}
+
+/* ========================================================================== */
+/*  Per-CPU Lock-Free Freelist Public API                                       */
+/* ========================================================================== */
+/**
+ * @brief Enables or disables the per-CPU lock-free freelist optimization.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ */
+void mp_set_percpu_freelist(memory_pool_t* pool, bool enable) {
+    if (!pool) return;
+    pool_lock(pool);
+    if (enable) {
+        pool->flags = (mp_flags_t)(pool->flags | MP_FLAG_PERCPU_FREELIST);
+        if (!pool->percpu_freelists) percpu_init(pool);
+    } else {
+        pool->flags = (mp_flags_t)(pool->flags & ~MP_FLAG_PERCPU_FREELIST);
+        percpu_destroy(pool);
+    }
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Returns whether the per-CPU lock-free freelist is enabled.
+ * @param pool Pointer to the memory pool
+ * @return true if enabled, false otherwise
+ */
+bool mp_get_percpu_freelist(memory_pool_t* pool) {
+    if (!pool) return false;
+    pool_rdlock(pool);
+    bool enabled = (pool->flags & MP_FLAG_PERCPU_FREELIST) != 0;
+    pool_rdunlock(pool);
+    return enabled;
+}
+
+/**
+ * @brief Returns the number of CPUs detected for per-CPU freelist partitioning.
+ * @param pool Pointer to the memory pool
+ * @return Number of CPUs, or 0 if per-CPU freelist is not initialized
+ */
+int mp_get_percpu_cpu_count(memory_pool_t* pool) {
+    if (!pool) return 0;
+    pool_rdlock(pool);
+    int count = pool->num_cpus;
+    pool_rdunlock(pool);
+    return count;
 }
 
 /* --- TLSF Implementation --- */
@@ -1401,6 +1590,10 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const
 
     slab_init(pool);
 
+    if (flags & MP_FLAG_PERCPU_FREELIST) {
+        percpu_init(pool);
+    }
+
     if (initial_capacity > 0) {
         pool->tlsf_root = tlsf_create_pool_custom(pool, initial_capacity, NULL);
         if (pool->tlsf_root) {
@@ -1437,6 +1630,10 @@ memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_
     snprintf(pool->arena_name, sizeof(pool->arena_name), "StaticBufferArena");
 
     slab_init(pool);
+
+    if (flags & MP_FLAG_PERCPU_FREELIST) {
+        percpu_init(pool);
+    }
 
     uint8_t* remain_mem = (uint8_t*)aligned_addr + sizeof(memory_pool_t);
     size_t remain_sz = buffer_size - align_offset - sizeof(memory_pool_t) - sizeof(tlsf_pool_t);
@@ -1912,6 +2109,8 @@ void mp_destroy(memory_pool_t* pool) {
             free(pool->emergency_buf);
         }
 
+        percpu_destroy(pool);
+
         free(pool);
     }
 }
@@ -2356,6 +2555,58 @@ static inline uint8_t get_slab_class_index(memory_pool_t* pool, size_t size) {
 static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
+    if ((pool->flags & MP_FLAG_PERCPU_FREELIST) && size <= SLAB_MAX_SIZE) {
+        uint8_t class_idx = get_slab_class_index(pool, size);
+        int cpu = percpu_cpu_index();
+        mp_slab_slot_t* slot = percpu_pop(pool, cpu, class_idx);
+        if (!slot) {
+            percpu_refill(pool, cpu, class_idx);
+            slot = percpu_pop(pool, cpu, class_idx);
+        }
+        if (slot) {
+            mp_block_header_t* header = (mp_block_header_t*)slot;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_SLAB;
+            header->slab_class = class_idx;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = pool->slab_classes[class_idx].slot_size;
+            header->raw_base = slot;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
+
+            void* payload = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
+            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                uint8_t* canary = (uint8_t*)payload + size;
+                *canary = MP_CANARY_BYTE;
+            }
+            if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(payload, 0, size);
+
+            if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
+                active_list_add(pool, header);
+                pool->stats.active_bytes += size;
+                if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                    pool->stats.peak_bytes = pool->stats.active_bytes;
+                }
+                pool->stats.active_allocations++;
+                pool->stats.total_alloc_ops++;
+            } else {
+                pool_lock(pool);
+                active_list_add(pool, header);
+                pool->stats.active_bytes += size;
+                if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                    pool->stats.peak_bytes = pool->stats.active_bytes;
+                }
+                pool->stats.active_allocations++;
+                pool->stats.total_alloc_ops++;
+                pool_unlock(pool);
+            }
+            return payload;
+        }
+    }
+
     if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && size <= SLAB_MAX_SIZE) {
         uint8_t class_idx = get_slab_class_index(pool, size);
         if (tls_cache.counts[class_idx] == 0) {
@@ -2601,6 +2852,31 @@ void mp_free(memory_pool_t* pool, void* ptr) {
 
     if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && header->alloc_type == ALLOC_TYPE_SLAB) {
         uint8_t class_idx = header->slab_class;
+
+        if (pool->flags & MP_FLAG_PERCPU_FREELIST) {
+            int cpu = percpu_cpu_index();
+            mp_slab_slot_t* slot = (mp_slab_slot_t*)header->raw_base;
+            if (percpu_push(pool, cpu, class_idx, slot)) {
+                if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
+                    active_list_remove(pool, header);
+                    pool->stats.active_bytes -= header->requested_size;
+                    pool->stats.active_allocations--;
+                    pool->stats.total_free_ops++;
+                } else {
+                    pool_lock(pool);
+                    active_list_remove(pool, header);
+                    pool->stats.active_bytes -= header->requested_size;
+                    pool->stats.active_allocations--;
+                    pool->stats.total_free_ops++;
+                    pool_unlock(pool);
+                }
+                if (pool->event_cb) {
+                    trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+                }
+                return;
+            }
+        }
+
         if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
             if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
                 active_list_remove(pool, header);
