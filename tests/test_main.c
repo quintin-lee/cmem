@@ -19,11 +19,31 @@
 
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
+/**
+ * @brief Global flag indicating whether an event callback was triggered.
+ */
 static bool g_event_triggered = false;
+/**
+ * @brief Global flag indicating whether an OOM event callback was triggered.
+ */
 static bool g_oom_triggered = false;
+/**
+ * @brief Global flag indicating whether a high watermark callback was triggered.
+ */
 static bool g_high_watermark_hit = false;
+/**
+ * @brief Global flag indicating whether a low watermark callback was triggered.
+ */
 static bool g_low_watermark_hit = false;
 
+/**
+ * @brief Test event callback for verifying alloc/free/oom events.
+ * @param pool Memory pool handle.
+ * @param event Type of memory event.
+ * @param ptr Pointer involved in the event.
+ * @param size Size of the allocation in bytes.
+ * @param user_data Optional user data passed to the callback.
+ */
 static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data) {
     (void)pool; (void)ptr; (void)size; (void)user_data;
     if (event == MP_EVENT_ALLOC) {
@@ -33,6 +53,14 @@ static void test_event_cb(memory_pool_t* pool, mp_event_type_t event, void* ptr,
     }
 }
 
+/**
+ * @brief Test watermark callback for verifying high/low watermark thresholds.
+ * @param pool Memory pool handle.
+ * @param is_high_watermark True if high watermark threshold was hit.
+ * @param current_bytes Current bytes allocated.
+ * @param limit_bytes Memory limit in bytes.
+ * @param user_data Optional user data passed to the callback.
+ */
 static void test_watermark_cb(memory_pool_t* pool, bool is_high_watermark, size_t current_bytes, size_t limit_bytes, void* user_data) {
     (void)pool; (void)current_bytes; (void)limit_bytes; (void)user_data;
     if (is_high_watermark) {
@@ -42,12 +70,18 @@ static void test_watermark_cb(memory_pool_t* pool, bool is_high_watermark, size_
     }
 }
 
+/**
+ * @brief Test node structure used for typed object pool tests.
+ */
 typedef struct {
     int id;
     char name[32];
     double value;
 } test_node_t;
 
+/**
+ * @brief Tests memory introspection APIs: mp_usable_size, mp_alloc_size, mp_ptr_valid.
+ */
 void test_introspection_apis() {
     printf("\n--- Test 29: Memory Introspection APIs (mp_usable_size, mp_alloc_size, mp_ptr_valid) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -77,6 +111,10 @@ void test_introspection_apis() {
     TEST_PASS("test_introspection_apis");
 }
 
+/**
+ * @brief Tests TLSF in-place realloc optimization.
+ * Verifies that realloc can expand a block in-place without memcpy.
+ */
 void test_tlsf_inplace_realloc() {
     printf("\n--- Test 30: TLSF In-Place Realloc Optimization ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
@@ -100,6 +138,9 @@ void test_tlsf_inplace_realloc() {
     TEST_PASS("test_tlsf_inplace_realloc");
 }
 
+/**
+ * @brief Tests overflow-safe mp_reallocarray with nmemb * size validation.
+ */
 void test_reallocarray() {
     printf("\n--- Test 31: Overflow-Safe mp_reallocarray ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -123,6 +164,9 @@ void test_reallocarray() {
     TEST_PASS("test_reallocarray");
 }
 
+/**
+ * @brief Tests convenience APIs: mp_strdup, mp_memdup, and mp_asprintf.
+ */
 void test_convenience_apis() {
     printf("\n--- Test 32: Convenience String & Memory Helper APIs (mp_strdup, mp_memdup, mp_asprintf) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -152,6 +196,9 @@ void test_convenience_apis() {
     TEST_PASS("test_convenience_apis");
 }
 
+/**
+ * @brief Tests memory trim and OS page reclamation via mp_trim.
+ */
 void test_mp_trim() {
     printf("\n--- Test 33: Memory Trim & Page Reclaim (mp_trim) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -174,6 +221,9 @@ void test_mp_trim() {
     TEST_PASS("test_mp_trim");
 }
 
+/**
+ * @brief Tests arena metadata APIs: mp_set_name, mp_get_name, mp_get_parent, mp_get_child_count.
+ */
 void test_arena_metadata_apis() {
     printf("\n--- Test 34: Arena Metadata & Hierarchy Navigation (mp_set_name, mp_get_name, mp_get_parent, mp_get_child_count) ---\n");
     memory_pool_t* root = mp_create(0, MP_FLAG_DEFAULT);
@@ -203,6 +253,9 @@ void test_arena_metadata_apis() {
     TEST_PASS("test_arena_metadata_apis");
 }
 
+/**
+ * @brief Tests advanced memory pressure and resource metrics: mp_pressure, mp_freeable, mp_resident.
+ */
 void test_advanced_stats() {
     printf("\n--- Test 35: Advanced Memory Pressure & Resource Metrics (mp_pressure, mp_freeable, mp_resident) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -228,6 +281,9 @@ void test_advanced_stats() {
     TEST_PASS("test_advanced_stats");
 }
 
+/**
+ * @brief Tests stats reset and preferred size optimization: mp_reset_stats, mp_preferred_size.
+ */
 void test_reset_stats_and_preferred_size() {
     printf("\n--- Test 36: Stats Reset & Preferred Size Optimization (mp_reset_stats, mp_preferred_size) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -258,6 +314,9 @@ void test_reset_stats_and_preferred_size() {
     TEST_PASS("test_reset_stats_and_preferred_size");
 }
 
+/**
+ * @brief Tests cross-platform mp_madvise wrapper.
+ */
 void test_mp_madvise() {
     printf("\n--- Test 37: Cross-Platform mp_madvise Wrapper ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -277,6 +336,9 @@ void test_mp_madvise() {
     TEST_PASS("test_mp_madvise");
 }
 
+/**
+ * @brief Tests emergency OOM fallback memory reserve cushion.
+ */
 void test_emergency_reserve() {
     printf("\n--- Test 28: Emergency OOM Fallback Memory Reserve Cushion ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -304,6 +366,9 @@ void test_emergency_reserve() {
     TEST_PASS("test_emergency_reserve");
 }
 
+/**
+ * @brief Tests Linux NUMA CPU node affinity binding.
+ */
 void test_numa_node_binding() {
     printf("\n--- Test 27: Linux NUMA CPU Node Affinity Binding ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -323,6 +388,9 @@ void test_numa_node_binding() {
     TEST_PASS("test_numa_node_binding");
 }
 
+/**
+ * @brief Tests game and graphics pipeline dual ping-pong frame arena.
+ */
 void test_frame_arena() {
     printf("\n--- Test 26: Game & Graphics Pipeline Dual Ping-Pong Frame Arena ---\n");
     cmem_frame_arena_t* farena = mp_frame_arena_create(512 * 1024);
@@ -350,6 +418,9 @@ void test_frame_arena() {
     TEST_PASS("test_frame_arena");
 }
 
+/**
+ * @brief Tests binary snapshot incremental diff leak detector.
+ */
 void test_diff_snapshots() {
     printf("\n--- Test 25: Binary Snapshot Incremental Diff Leak Detector ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
@@ -379,6 +450,9 @@ void test_diff_snapshots() {
     TEST_PASS("test_diff_snapshots");
 }
 
+/**
+ * @brief Tests high/low watermark threshold alert callbacks.
+ */
 void test_watermark_callback() {
     printf("\n--- Test 24: High/Low Watermark Threshold Alert Callbacks ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -404,6 +478,9 @@ void test_watermark_callback() {
     TEST_PASS("test_watermark_callback");
 }
 
+/**
+ * @brief Tests Linux madvise MADV_DONTNEED lazy RSS physical memory purging.
+ */
 void test_purge_lazy() {
     printf("\n--- Test 23: Linux madvise MADV_DONTNEED Lazy RSS Physical Memory Purging ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -430,6 +507,9 @@ void test_purge_lazy() {
     TEST_PASS("test_purge_lazy");
 }
 
+/**
+ * @brief Tests Prometheus / OpenTelemetry metrics exporter.
+ */
 void test_prometheus_metrics() {
     printf("\n--- Test 22: Prometheus / OpenTelemetry Metrics Exporter ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -453,6 +533,9 @@ void test_prometheus_metrics() {
     TEST_PASS("test_prometheus_metrics");
 }
 
+/**
+ * @brief Tests 0-overhead typed object pool allocator.
+ */
 void test_typed_object_pool() {
     printf("\n--- Test 21: 0-Overhead Typed Object Pool Allocator ---\n");
     mp_typed_pool_t* tpool = mp_typed_pool_create(sizeof(test_node_t), 128);
@@ -477,6 +560,9 @@ void test_typed_object_pool() {
     TEST_PASS("test_typed_object_pool");
 }
 
+/**
+ * @brief Tests slab allocations for small objects (<= 512B).
+ */
 void test_slab_small_allocs() {
     printf("\n--- Test 1: Slab Allocations (Small Objects <= 512B) ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
@@ -505,6 +591,9 @@ void test_slab_small_allocs() {
     TEST_PASS("test_slab_small_allocs");
 }
 
+/**
+ * @brief Tests CMEM_CONF environment variable auto-tuning of pool flags.
+ */
 void test_env_conf_tuning() {
     printf("\n--- Test 20: CMEM_CONF Environment Variable Auto-Tuning ---\n");
     setenv("CMEM_CONF", "canary=1,poison=on,aligned=1", 1);
@@ -526,6 +615,9 @@ void test_env_conf_tuning() {
     TEST_PASS("test_env_conf_tuning");
 }
 
+/**
+ * @brief Tests DPDK-style ultra-fast lock-free ring buffer allocator.
+ */
 void test_ring_buffer_alloc() {
     printf("\n--- Test 19: DPDK-Style Ultra-Fast Lock-Free Ring Buffer Allocator ---\n");
     cmem_ring_buffer_t* ring = mp_ring_create(128, 64);
@@ -546,6 +638,9 @@ void test_ring_buffer_alloc() {
     TEST_PASS("test_ring_buffer_alloc");
 }
 
+/**
+ * @brief Tests binary crash memory snapshot dump and parser.
+ */
 void test_binary_snapshot() {
     printf("\n--- Test 18: Binary Crash Memory Snapshot Dump & Parser ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
@@ -571,6 +666,9 @@ void test_binary_snapshot() {
     TEST_PASS("test_binary_snapshot");
 }
 
+/**
+ * @brief Tests Linux HugePages (2MB/1GB MAP_HUGETLB) acceleration.
+ */
 void test_huge_pages_alloc() {
     printf("\n--- Test 17: Linux HugePages (2MB/1GB MAP_HUGETLB) Acceleration ---\n");
     memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_HUGE_PAGES);
@@ -588,6 +686,9 @@ void test_huge_pages_alloc() {
     TEST_PASS("test_huge_pages_alloc");
 }
 
+/**
+ * @brief Tests global malloc/free symbol interception via cmem_override.h.
+ */
 void test_global_override() {
     printf("\n--- Test 16: Global malloc/free Symbol Interception (cmem_override.h) ---\n");
     
@@ -601,6 +702,9 @@ void test_global_override() {
     TEST_PASS("test_global_override");
 }
 
+/**
+ * @brief Tests real-time allocation QPS and bandwidth throughput meter.
+ */
 void test_realtime_throughput_meter() {
     printf("\n--- Test 15: Real-Time Allocation QPS & Bandwidth Throughput Meter ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -627,6 +731,9 @@ void test_realtime_throughput_meter() {
     TEST_PASS("test_realtime_throughput_meter");
 }
 
+/**
+ * @brief Tests POSIX shared memory pool and zero-copy IPC via /dev/shm.
+ */
 void test_shared_memory_ipc() {
     printf("\n--- Test 14: POSIX Shared Memory Pool & Zero-Copy IPC ---\n");
     const char* shm_name = "/cmem_test_shm_pool";
@@ -645,6 +752,9 @@ void test_shared_memory_ipc() {
     TEST_PASS("test_shared_memory_ipc");
 }
 
+/**
+ * @brief Tests TLSF allocations for medium objects (512B - 4MB).
+ */
 void test_tlsf_medium_allocs() {
     printf("\n--- Test 2: TLSF Allocations (Medium Objects 512B - 4MB) ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
@@ -673,6 +783,9 @@ void test_tlsf_medium_allocs() {
     TEST_PASS("test_tlsf_medium_allocs");
 }
 
+/**
+ * @brief Tests cache line 64B alignment and false sharing elimination.
+ */
 void test_cache_aligned_alloc() {
     printf("\n--- Test 11: Cache Line 64B Alignment & False Sharing Elimination ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_CACHE_ALIGNED);
@@ -694,6 +807,9 @@ void test_cache_aligned_alloc() {
     TEST_PASS("test_cache_aligned_alloc");
 }
 
+/**
+ * @brief Tests page-level guard pages protection via PROT_NONE.
+ */
 void test_guard_pages_protection() {
     printf("\n--- Test 13: Page-Level Guard Pages Protection via PROT_NONE ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_GUARD_PAGES);
@@ -711,6 +827,9 @@ void test_guard_pages_protection() {
     TEST_PASS("test_guard_pages_protection");
 }
 
+/**
+ * @brief Tests allocation size histogram diagnostics.
+ */
 void test_allocation_histogram() {
     printf("\n--- Test 12: Allocation Size Histogram Diagnostics ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -735,6 +854,9 @@ void test_allocation_histogram() {
     TEST_PASS("test_allocation_histogram");
 }
 
+/**
+ * @brief Tests memory budget limit and OOM event callback.
+ */
 void test_memory_budget_and_oom() {
     printf("\n--- Test 10: Memory Budget Limit & OOM Event Callback ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -781,6 +903,9 @@ void test_realloc_and_aligned() {
     TEST_PASS("test_realloc_and_aligned");
 }
 
+/**
+ * @brief Tests batch allocations and memory compaction via mp_compact.
+ */
 void test_batch_alloc_and_compact() {
     printf("\n--- Test 9: Batch Allocations & Memory Compaction ---\n");
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
@@ -806,6 +931,9 @@ void test_batch_alloc_and_compact() {
     TEST_PASS("test_batch_alloc_and_compact");
 }
 
+/**
+ * @brief Tests leak analysis report and heap audit features.
+ */
 void test_leak_analysis_and_heap_audit() {
     printf("\n--- Test 7: Leak Analysis Report & Heap Audit ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS | MP_FLAG_POISON_ON_FREE);
@@ -835,6 +963,9 @@ void test_leak_analysis_and_heap_audit() {
     TEST_PASS("test_leak_analysis_and_heap_audit");
 }
 
+/**
+ * @brief Tests child arenas and visual HTML report export.
+ */
 void test_child_arenas_and_html_export() {
     printf("\n--- Test 8: Child Arenas & Visual HTML Report Export ---\n");
     memory_pool_t* root = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
@@ -858,6 +989,9 @@ void test_child_arenas_and_html_export() {
     TEST_PASS("test_child_arenas_and_html_export");
 }
 
+/**
+ * @brief Tests fast arena reset and JSON exporter.
+ */
 void test_arena_reset_and_json() {
     printf("\n--- Test 5: Fast Arena Reset & JSON Exporter ---\n");
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
@@ -888,6 +1022,9 @@ void test_arena_reset_and_json() {
 
 static uint8_t g_static_buf[256 * 1024];
 
+/**
+ * @brief Tests static buffer arena and event callbacks.
+ */
 void test_static_buffer_and_callbacks() {
     printf("\n--- Test 6: Static Buffer Arena & Event Callbacks ---\n");
     memory_pool_t* pool = mp_create_from_buffer(g_static_buf, sizeof(g_static_buf), MP_FLAG_DEFAULT);
@@ -914,6 +1051,11 @@ void test_static_buffer_and_callbacks() {
 #define THREAD_COUNT 4
 #define ALLOCS_PER_THREAD 500
 
+/**
+ * @brief Thread worker function for multithreaded concurrent safety tests.
+ * @param arg Pointer to the memory pool to use.
+ * @return NULL.
+ */
 void* thread_worker(void* arg) {
     memory_pool_t* pool = (memory_pool_t*)arg;
     void* ptrs[ALLOCS_PER_THREAD];
@@ -931,6 +1073,9 @@ void* thread_worker(void* arg) {
     return NULL;
 }
 
+/**
+ * @brief Tests multithreaded concurrent safety and thread-local cache.
+ */
 void test_multithread_safety() {
     printf("\n--- Test 4: Multithreaded Concurrent Safety & Thread-Local Cache ---\n");
     memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
@@ -951,6 +1096,11 @@ void test_multithread_safety() {
     TEST_PASS("test_multithread_safety");
 }
 
+/**
+ * @brief Entry point for all cmem C unit tests.
+ * Runs all test cases and prints success message.
+ * @return 0 on success.
+ */
 int main() {
     printf("================ RUNNING CMEM UNIT TESTS ================\n");
     test_introspection_apis();

@@ -13,6 +13,9 @@
 #include <unordered_map>
 #include <cassert>
 
+/**
+ * @brief Tests cmem C++ STL-compatible allocator with std::vector and std::unordered_map.
+ */
 void test_cpp_stl_allocator() {
     std::cout << "\n================ RUNNING C++ STL ALLOCATOR TESTS ================\n" << std::endl;
 
@@ -49,6 +52,9 @@ void test_cpp_stl_allocator() {
 
 #include "../include/cmem_pmr.hpp"
 
+/**
+ * @brief Tests cmem C++17 PMR allocator with std::pmr::vector and std::pmr::string.
+ */
 void test_cpp_pmr_allocator() {
     std::cout << "\n================ RUNNING C++17 PMR ALLOCATOR TESTS ================\n" << std::endl;
 
@@ -71,6 +77,10 @@ void test_cpp_pmr_allocator() {
     std::cout << "[PASS] C++17 PMR Allocator Test Passed Cleanly!" << std::endl;
 }
 
+/**
+ * @brief Entry point for all cmem C++ unit tests.
+ * @return 0 on success.
+ */
 int main() {
     test_cpp_stl_allocator();
     test_cpp_pmr_allocator();

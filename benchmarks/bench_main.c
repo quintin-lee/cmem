@@ -12,12 +12,20 @@
 #define SMALL_ALLOC_COUNT 1000000
 #define MEDIUM_ALLOC_COUNT 100000
 
+/**
+ * @brief Retrieves the current monotonic time in seconds.
+ * @return Current time in seconds as a double.
+ */
 static double get_time_sec() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+/**
+ * @brief Benchmarks small object allocations (32-256 bytes) comparing system malloc vs cmem.
+ * Measures throughput in Mops/sec for 1,000,000 operations.
+ */
 void bench_small_allocs() {
     printf("\n--- Benchmark 1: Small Allocations (32-256 Bytes x %d ops) ---\n", SMALL_ALLOC_COUNT);
     void** ptrs = (void**)malloc(sizeof(void*) * SMALL_ALLOC_COUNT);
@@ -53,6 +61,10 @@ void bench_small_allocs() {
     free(ptrs);
 }
 
+/**
+ * @brief Benchmarks medium object allocations (1KB-64KB) comparing system malloc vs cmem.
+ * Measures throughput for 100,000 operations.
+ */
 void bench_medium_allocs() {
     printf("\n--- Benchmark 2: Medium Dynamic Allocations (1KB-64KB x %d ops) ---\n", MEDIUM_ALLOC_COUNT);
     void** ptrs = (void**)malloc(sizeof(void*) * MEDIUM_ALLOC_COUNT);
@@ -86,6 +98,10 @@ void bench_medium_allocs() {
     free(ptrs);
 }
 
+/**
+ * @brief Benchmarks arena reset performance comparing individual free loop vs mp_reset batch reset.
+ * Runs 1000 rounds of 500 allocations to measure the speedup of batch reset.
+ */
 void bench_arena_reset() {
     printf("\n--- Benchmark 3: Fast Arena Reset (mp_reset x 1000 rounds of 500 allocs) ---\n");
     memory_pool_t* pool = mp_create(8 * 1024 * 1024, MP_FLAG_DEFAULT);
@@ -120,6 +136,11 @@ void bench_arena_reset() {
     mp_destroy(pool);
 }
 
+/**
+ * @brief Entry point for cmem performance benchmarks.
+ * Runs small alloc, medium alloc, and arena reset benchmarks.
+ * @return 0 on success.
+ */
 int main() {
     printf("================ CMEM PERFORMANCE BENCHMARK ================\n");
     bench_small_allocs();

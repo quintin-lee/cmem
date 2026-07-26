@@ -8,6 +8,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Event logger callback for profiling allocation and free events.
+ * @param pool Memory pool handle.
+ * @param event Type of memory event (alloc, free, or other).
+ * @param ptr Pointer involved in the event.
+ * @param size Size of the allocation in bytes.
+ * @param user_data Optional user data passed to the callback.
+ */
 void my_event_logger(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data) {
     (void)pool; (void)user_data;
     const char* ev_name = (event == MP_EVENT_ALLOC) ? "ALLOC" :
@@ -15,6 +23,10 @@ void my_event_logger(memory_pool_t* pool, mp_event_type_t event, void* ptr, size
     printf(" [PROFILER LOG] Event: %-5s | Address: %p | Size: %zu bytes\n", ev_name, ptr, size);
 }
 
+/**
+ * @brief Demonstrates basic cmem usage with event profiling enabled.
+ * @return 0 on success, 1 on failure.
+ */
 int main() {
     printf("=== Example 1: Basic cmem Usage with Event Profiler ===\n\n");
 

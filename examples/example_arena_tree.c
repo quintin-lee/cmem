@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <assert.h>
 
+/**
+ * @brief Demonstrates hierarchical parent-child arena trees and HTML profiler dashboard export.
+ * @return 0 on success.
+ */
 int main() {
     printf("=== Example 4: Hierarchical Child Arenas & HTML Profiler Dashboard ===\n\n");
 

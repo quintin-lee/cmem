@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Helper function that intentionally leaks one buffer and properly frees another.
+ * @param pool Memory pool handle.
+ */
 void do_leaky_work(memory_pool_t* pool) {
     void* leaked_buf = mp_alloc_loc(pool, 128, __FILE__, __LINE__, __func__);
     void* normal_buf = mp_alloc_loc(pool, 64,  __FILE__, __LINE__, __func__);
@@ -18,6 +22,10 @@ void do_leaky_work(memory_pool_t* pool) {
     mp_free(pool, normal_buf);
 }
 
+/**
+ * @brief Demonstrates leak analysis, heap audit, and location tracking features.
+ * @return 0 on success, 1 on failure.
+ */
 int main() {
     printf("=== Example 3: Memory Leak Analysis & Heap Audit Demo ===\n\n");
 

@@ -1,5 +1,7 @@
 # cmem - Universal High-Performance Tiered Memory Manager
 
+> 🌐 **Languages**: [English](README.md) | [中文](README.zh.md)
+
 **cmem** is a universal, high-performance tiered memory management tool designed with **C11 / C++17**. It combines the core strengths of industrial-grade allocators such as **Slab** and **TLSF**, providing comprehensive memory diagnostics, introspection queries, cascading tree-shaped Arena organization, cross-platform OS page reclamation, and C++17 PMR container adaptation.
 
 ---
