@@ -637,6 +637,52 @@ cmem/
 
 ---
 
+## 🔒 ABI 稳定性与版本管理
+
+### ABI 版本
+
+当前 ABI 版本为 `1`。可通过 `mp_abi_version()` 在运行时查询。
+
+### 稳定性承诺
+
+| 变更类型 | 是否破坏 ABI | 语义版本 |
+| :--- | :--- | :--- |
+| Bug 修复（无 API 变更） | 否 | Patch |
+| 新增 API（向后兼容） | 否 | Minor |
+| 新增 API（向后不兼容） | 是 | Major |
+| 内部重构 | 否 | Patch |
+| 结构体布局变更 | 是 | Major |
+| Flag 枚举值变更 | 是 | Major |
+
+### 兼容性规则
+
+- 新字段仅追加到 public struct 的末尾。
+- `mp_flags_t` 枚举值遵循 append-only 原则；禁止复用或重新编号现有值。
+- 旧版客户端可通过 `mp_abi_version()` 检测新版本并优雅降级。
+
+---
+
+## 🖥️ 平台支持
+
+| 平台 | 状态 | 备注 |
+| :--- | :--- | :--- |
+| **Linux (glibc)** | ✅ 完整 | NUMA、HugePages、共享内存、madvise、mlock |
+| **Linux (musl)** | ⚠️ 部分 | 基础分配器可用；NUMA/HugePages 可能需移植 |
+| **macOS** | ⚠️ 部分 | 无 NUMA/HugePages/共享内存；madvise 受限 |
+| **Windows (MSVC)** | ⚠️ 部分 | 需将 mmap/madvise 移植到 VirtualAlloc |
+| **FreeBSD** | ⚠️ 基础 | 可能只需少量 #ifdef 调整即可运行 |
+| **Android** | ⚠️ 基础 | Bionic libc；生产前需测试 |
+
+### 编译器支持
+
+| 编译器 | 最低版本 | 推荐版本 |
+| :--- | :--- | :--- |
+| GCC | 7.0 | 13.0+ |
+| Clang | 6.0 | 17.0+ |
+| MSVC | 2017 | 2022+ |
+
+---
+
 ## 📄 许可证
 
 MIT License。详见 [LICENSE](LICENSE) 文件。

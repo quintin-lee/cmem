@@ -110,6 +110,52 @@ Covers:
 
 ---
 
+## 🔒 ABI Stability & Versioning
+
+### ABI Version
+
+The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
+
+### Stability Promise
+
+| Change Type | ABI Break? | Semantic Version |
+| :--- | :--- | :--- |
+| Bug fix (no API change) | No | Patch |
+| New API (backward compatible) | No | Minor |
+| New API (backward incompatible) | Yes | Major |
+| Internal refactoring | No | Patch |
+| Struct layout change | Yes | Major |
+| Flag enum value change | Yes | Major |
+
+### Compatibility Rules
+
+- New fields are appended only at the end of public structs.
+- `mp_flags_t` enum values are append-only; do not reuse or renumber existing values.
+- Old clients can detect newer pool versions via `mp_abi_version()` and degrade gracefully.
+
+---
+
+## 🖥️ Platform Support
+
+| Platform | Status | Notes |
+| :--- | :--- | :--- |
+| **Linux (glibc)** | ✅ Full | NUMA, HugePages, Shared Memory, madvise, mlock |
+| **Linux (musl)** | ⚠️ Partial | Basic allocator works; NUMA/HugePages may need porting |
+| **macOS** | ⚠️ Partial | No NUMA/HugePages/Shared Memory; madvise limited |
+| **Windows (MSVC)** | ⚠️ Partial | Requires porting mmap/madvise to VirtualAlloc |
+| **FreeBSD** | ⚠️ Basic | May work with minor #ifdef adjustments |
+| **Android** | ⚠️ Basic | Bionic libc; test before production |
+
+### Compiler Support
+
+| Compiler | Minimum | Recommended |
+| :--- | :--- | :--- |
+| GCC | 7.0 | 13.0+ |
+| Clang | 6.0 | 17.0+ |
+| MSVC | 2017 | 2022+ |
+
+---
+
 ## 🔗 External Resources
 
 - [GitHub Repository](https://github.com/your-repo/cmem)
