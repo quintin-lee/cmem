@@ -205,6 +205,25 @@ struct memory_pool {
 
     // Tier 2: TLSF Allocator (512B - 4MB)
     tlsf_pool_t* tlsf_root;
+
+    // Runtime config hot-reload tracking
+    uint64_t env_flags_generation;
+
+    // Auto-compaction trigger configuration
+    bool auto_compact_enabled;
+    double auto_compact_pressure_threshold;
+    double auto_compact_fragmentation_threshold;
+    struct timespec last_auto_compact_time;
+
+    // Allocation latency histogram for P99 tracking (ns buckets)
+    size_t alloc_latency_histogram[32];
+    size_t alloc_latency_count;
+    uint64_t alloc_latency_sum_ns;
+
+    // Per-arena quota
+    size_t arena_quota_limit;
+    mp_watermark_callback_t arena_quota_cb;
+    void* arena_quota_user_data;
 };
 
 /* Lock Utilities */
@@ -1398,6 +1417,188 @@ size_t mp_resident(memory_pool_t* pool) {
     return res;
 }
 
+/* ========================================================================== */
+/*  Runtime Config Hot-Reload                                                  */
+/* ========================================================================== */
+/**
+ * @brief Re-parses the CMEM_CONF environment variable and applies safe runtime flag changes.
+ * @param pool Pointer to the memory pool
+ * @return Merged flags value after applying environment changes
+ */
+mp_flags_t mp_reparse_env_flags(memory_pool_t* pool) {
+    if (!pool) return 0;
+    mp_flags_t new_flags = mp_parse_env_flags(pool->flags);
+    if (new_flags == pool->flags) return pool->flags;
+
+    pool_lock(pool);
+    pool->flags = new_flags;
+    pool->env_flags_generation++;
+    pool_unlock(pool);
+
+    return pool->flags;
+}
+
+/**
+ * @brief Returns the current environment configuration generation counter.
+ * @param pool Pointer to the memory pool
+ * @return Current generation counter, or 0 if pool is invalid
+ */
+uint64_t mp_get_env_generation(memory_pool_t* pool) {
+    if (!pool) return 0;
+    return pool->env_flags_generation;
+}
+
+/* ========================================================================== */
+/*  Auto-Compaction Trigger                                                    */
+/* ========================================================================== */
+/**
+ * @brief Enables automatic compaction triggered by pool pressure or fragmentation.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable auto-compaction, false to disable
+ * @param pressure_threshold Pressure ratio (0.0-1.0) above which compaction is triggered
+ * @param fragmentation_threshold Fragmentation ratio (0.0-1.0) above which compaction is triggered
+ */
+void mp_set_auto_compact(memory_pool_t* pool, bool enable, double pressure_threshold, double fragmentation_threshold) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->auto_compact_enabled = enable;
+    pool->auto_compact_pressure_threshold = pressure_threshold;
+    pool->auto_compact_fragmentation_threshold = fragmentation_threshold;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Checks if auto-compaction is needed and triggers it if so.
+ * @param pool Pointer to the memory pool
+ * @return true if compaction was performed, false otherwise
+ */
+bool mp_auto_compact_check(memory_pool_t* pool) {
+    if (!pool || !pool->auto_compact_enabled) return false;
+
+    pool_lock(pool);
+    double pressure = (double)pool->stats.active_bytes / (double)(pool->stats.max_memory_limit > 0 ? pool->stats.max_memory_limit : pool->stats.total_pool_size);
+    double frag = pool->stats.fragmentation_ratio;
+    pool_unlock(pool);
+
+    if (pressure > pool->auto_compact_pressure_threshold || frag > pool->auto_compact_fragmentation_threshold) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        pool_lock(pool);
+        if (now.tv_sec - pool->last_auto_compact_time.tv_sec < 1) {
+            pool_unlock(pool);
+            return false;
+        }
+        pool->last_auto_compact_time = now;
+        pool_unlock(pool);
+
+        mp_compact(pool);
+        return true;
+    }
+    return false;
+}
+
+/* ========================================================================== */
+/*  Per-Arena Memory Quota                                                     */
+/* ========================================================================== */
+/**
+ * @brief Sets a per-arena memory quota with an over-limit callback.
+ * @param pool Pointer to the memory pool
+ * @param quota_bytes Maximum allowed active bytes for this arena (0 for unlimited)
+ * @param cb Callback invoked when quota is exceeded
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_arena_quota(memory_pool_t* pool, size_t quota_bytes, mp_watermark_callback_t cb, void* user_data) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->arena_quota_limit = quota_bytes;
+    pool->arena_quota_cb = cb;
+    pool->arena_quota_user_data = user_data;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Checks if the arena is within its quota limit.
+ * @param pool Pointer to the memory pool
+ * @return true if within quota or no quota set, false if over quota
+ */
+bool mp_check_arena_quota(memory_pool_t* pool) {
+    if (!pool || pool->arena_quota_limit == 0) return true;
+    pool_rdlock(pool);
+    bool ok = pool->stats.active_bytes <= pool->arena_quota_limit;
+    pool_rdunlock(pool);
+    return ok;
+}
+
+/* ========================================================================== */
+/*  Allocation Latency Statistics                                              */
+/* ========================================================================== */
+/**
+ * @brief Records an allocation latency sample in nanoseconds.
+ * @param pool Pointer to the memory pool
+ * @param latency_ns Latency in nanoseconds
+ */
+void mp_record_latency(memory_pool_t* pool, uint64_t latency_ns) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->alloc_latency_sum_ns += latency_ns;
+    pool->alloc_latency_count++;
+
+    size_t idx = 0;
+    uint64_t v = latency_ns;
+    while (v >= 1024 && idx < 31) { v >>= 1; idx++; }
+    pool->alloc_latency_histogram[idx]++;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Calculates the P99 allocation latency from the histogram.
+ * @param pool Pointer to the memory pool
+ * @return P99 latency in nanoseconds, or 0 if no samples
+ */
+uint64_t mp_get_latency_p99(memory_pool_t* pool) {
+    if (!pool || pool->alloc_latency_count == 0) return 0;
+    pool_rdlock(pool);
+    size_t total = pool->alloc_latency_count;
+    size_t target = (total * 99) / 100;
+    size_t cum = 0;
+    uint64_t p99_ns = 0;
+    for (int i = 0; i < 32; i++) {
+        cum += pool->alloc_latency_histogram[i];
+        if (cum >= target) {
+            p99_ns = (uint64_t)1 << i;
+            break;
+        }
+    }
+    pool_rdunlock(pool);
+    return p99_ns;
+}
+
+/**
+ * @brief Returns the average allocation latency in nanoseconds.
+ * @param pool Pointer to the memory pool
+ * @return Average latency in nanoseconds, or 0 if no samples
+ */
+uint64_t mp_get_latency_avg(memory_pool_t* pool) {
+    if (!pool || pool->alloc_latency_count == 0) return 0;
+    pool_rdlock(pool);
+    uint64_t avg = pool->alloc_latency_sum_ns / pool->alloc_latency_count;
+    pool_rdunlock(pool);
+    return avg;
+}
+
+/**
+ * @brief Resets the allocation latency statistics histogram.
+ * @param pool Pointer to the memory pool
+ */
+void mp_reset_latency_stats(memory_pool_t* pool) {
+    if (!pool) return;
+    pool_lock(pool);
+    memset(pool->alloc_latency_histogram, 0, sizeof(pool->alloc_latency_histogram));
+    pool->alloc_latency_count = 0;
+    pool->alloc_latency_sum_ns = 0;
+    pool_unlock(pool);
+}
+
 /**
  * @brief Resets cumulative performance metrics and peak memory statistics.
  * @param pool Pointer to the memory pool
@@ -1413,6 +1614,9 @@ void mp_reset_stats(memory_pool_t* pool) {
     pool->window_start_time.tv_sec = 0;
     pool->window_start_time.tv_nsec = 0;
     memset(pool->stats.size_histogram, 0, sizeof(pool->stats.size_histogram));
+    memset(pool->alloc_latency_histogram, 0, sizeof(pool->alloc_latency_histogram));
+    pool->alloc_latency_count = 0;
+    pool->alloc_latency_sum_ns = 0;
     pool_unlock(pool);
 }
 

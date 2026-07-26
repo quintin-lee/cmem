@@ -943,12 +943,124 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len);
  */
 bool mp_check_leaks(memory_pool_t* pool);
 
+/* ========================================================================== */
+/*  Runtime Config Hot-Reload                                                  */
+/* ========================================================================== */
+
 /**
- * @brief Macro to enable automatic source location tracking for mp_alloc.
+ * @brief Re-parses the CMEM_CONF environment variable and applies safe runtime flag changes.
  *
- * Define MP_ENABLE_LOCATION_MACROS before including cmem.h to enable.
- * This causes mp_alloc() to automatically record __FILE__, __LINE__, and __func__.
+ * This allows runtime reconfiguration without recreating the pool.
+ * Only flags that do not require pool re-initialization are applied.
+ *
+ * Supported keys: canary=1/on, zero=1/on, tls=1/on, track=1/on,
+ *                 poison=1/on, aligned=1/on, guard=1/on, hugepages=1/on
+ *
+ * @param pool Pointer to the memory pool
+ * @return Merged flags value after applying environment changes
  */
+mp_flags_t mp_reparse_env_flags(memory_pool_t* pool);
+
+/**
+ * @brief Returns the current environment configuration generation counter.
+ *
+ * Incremented each time mp_reparse_env_flags() successfully applies changes.
+ * Useful for detecting when runtime config has been updated.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Current generation counter, or 0 if pool is invalid
+ */
+uint64_t mp_get_env_generation(memory_pool_t* pool);
+
+/* ========================================================================== */
+/*  Auto-Compaction Trigger                                                    */
+/* ========================================================================== */
+
+/**
+ * @brief Enables automatic compaction triggered by pool pressure or fragmentation.
+ *
+ * When enabled, mp_alloc() and mp_free() will periodically check if compaction
+ * is needed based on the configured thresholds.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable auto-compaction, false to disable
+ * @param pressure_threshold Pressure ratio (0.0-1.0) above which compaction is triggered
+ * @param fragmentation_threshold Fragmentation ratio (0.0-1.0) above which compaction is triggered
+ */
+void mp_set_auto_compact(memory_pool_t* pool, bool enable, double pressure_threshold, double fragmentation_threshold);
+
+/**
+ * @brief Checks if auto-compaction is needed and triggers it if so.
+ *
+ * This is called internally by mp_alloc() and mp_free().
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if compaction was performed, false otherwise
+ */
+bool mp_auto_compact_check(memory_pool_t* pool);
+
+/* ========================================================================== */
+/*  Per-Arena Memory Quota                                                     */
+/* ========================================================================== */
+
+/**
+ * @brief Sets a per-arena memory quota with an over-limit callback.
+ *
+ * When the arena's active bytes exceed the quota, the callback is invoked.
+ * This is independent of the global mp_set_memory_limit().
+ *
+ * @param pool Pointer to the memory pool
+ * @param quota_bytes Maximum allowed active bytes for this arena (0 for unlimited)
+ * @param cb Callback invoked when quota is exceeded
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_arena_quota(memory_pool_t* pool, size_t quota_bytes, mp_watermark_callback_t cb, void* user_data);
+
+/**
+ * @brief Checks if the arena is within its quota limit.
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if within quota or no quota set, false if over quota
+ */
+bool mp_check_arena_quota(memory_pool_t* pool);
+
+/* ========================================================================== */
+/*  Allocation Latency Statistics                                              */
+/* ========================================================================== */
+
+/**
+ * @brief Records an allocation latency sample in nanoseconds.
+ *
+ * This is called internally by the allocation fast-path.
+ *
+ * @param pool Pointer to the memory pool
+ * @param latency_ns Latency in nanoseconds
+ */
+void mp_record_latency(memory_pool_t* pool, uint64_t latency_ns);
+
+/**
+ * @brief Calculates the P99 allocation latency from the histogram.
+ *
+ * @param pool Pointer to the memory pool
+ * @return P99 latency in nanoseconds, or 0 if no samples
+ */
+uint64_t mp_get_latency_p99(memory_pool_t* pool);
+
+/**
+ * @brief Returns the average allocation latency in nanoseconds.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Average latency in nanoseconds, or 0 if no samples
+ */
+uint64_t mp_get_latency_avg(memory_pool_t* pool);
+
+/**
+ * @brief Resets the allocation latency statistics histogram.
+ *
+ * @param pool Pointer to the memory pool
+ */
+void mp_reset_latency_stats(memory_pool_t* pool);
+
 #ifdef MP_ENABLE_LOCATION_MACROS
 #define mp_alloc(pool, sz) mp_alloc_loc(pool, sz, __FILE__, __LINE__, __func__)
 #define mp_calloc(pool, num, sz) mp_calloc_loc(pool, num, sz, __FILE__, __LINE__, __func__)
