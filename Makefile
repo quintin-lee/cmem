@@ -16,6 +16,7 @@ SONAME = libcmem.so.$(VERSION)
 
 SRC = src/cmem.c
 TEST_SRC = tests/test_main.c
+ADV_TEST_SRC = tests/test_advanced.c
 CPP_TEST_SRC = tests/test_cpp.cpp
 BENCH_SRC = benchmarks/bench_main.c
 
@@ -25,9 +26,9 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_cpp bench examples clean install uninstall package distclean help format-check
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check
 
-all: format-check lib test test_cpp bench examples
+all: format-check lib test test_advanced test_cpp bench examples
 
 help:
 	@echo "cmem Makefile Targets:"
@@ -35,6 +36,8 @@ help:
 	@echo "  lib          - Build static library $(BUILD_DIR)/$(LIBNAME)"
 	@echo "  lib_shared   - Build shared library $(BUILD_DIR)/$(SONAME)"
 	@echo "  test         - Build and run C unit tests (with ASan/UBSan)"
+	@echo "  test_advanced- Build and run C advanced unit tests (with ASan/UBSan)"
+	@echo "  test_all     - Build and run all C tests"
 	@echo "  test_cpp     - Build and run C++17 PMR/STL tests (with ASan/UBSan)"
 	@echo "  bench        - Build and run performance benchmarks"
 	@echo "  examples     - Build and run all example programs"
@@ -69,6 +72,15 @@ test: format-check $(SRC) $(TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests $(LDFLAGS)
 	@echo "Running C unit tests..."
 	./$(BUILD_DIR)/unit_tests
+
+# C 高级单元测试
+test_advanced: format-check $(SRC) $(ADV_TEST_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS_DEBUG) $(SRC) $(ADV_TEST_SRC) -o $(BUILD_DIR)/advanced_tests $(LDFLAGS)
+	@echo "Running C advanced unit tests..."
+	./$(BUILD_DIR)/advanced_tests
+
+# 运行所有 C 测试
+test_all: test test_advanced
 
 # C++ 测试
 test_cpp: format-check $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)

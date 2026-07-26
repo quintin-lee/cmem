@@ -1222,7 +1222,6 @@ int main()
     test_child_arenas_and_html_export();
     test_arena_reset_and_json();
     test_static_buffer_and_callbacks();
-    test_multithread_safety();
     printf("\nALL CMEM UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
 }

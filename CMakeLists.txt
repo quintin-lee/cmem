@@ -33,6 +33,7 @@ if(CLANG_FORMAT)
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_override.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_advanced.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpp.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/bench_main.c
             ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_basic.c
@@ -117,6 +118,10 @@ add_executable(unit_tests tests/test_main.c)
 target_link_libraries(unit_tests PRIVATE cmem pthread rt)
 add_dependencies(unit_tests format-check)
 
+add_executable(advanced_tests tests/test_advanced.c)
+target_link_libraries(advanced_tests PRIVATE cmem pthread rt)
+add_dependencies(advanced_tests format-check)
+
 add_executable(cpp_tests tests/test_cpp.cpp)
 target_link_libraries(cpp_tests PRIVATE cmem pthread rt)
 add_dependencies(cpp_tests format-check)
@@ -145,6 +150,7 @@ add_dependencies(example_arena_tree format-check)
 # CTest 集成
 enable_testing()
 add_test(NAME CUnitTests COMMAND unit_tests)
+add_test(NAME CAdvancedUnitTests COMMAND advanced_tests)
 add_test(NAME CppUnitTests COMMAND cpp_tests)
 
 # 可选：安装示例程序
