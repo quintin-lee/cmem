@@ -244,6 +244,13 @@ struct memory_pool {
     // Per-CPU lock-free freelist for low-contention fast path
     int num_cpus;
     mp_percpu_freelist_entry_t* percpu_freelists;
+
+    // Graceful Degradation: fallback allocator and GC/eviction callbacks
+    mp_watermark_callback_t gc_cb;
+    void* gc_user_data;
+    mp_watermark_callback_t eviction_cb;
+    void* eviction_user_data;
+    bool fallback_to_sys_alloc_on_oom;
 };
 
 /* Lock Utilities */
@@ -820,6 +827,49 @@ int mp_get_percpu_cpu_count(memory_pool_t* pool) {
     int count = pool->num_cpus;
     pool_rdunlock(pool);
     return count;
+}
+
+/* ========================================================================== */
+/*  Graceful Degradation Public API                                            */
+/* ========================================================================== */
+/**
+ * @brief Configures graceful degradation behavior when the pool is over its memory limit.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable fallback to system malloc on OOM
+ */
+void mp_set_fallback_on_oom(memory_pool_t* pool, bool enable) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->fallback_to_sys_alloc_on_oom = enable;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Registers a garbage collection callback invoked before OOM rejection.
+ * @param pool Pointer to the memory pool
+ * @param cb GC callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_gc_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->gc_cb = cb;
+    pool->gc_user_data = user_data;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Registers an eviction callback for low-priority object eviction under pressure.
+ * @param pool Pointer to the memory pool
+ * @param cb Eviction callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_eviction_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data) {
+    if (!pool) return;
+    pool_lock(pool);
+    pool->eviction_cb = cb;
+    pool->eviction_user_data = user_data;
+    pool_unlock(pool);
 }
 
 /* --- TLSF Implementation --- */
@@ -2698,6 +2748,46 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
             return emergency_ptr;
         }
         trigger_event(pool, MP_EVENT_OOM, NULL, size);
+        if (pool->gc_cb) {
+            pool->gc_cb(pool, true, pool->stats.active_bytes, pool->stats.max_memory_limit, pool->gc_user_data);
+        }
+        if (pool->eviction_cb) {
+            pool->eviction_cb(pool, true, pool->stats.active_bytes, pool->stats.max_memory_limit, pool->eviction_user_data);
+        }
+        if (pool->fallback_to_sys_alloc_on_oom) {
+            size_t total_sz = size + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+            void* raw_mem = sys_mem_alloc(pool, total_sz, 8);
+            if (raw_mem) {
+                mp_block_header_t* header = (mp_block_header_t*)raw_mem;
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_type = ALLOC_TYPE_OS;
+                header->slab_class = 0;
+                header->flags = 0;
+                header->requested_size = size;
+                header->usable_size = size;
+                header->raw_base = raw_mem;
+                header->alloc_file = NULL;
+                header->alloc_line = 0;
+                header->alloc_func = NULL;
+                header->backtrace_depth = 0;
+
+                void* fallback_ptr = (void*)((uint8_t*)header + sizeof(mp_block_header_t));
+                if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                    uint8_t* canary = (uint8_t*)fallback_ptr + size;
+                    *canary = MP_CANARY_BYTE;
+                }
+                if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) memset(fallback_ptr, 0, size);
+                active_list_add(pool, header);
+                pool->stats.active_bytes += size;
+                pool->stats.active_allocations++;
+                pool->stats.total_alloc_ops++;
+                pool->stats.os_allocated_bytes += size;
+                pool->stats.total_pool_size += total_sz;
+                pool_unlock(pool);
+                trigger_event(pool, MP_EVENT_ALLOC, fallback_ptr, size);
+                return fallback_ptr;
+            }
+        }
         pool_unlock(pool);
         return NULL;
     }

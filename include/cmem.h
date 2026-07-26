@@ -1135,6 +1135,43 @@ bool mp_get_percpu_freelist(memory_pool_t* pool);
 int mp_get_percpu_cpu_count(memory_pool_t* pool);
 
 /* ========================================================================== */
+/*  Graceful Degradation                                                       */
+/* ========================================================================== */
+
+/**
+ * @brief Configures graceful degradation behavior when the pool is over its memory limit.
+ *
+ * When enabled and the pool exceeds its limit, allocations fall back to system malloc
+ * instead of returning NULL. These fallback allocations are tracked separately.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable fallback to system malloc on OOM
+ */
+void mp_set_fallback_on_oom(memory_pool_t* pool, bool enable);
+
+/**
+ * @brief Registers a garbage collection callback invoked before OOM rejection.
+ *
+ * The callback can free non-critical cached data to make room for the allocation.
+ *
+ * @param pool Pointer to the memory pool
+ * @param cb GC callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_gc_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data);
+
+/**
+ * @brief Registers an eviction callback for low-priority object eviction under pressure.
+ *
+ * The callback should evict the specified number of bytes from non-critical caches.
+ *
+ * @param pool Pointer to the memory pool
+ * @param cb Eviction callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
+void mp_set_eviction_callback(memory_pool_t* pool, mp_watermark_callback_t cb, void* user_data);
+
+/* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */
 /* ========================================================================== */
 
