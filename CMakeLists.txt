@@ -27,18 +27,18 @@ find_program(CLANG_FORMAT clang-format)
 if(CLANG_FORMAT)
     add_custom_target(format-check
         COMMAND ${CLANG_FORMAT} --dry-run --Werror
-            include/cmem.h
-            include/cmem.hpp
-            include/cmem_pmr.hpp
-            include/cmem_override.h
-            src/cmem.c
-            tests/test_main.c
-            tests/test_cpp.cpp
-            benchmarks/bench_main.c
-            examples/example_basic.c
-            examples/example_embedded.c
-            examples/example_leak_analysis.c
-            examples/example_arena_tree.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem.hpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_pmr.hpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_override.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpp.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/bench_main.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_basic.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_embedded.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_leak_analysis.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_arena_tree.c
         COMMENT "Checking code formatting with clang-format"
         VERBATIM
     )
