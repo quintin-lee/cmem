@@ -66,7 +66,8 @@ typedef enum {
     MP_FLAG_GUARD_PAGES        = (1 << 8),             /**< Add PROT_NONE Guard Pages to trap out-of-bounds page faults */
     MP_FLAG_SHARED_MEMORY      = (1 << 9),             /**< POSIX Shared Memory IPC Mode (/dev/shm zero-copy) */
     MP_FLAG_HUGE_PAGES         = (1 << 10),            /**< Use Linux HugePages (2MB/1GB MAP_HUGETLB) for TLB performance */
-    MP_FLAG_PERCPU_FREELIST    = (1 << 11)             /**< Enable per-CPU lock-free freelist for low-contention fast path */
+    MP_FLAG_PERCPU_FREELIST    = (1 << 11),            /**< Enable per-CPU lock-free freelist for low-contention fast path */
+    MP_FLAG_HOT_COLD_SEPARATION = (1 << 12)            /**< Enable Hot/Cold page separation for TLB optimization */
 } mp_flags_t;
 
 /**
@@ -484,6 +485,60 @@ size_t mp_get_slab_class_count(memory_pool_t* pool);
  * @return Number of sizes written to out_sizes
  */
 size_t mp_get_slab_classes(memory_pool_t* pool, size_t* out_sizes, size_t max_count);
+
+/* ========================================================================== */
+/*  Hot/Cold Page Separation                                                   */
+/* ========================================================================== */
+
+/**
+ * @brief Marks a Slab page as hot for TLB optimization.
+ *
+ * Hot pages are kept physically separate from cold pages to improve
+ * Translation Lookaside Buffer (TLB) hit rates.
+ *
+ * @param pool Pointer to the memory pool
+ * @param page_raw_mem Raw memory pointer of the Slab page
+ * @return true on success, false if page not found
+ */
+bool mp_mark_page_hot(memory_pool_t* pool, void* page_raw_mem);
+
+/**
+ * @brief Marks a Slab page as cold for TLB optimization.
+ *
+ * Cold pages contain infrequently accessed data and are separated from hot pages.
+ *
+ * @param pool Pointer to the memory pool
+ * @param page_raw_mem Raw memory pointer of the Slab page
+ * @return true on success, false if page not found
+ */
+bool mp_mark_page_cold(memory_pool_t* pool, void* page_raw_mem);
+
+/**
+ * @brief Returns the number of hot pages across all Slab classes.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of hot pages
+ */
+size_t mp_get_hot_page_count(memory_pool_t* pool);
+
+/**
+ * @brief Returns the number of cold pages across all Slab classes.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of cold pages
+ */
+size_t mp_get_cold_page_count(memory_pool_t* pool);
+
+/**
+ * @brief Separates hot and cold pages into distinct memory regions.
+ *
+ * This physically relocates cold pages to a separate memory region
+ * to improve TLB locality for hot pages.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of pages separated, or 0 on failure
+ */
+size_t mp_separate_hot_cold_pages(memory_pool_t* pool);
 
 /**
  * @brief Creates a memory pool instance using a custom backing allocator.

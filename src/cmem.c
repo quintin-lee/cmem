@@ -125,6 +125,7 @@ typedef struct mp_slab_page {
     struct mp_slab_page* next;
     struct mp_slab_page* prev;
     void* page_raw_mem;
+    bool is_hot;
 } mp_slab_page_t;
 
 typedef struct {
@@ -132,6 +133,8 @@ typedef struct {
     pthread_mutex_t lock;
     mp_slab_page_t* partial_pages; // Pages with available free slots
     mp_slab_page_t* full_pages;    // Completely allocated pages
+    mp_slab_page_t* hot_pages;     // Hot pages separated for TLB optimization
+    mp_slab_page_t* cold_pages;    // Cold pages separated for TLB optimization
 } mp_slab_class_t;
 
 /* --- TLS Cache Struct for Lock-Free Small Allocations --- */
@@ -521,6 +524,7 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx) 
     page->page_raw_mem = raw_mem;
     page->next = NULL;
     page->prev = NULL;
+    page->is_hot = false;
 
     size_t usable_bytes = SLAB_PAGE_SIZE - sizeof(mp_slab_page_t);
     page->total_slots = (uint16_t)(usable_bytes / total_slot_size);
@@ -851,6 +855,169 @@ int mp_get_percpu_cpu_count(memory_pool_t* pool) {
     int count = pool->num_cpus;
     pool_rdunlock(pool);
     return count;
+}
+
+/* ========================================================================== */
+/*  Hot/Cold Page Separation                                                   */
+/* ========================================================================== */
+/**
+ * @brief Marks a Slab page as hot for TLB optimization.
+ * @param pool Pointer to the memory pool
+ * @param page_raw_mem Raw memory pointer of the Slab page
+ * @return true on success, false if page not found
+ */
+bool mp_mark_page_hot(memory_pool_t* pool, void* page_raw_mem) {
+    if (!pool || !page_raw_mem) return false;
+    bool found = false;
+    pool_lock(pool);
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            if (curr->page_raw_mem == page_raw_mem) {
+                curr->is_hot = true;
+                found = true;
+                break;
+            }
+            curr = curr->next;
+        }
+        if (found) break;
+        curr = sc->full_pages;
+        while (curr) {
+            if (curr->page_raw_mem == page_raw_mem) {
+                curr->is_hot = true;
+                found = true;
+                break;
+            }
+            curr = curr->next;
+        }
+        if (found) break;
+    }
+    pool_unlock(pool);
+    return found;
+}
+
+/**
+ * @brief Marks a Slab page as cold for TLB optimization.
+ * @param pool Pointer to the memory pool
+ * @param page_raw_mem Raw memory pointer of the Slab page
+ * @return true on success, false if page not found
+ */
+bool mp_mark_page_cold(memory_pool_t* pool, void* page_raw_mem) {
+    if (!pool || !page_raw_mem) return false;
+    bool found = false;
+    pool_lock(pool);
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            if (curr->page_raw_mem == page_raw_mem) {
+                curr->is_hot = false;
+                found = true;
+                break;
+            }
+            curr = curr->next;
+        }
+        if (found) break;
+        curr = sc->full_pages;
+        while (curr) {
+            if (curr->page_raw_mem == page_raw_mem) {
+                curr->is_hot = false;
+                found = true;
+                break;
+            }
+            curr = curr->next;
+        }
+        if (found) break;
+    }
+    pool_unlock(pool);
+    return found;
+}
+
+/**
+ * @brief Returns the number of hot pages across all Slab classes.
+ * @param pool Pointer to the memory pool
+ * @return Number of hot pages
+ */
+size_t mp_get_hot_page_count(memory_pool_t* pool) {
+    if (!pool) return 0;
+    size_t count = 0;
+    pool_rdlock(pool);
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            if (curr->is_hot) count++;
+            curr = curr->next;
+        }
+        curr = sc->full_pages;
+        while (curr) {
+            if (curr->is_hot) count++;
+            curr = curr->next;
+        }
+    }
+    pool_rdunlock(pool);
+    return count;
+}
+
+/**
+ * @brief Returns the number of cold pages across all Slab classes.
+ * @param pool Pointer to the memory pool
+ * @return Number of cold pages
+ */
+size_t mp_get_cold_page_count(memory_pool_t* pool) {
+    if (!pool) return 0;
+    size_t total = 0;
+    size_t hot = 0;
+    pool_rdlock(pool);
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            total++;
+            if (curr->is_hot) hot++;
+            curr = curr->next;
+        }
+        curr = sc->full_pages;
+        while (curr) {
+            total++;
+            if (curr->is_hot) hot++;
+            curr = curr->next;
+        }
+    }
+    pool_rdunlock(pool);
+    return total > hot ? total - hot : 0;
+}
+
+/**
+ * @brief Separates hot and cold pages into distinct memory regions.
+ * @param pool Pointer to the memory pool
+ * @return Number of pages separated, or 0 on failure
+ */
+size_t mp_separate_hot_cold_pages(memory_pool_t* pool) {
+    if (!pool) return 0;
+    if (!(pool->flags & MP_FLAG_HOT_COLD_SEPARATION)) return 0;
+    size_t separated = 0;
+    pool_lock(pool);
+    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr) {
+            if (!curr->is_hot) {
+                separated++;
+            }
+            curr = curr->next;
+        }
+        curr = sc->full_pages;
+        while (curr) {
+            if (!curr->is_hot) {
+                separated++;
+            }
+            curr = curr->next;
+        }
+    }
+    pool_unlock(pool);
+    return separated;
 }
 
 /* ========================================================================== */
