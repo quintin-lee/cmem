@@ -67,7 +67,8 @@ typedef enum {
     MP_FLAG_SHARED_MEMORY      = (1 << 9),             /**< POSIX Shared Memory IPC Mode (/dev/shm zero-copy) */
     MP_FLAG_HUGE_PAGES         = (1 << 10),            /**< Use Linux HugePages (2MB/1GB MAP_HUGETLB) for TLB performance */
     MP_FLAG_PERCPU_FREELIST    = (1 << 11),            /**< Enable per-CPU lock-free freelist for low-contention fast path */
-    MP_FLAG_HOT_COLD_SEPARATION = (1 << 12)            /**< Enable Hot/Cold page separation for TLB optimization */
+    MP_FLAG_HOT_COLD_SEPARATION = (1 << 12),            /**< Enable Hot/Cold page separation for TLB optimization */
+    MP_FLAG_ENCRYPTED_MEMORY    = (1 << 13)             /**< Enable encrypted memory with mlock and MADV_DONTDUMP */
 } mp_flags_t;
 
 /**
@@ -1349,6 +1350,67 @@ void mp_set_cgroup_aware(memory_pool_t* pool, bool enable);
  * @return Cgroup memory limit in bytes, or 0 if not available
  */
 size_t mp_get_cgroup_mem_limit(memory_pool_t* pool);
+
+/* ========================================================================== */
+/*  Encrypted Memory Support                                                   */
+/* ========================================================================== */
+
+/**
+ * @brief Locks a memory region into RAM to prevent swapping to disk.
+ *
+ * Uses mlock() to ensure sensitive data never leaves physical memory.
+ *
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @return 0 on success, -1 on failure
+ */
+int mp_lock_memory(memory_pool_t* pool, void* addr, size_t length);
+
+/**
+ * @brief Unlocks a previously locked memory region.
+ *
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @return 0 on success, -1 on failure
+ */
+int mp_unlock_memory(memory_pool_t* pool, void* addr, size_t length);
+
+/**
+ * @brief Protects a memory region from being included in core dumps.
+ *
+ * Uses madvise(MADV_DONTDUMP) on Linux to exclude memory from crash dumps.
+ *
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @return 0 on success, -1 on failure
+ */
+int mp_protect_from_dump(memory_pool_t* pool, void* addr, size_t length);
+
+/**
+ * @brief Securely zeroes a memory region to prevent data remanence.
+ *
+ * Uses a volatile function pointer to prevent compiler optimization
+ * and ensure the zeroing actually occurs.
+ *
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory region
+ * @param length Length of the memory region in bytes
+ */
+void mp_secure_zero(memory_pool_t* pool, void* ptr, size_t length);
+
+/**
+ * @brief Enables or disables encrypted memory mode for the pool.
+ *
+ * When enabled, all system allocations from this pool will be locked
+ * and protected from core dumps.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable encrypted memory mode
+ */
+void mp_set_encrypted_memory(memory_pool_t* pool, bool enable);
 
 /* ========================================================================== */
 /*  Structured Event Log Ring Buffer & pprof Export                             */

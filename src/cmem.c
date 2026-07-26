@@ -1288,6 +1288,87 @@ size_t mp_get_cgroup_mem_limit(memory_pool_t* pool) {
     return limit;
 }
 
+/* ========================================================================== */
+/*  Encrypted Memory Support                                                   */
+/* ========================================================================== */
+/**
+ * @brief Locks a memory region into RAM to prevent swapping to disk.
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @return 0 on success, -1 on failure
+ */
+int mp_lock_memory(memory_pool_t* pool, void* addr, size_t length) {
+    if (!pool || !addr || length == 0) return -1;
+    (void)pool;
+#ifdef __linux__
+    if (mlock(addr, length) != 0) return -1;
+#endif
+    return 0;
+}
+
+/**
+ * @brief Unlocks a previously locked memory region.
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @return 0 on success, -1 on failure
+ */
+int mp_unlock_memory(memory_pool_t* pool, void* addr, size_t length) {
+    if (!pool || !addr || length == 0) return -1;
+    (void)pool;
+#ifdef __linux__
+    if (munlock(addr, length) != 0) return -1;
+#endif
+    return 0;
+}
+
+/**
+ * @brief Protects a memory region from being included in core dumps.
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @return 0 on success, -1 on failure
+ */
+int mp_protect_from_dump(memory_pool_t* pool, void* addr, size_t length) {
+    if (!pool || !addr || length == 0) return -1;
+    (void)pool;
+#ifdef __linux__
+    if (madvise(addr, length, MADV_DONTDUMP) != 0) return -1;
+#endif
+    return 0;
+}
+
+/**
+ * @brief Securely zeroes a memory region to prevent data remanence.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory region
+ * @param length Length of the memory region in bytes
+ */
+void mp_secure_zero(memory_pool_t* pool, void* ptr, size_t length) {
+    if (!pool || !ptr || length == 0) return;
+    volatile unsigned char* p = (volatile unsigned char*)ptr;
+    while (length--) {
+        *p++ = 0;
+    }
+}
+
+/**
+ * @brief Enables or disables encrypted memory mode for the pool.
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable encrypted memory mode
+ */
+void mp_set_encrypted_memory(memory_pool_t* pool, bool enable) {
+    if (!pool) return;
+    pool_lock(pool);
+    if (enable) {
+        pool->flags = (mp_flags_t)(pool->flags | MP_FLAG_ENCRYPTED_MEMORY);
+    } else {
+        pool->flags = (mp_flags_t)(pool->flags & ~MP_FLAG_ENCRYPTED_MEMORY);
+    }
+    pool_unlock(pool);
+}
+
 /* --- TLSF Implementation --- */
 /**
  * @brief Inserts a free block into the TLSF free-list bitmap structure.
