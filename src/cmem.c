@@ -202,6 +202,8 @@ struct memory_pool {
 
     // Tier 1: Slab Allocators (8B - 512B)
     mp_slab_class_t slab_classes[SLAB_CLASS_COUNT];
+    bool use_custom_slab_sizes;
+    size_t custom_slab_sizes[SLAB_CLASS_COUNT];
 
     // Tier 2: TLSF Allocator (512B - 4MB)
     tlsf_pool_t* tlsf_root;
@@ -442,7 +444,7 @@ static void tlsf_mapping_search(size_t size, int* fl, int* sl) {
  */
 static bool slab_init(memory_pool_t* pool) {
     for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
-        pool->slab_classes[i].slot_size = kSlabSizes[i];
+        pool->slab_classes[i].slot_size = pool->use_custom_slab_sizes ? pool->custom_slab_sizes[i] : kSlabSizes[i];
         pthread_mutex_init(&pool->slab_classes[i].lock, NULL);
         pool->slab_classes[i].partial_pages = NULL;
         pool->slab_classes[i].full_pages = NULL;
@@ -457,7 +459,7 @@ static bool slab_init(memory_pool_t* pool) {
  * @return Pointer to the new Slab page metadata, or NULL on failure
  */
 static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx) {
-    size_t slot_payload_size = kSlabSizes[class_idx];
+    size_t slot_payload_size = pool->slab_classes[class_idx].slot_size;
     size_t header_overhead = sizeof(mp_block_header_t);
     size_t total_slot_size = header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
     total_slot_size = (total_slot_size + 7) & ~7;
@@ -617,7 +619,7 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
  */
 static inline void tls_cache_refill(memory_pool_t* pool, uint8_t class_idx) {
     for (int i = 0; i < 32; i++) {
-        void* ptr = slab_alloc(pool, class_idx, kSlabSizes[class_idx]);
+        void* ptr = slab_alloc(pool, class_idx, pool->slab_classes[class_idx].slot_size);
         if (!ptr) break;
         mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
         mp_slab_slot_t* slot = (mp_slab_slot_t*)header->raw_base;
@@ -1640,6 +1642,89 @@ size_t mp_preferred_size(size_t size) {
 }
 
 /**
+ * @brief Returns the optimal size class for a requested byte size using a pool's custom Slab table.
+ * @param pool Pointer to the memory pool
+ * @param size Requested size in bytes
+ * @return Preferred/aligned size based on the pool's configured Slab classes
+ */
+size_t mp_preferred_size_for_pool(memory_pool_t* pool, size_t size) {
+    if (!pool || size == 0) return 0;
+    pool_rdlock(pool);
+    if (size <= SLAB_MAX_SIZE) {
+        for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+            if (pool->slab_classes[i].slot_size >= size) {
+                pool_rdunlock(pool);
+                return pool->slab_classes[i].slot_size;
+            }
+        }
+    }
+    pool_rdunlock(pool);
+    return (size + 7) & ~7;
+}
+
+/**
+ * @brief Configures a custom Slab class size table for the memory pool.
+ * @param pool Pointer to the memory pool
+ * @param sizes Array of custom slab class sizes in bytes
+ * @param count Number of custom sizes (must be <= SLAB_CLASS_COUNT)
+ * @return true on success, false on invalid input
+ */
+bool mp_set_slab_classes(memory_pool_t* pool, const size_t* sizes, size_t count) {
+    if (!pool || !sizes || count == 0 || count > SLAB_CLASS_COUNT) return false;
+
+    for (size_t i = 0; i < count; i++) {
+        if (sizes[i] == 0 || (i > 0 && sizes[i] <= sizes[i - 1])) return false;
+    }
+
+    pool_lock(pool);
+    pool->use_custom_slab_sizes = true;
+    for (size_t i = 0; i < count; i++) {
+        pool->custom_slab_sizes[i] = sizes[i];
+    }
+    for (size_t i = count; i < SLAB_CLASS_COUNT; i++) {
+        pool->custom_slab_sizes[i] = pool->custom_slab_sizes[i - 1] * 2;
+    }
+
+    for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+        pool->slab_classes[i].slot_size = pool->custom_slab_sizes[i];
+    }
+
+    pool_unlock(pool);
+    return true;
+}
+
+/**
+ * @brief Retrieves the number of active Slab size classes for a pool.
+ * @param pool Pointer to the memory pool
+ * @return Number of slab classes, or SLAB_CLASS_COUNT if using defaults
+ */
+size_t mp_get_slab_class_count(memory_pool_t* pool) {
+    if (!pool) return 0;
+    pool_rdlock(pool);
+    size_t count = pool->use_custom_slab_sizes ? SLAB_CLASS_COUNT : SLAB_CLASS_COUNT;
+    pool_rdunlock(pool);
+    return count;
+}
+
+/**
+ * @brief Retrieves the configured Slab class sizes for a pool.
+ * @param pool Pointer to the memory pool
+ * @param out_sizes Output buffer to store slab class sizes
+ * @param max_count Maximum number of sizes to retrieve
+ * @return Number of sizes written to out_sizes
+ */
+size_t mp_get_slab_classes(memory_pool_t* pool, size_t* out_sizes, size_t max_count) {
+    if (!pool || !out_sizes || max_count == 0) return 0;
+    pool_rdlock(pool);
+    size_t count = (max_count < SLAB_CLASS_COUNT) ? max_count : SLAB_CLASS_COUNT;
+    for (size_t i = 0; i < count; i++) {
+        out_sizes[i] = pool->slab_classes[i].slot_size;
+    }
+    pool_rdunlock(pool);
+    return count;
+}
+
+/**
  * @brief Destroys the memory pool and recursively destroys all linked child arenas.
  * Releases all system memory, Slab pages, TLSF pools, and synchronization primitives.
  * @param pool Pointer to the memory pool
@@ -1730,7 +1815,7 @@ void mp_reset(memory_pool_t* pool) {
         }
 
         page = sc->partial_pages;
-        size_t slot_payload_size = kSlabSizes[c];
+        size_t slot_payload_size = pool->slab_classes[c].slot_size;
         size_t header_overhead = sizeof(mp_block_header_t);
         size_t total_slot_size = header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
         total_slot_size = (total_slot_size + 7) & ~7;
@@ -2112,17 +2197,17 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
 
 /**
  * @brief Maps a byte size to a Slab class index for small-object allocation.
+ * @param pool Pointer to the memory pool
  * @param size Requested size in bytes
- * @return Slab class index (0-6), or 6 for sizes > 256B
+ * @return Slab class index, or SLAB_CLASS_COUNT if no class fits
  */
-static inline uint8_t get_slab_class_index(size_t size) {
-    if (size <= 8) return 0;
-    if (size <= 16) return 1;
-    if (size <= 32) return 2;
-    if (size <= 64) return 3;
-    if (size <= 128) return 4;
-    if (size <= 256) return 5;
-    return 6;
+static inline uint8_t get_slab_class_index(memory_pool_t* pool, size_t size) {
+    for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+        if (size <= pool->slab_classes[i].slot_size) {
+            return (uint8_t)i;
+        }
+    }
+    return (uint8_t)SLAB_CLASS_COUNT;
 }
 
 /**
@@ -2135,7 +2220,7 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
     if ((pool->flags & MP_FLAG_THREAD_LOCAL_CACHE) && size <= SLAB_MAX_SIZE) {
-        uint8_t class_idx = get_slab_class_index(size);
+        uint8_t class_idx = get_slab_class_index(pool, size);
         if (tls_cache.counts[class_idx] == 0) {
             tls_cache_refill(pool, class_idx);
         }
@@ -2150,7 +2235,7 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
             header->slab_class = class_idx;
             header->flags = 0;
             header->requested_size = size;
-            header->usable_size = kSlabSizes[class_idx];
+            header->usable_size = pool->slab_classes[class_idx].slot_size;
             header->raw_base = slot;
             header->alloc_file = NULL;
             header->alloc_line = 0;
@@ -2232,7 +2317,7 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     void* ptr = NULL;
 
     if ((pool->flags & MP_FLAG_STATIC_BUFFER) == 0 && size <= SLAB_MAX_SIZE) {
-        uint8_t class_idx = get_slab_class_index(size);
+        uint8_t class_idx = get_slab_class_index(pool, size);
         ptr = slab_alloc(pool, class_idx, size);
     } else if (size <= TLSF_MAX_SIZE || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
         ptr = tlsf_alloc(pool, size);
@@ -2278,7 +2363,7 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
         pool->stats.active_allocations++;
         pool->stats.total_alloc_ops++;
 
-        int bucket = get_slab_class_index(size);
+        int bucket = get_slab_class_index(pool, size);
         if (bucket < CMEM_HISTOGRAM_BUCKETS) {
             pool->stats.size_histogram[bucket]++;
         }

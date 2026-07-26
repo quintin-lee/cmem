@@ -444,6 +444,47 @@ void mp_reset_stats(memory_pool_t* pool);
 size_t mp_preferred_size(size_t size);
 
 /**
+ * @brief Returns the optimal size class for a requested byte size using a pool's custom Slab table.
+ *
+ * @param pool Pointer to the memory pool
+ * @param size Requested size in bytes
+ * @return Preferred/aligned size based on the pool's configured Slab classes
+ */
+size_t mp_preferred_size_for_pool(memory_pool_t* pool, size_t size);
+
+/**
+ * @brief Configures a custom Slab class size table for the memory pool.
+ *
+ * Replaces the default Slab size classes (8, 16, 32, 64, 128, 256, 512) with
+ * user-provided sizes. The number of classes must not exceed SLAB_CLASS_COUNT.
+ * Sizes must be in ascending order and powers of two for optimal performance.
+ *
+ * @param pool Pointer to the memory pool
+ * @param sizes Array of custom slab class sizes in bytes
+ * @param count Number of custom sizes (must be <= SLAB_CLASS_COUNT)
+ * @return true on success, false on invalid input
+ */
+bool mp_set_slab_classes(memory_pool_t* pool, const size_t* sizes, size_t count);
+
+/**
+ * @brief Retrieves the number of active Slab size classes for a pool.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of slab classes, or SLAB_CLASS_COUNT if using defaults
+ */
+size_t mp_get_slab_class_count(memory_pool_t* pool);
+
+/**
+ * @brief Retrieves the configured Slab class sizes for a pool.
+ *
+ * @param pool Pointer to the memory pool
+ * @param out_sizes Output buffer to store slab class sizes
+ * @param max_count Maximum number of sizes to retrieve
+ * @return Number of sizes written to out_sizes
+ */
+size_t mp_get_slab_classes(memory_pool_t* pool, size_t* out_sizes, size_t max_count);
+
+/**
  * @brief Creates a memory pool instance using a custom backing allocator.
  *
  * This is the core pool creation function used by mp_create() and mp_create_shared().
