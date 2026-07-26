@@ -16,8 +16,10 @@
 /**
  * @brief Tests cmem C++ STL-compatible allocator with std::vector and std::unordered_map.
  */
-void test_cpp_stl_allocator() {
-    std::cout << "\n================ RUNNING C++ STL ALLOCATOR TESTS ================\n" << std::endl;
+void test_cpp_stl_allocator()
+{
+    std::cout << "\n================ RUNNING C++ STL ALLOCATOR TESTS ================\n"
+              << std::endl;
 
     cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
 
@@ -26,7 +28,8 @@ void test_cpp_stl_allocator() {
         cmem::allocator<int> vec_alloc(pool);
         std::vector<int, cmem::allocator<int>> vec(vec_alloc);
 
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 100; i++)
+        {
             vec.push_back(i * 10);
         }
         assert(vec.size() == 100);
@@ -34,7 +37,8 @@ void test_cpp_stl_allocator() {
 
         using MapAlloc = cmem::allocator<std::pair<const int, std::string>>;
         MapAlloc map_alloc(pool);
-        std::unordered_map<int, std::string, std::hash<int>, std::equal_to<int>, MapAlloc> map(10, std::hash<int>(), std::equal_to<int>(), map_alloc);
+        std::unordered_map<int, std::string, std::hash<int>, std::equal_to<int>, MapAlloc> map(
+            10, std::hash<int>(), std::equal_to<int>(), map_alloc);
 
         map[1] = "cmem";
         map[2] = "High-Performance";
@@ -55,8 +59,10 @@ void test_cpp_stl_allocator() {
 /**
  * @brief Tests cmem C++17 PMR allocator with std::pmr::vector and std::pmr::string.
  */
-void test_cpp_pmr_allocator() {
-    std::cout << "\n================ RUNNING C++17 PMR ALLOCATOR TESTS ================\n" << std::endl;
+void test_cpp_pmr_allocator()
+{
+    std::cout << "\n================ RUNNING C++17 PMR ALLOCATOR TESTS ================\n"
+              << std::endl;
 
     cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
 
@@ -81,7 +87,8 @@ void test_cpp_pmr_allocator() {
  * @brief Entry point for all cmem C++ unit tests.
  * @return 0 on success.
  */
-int main() {
+int main()
+{
     test_cpp_stl_allocator();
     test_cpp_pmr_allocator();
     return 0;

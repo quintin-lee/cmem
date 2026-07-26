@@ -25,9 +25,9 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_cpp bench examples clean install uninstall package distclean help
+.PHONY: all lib test test_cpp bench examples clean install uninstall package distclean help format-check
 
-all: lib test test_cpp bench examples
+all: format-check lib test test_cpp bench examples
 
 help:
 	@echo "cmem Makefile Targets:"
@@ -52,38 +52,38 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # 静态库
-lib: $(SRC) | $(BUILD_DIR)
+lib: format-check | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $(SRC) -o $(BUILD_DIR)/cmem.o
 	ar rcs $(BUILD_DIR)/$(LIBNAME) $(BUILD_DIR)/cmem.o
 	@echo "Built static library: $(BUILD_DIR)/$(LIBNAME)"
 
 # 共享库
-lib_shared: $(SRC) | $(BUILD_DIR)
+lib_shared: format-check | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -fPIC -shared $(SRC) -o $(BUILD_DIR)/$(SONAME) $(LDFLAGS)
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
 	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
 
 # C 单元测试
-test: $(SRC) $(TEST_SRC) | $(BUILD_DIR)
+test: format-check $(SRC) $(TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests $(LDFLAGS)
 	@echo "Running C unit tests..."
 	./$(BUILD_DIR)/unit_tests
 
 # C++ 测试
-test_cpp: $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
+test_cpp: format-check $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS_DEBUG) $(SRC) $(CPP_TEST_SRC) -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
 	@echo "Running C++ tests..."
 	./$(BUILD_DIR)/cpp_tests
 
 # 性能基准测试
-bench: $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
+bench: format-check $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) $(BENCH_SRC) -o $(BUILD_DIR)/benchmark $(LDFLAGS)
 	@echo "Running benchmarks..."
 	./$(BUILD_DIR)/benchmark
 
 # 示例程序
-examples: $(SRC) | $(BUILD_DIR)
+examples: format-check $(SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SRC) examples/example_basic.c -o $(BUILD_DIR)/example_basic $(LDFLAGS)
 	$(CC) $(CFLAGS) $(SRC) examples/example_embedded.c -o $(BUILD_DIR)/example_embedded $(LDFLAGS)
 	$(CC) $(CFLAGS) $(SRC) examples/example_leak_analysis.c -o $(BUILD_DIR)/example_leak_analysis $(LDFLAGS)
@@ -170,11 +170,21 @@ cmake-install:
 # 检查代码风格 (需要 clang-format)
 format-check:
 	@which clang-format > /dev/null || (echo "clang-format not found"; exit 1)
-	clang-format --dry-run --Werror include/*.h include/*.hpp src/*.c tests/*.c examples/*.c benchmarks/*.c
+	clang-format --dry-run --Werror \
+		include/*.h include/*.hpp \
+		src/*.c \
+		tests/*.c tests/*.cpp \
+		examples/*.c \
+		benchmarks/*.c
 
 format:
 	@which clang-format > /dev/null || (echo "clang-format not found"; exit 1)
-	clang-format -i include/*.h include/*.hpp src/*.c tests/*.c examples/*.c benchmarks/*.c
+	clang-format -i \
+		include/*.h include/*.hpp \
+		src/*.c \
+		tests/*.c tests/*.cpp \
+		examples/*.c \
+		benchmarks/*.c
 
 # 静态分析 (需要 cppcheck)
 static-analysis:

@@ -37,65 +37,72 @@
 #include <stdlib.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-/**
- * @brief Retrieves or initializes the global cmem memory pool instance.
- *
- * Creates a 4MB thread-safe pool with thread-local cache on first call.
- * Subsequent calls return the same pool instance.
- *
- * @return Pointer to the global cmem memory pool
- */
-static inline memory_pool_t* cmem_get_global_pool(void) {
-    static memory_pool_t* g_pool = NULL;
-    if (!g_pool) {
-        g_pool = mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+    /**
+     * @brief Retrieves or initializes the global cmem memory pool instance.
+     *
+     * Creates a 4MB thread-safe pool with thread-local cache on first call.
+     * Subsequent calls return the same pool instance.
+     *
+     * @return Pointer to the global cmem memory pool
+     */
+    static inline memory_pool_t* cmem_get_global_pool(void)
+    {
+        static memory_pool_t* g_pool = NULL;
+        if (!g_pool)
+        {
+            g_pool = mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+        }
+        return g_pool;
     }
-    return g_pool;
-}
 
-/**
- * @brief Global malloc replacement using cmem.
- *
- * @param size Number of bytes to allocate
- * @return Pointer to the allocated memory, or NULL on failure
- */
-static inline void* cmem_malloc(size_t size) {
-    return mp_alloc(cmem_get_global_pool(), size);
-}
+    /**
+     * @brief Global malloc replacement using cmem.
+     *
+     * @param size Number of bytes to allocate
+     * @return Pointer to the allocated memory, or NULL on failure
+     */
+    static inline void* cmem_malloc(size_t size)
+    {
+        return mp_alloc(cmem_get_global_pool(), size);
+    }
 
-/**
- * @brief Global free replacement using cmem.
- *
- * @param ptr Pointer to the memory to free
- */
-static inline void cmem_free(void* ptr) {
-    mp_free(cmem_get_global_pool(), ptr);
-}
+    /**
+     * @brief Global free replacement using cmem.
+     *
+     * @param ptr Pointer to the memory to free
+     */
+    static inline void cmem_free(void* ptr)
+    {
+        mp_free(cmem_get_global_pool(), ptr);
+    }
 
-/**
- * @brief Global realloc replacement using cmem.
- *
- * @param ptr Existing allocation pointer (or NULL for new allocation)
- * @param new_size New requested size in bytes
- * @return Pointer to the reallocated memory, or NULL on failure
- */
-static inline void* cmem_realloc(void* ptr, size_t new_size) {
-    return mp_realloc(cmem_get_global_pool(), ptr, new_size);
-}
+    /**
+     * @brief Global realloc replacement using cmem.
+     *
+     * @param ptr Existing allocation pointer (or NULL for new allocation)
+     * @param new_size New requested size in bytes
+     * @return Pointer to the reallocated memory, or NULL on failure
+     */
+    static inline void* cmem_realloc(void* ptr, size_t new_size)
+    {
+        return mp_realloc(cmem_get_global_pool(), ptr, new_size);
+    }
 
-/**
- * @brief Global calloc replacement using cmem.
- *
- * @param num Number of elements
- * @param size Size of each element in bytes
- * @return Pointer to the zero-initialized memory, or NULL on failure
- */
-static inline void* cmem_calloc(size_t num, size_t size) {
-    return mp_calloc(cmem_get_global_pool(), num, size);
-}
+    /**
+     * @brief Global calloc replacement using cmem.
+     *
+     * @param num Number of elements
+     * @param size Size of each element in bytes
+     * @return Pointer to the zero-initialized memory, or NULL on failure
+     */
+    static inline void* cmem_calloc(size_t num, size_t size)
+    {
+        return mp_calloc(cmem_get_global_pool(), num, size);
+    }
 
 /**
  * @brief Override standard malloc with cmem_malloc.
@@ -103,10 +110,10 @@ static inline void* cmem_calloc(size_t num, size_t size) {
  * Define CMEM_NO_MALLOC_OVERRIDE before including this header to disable.
  */
 #ifndef CMEM_NO_MALLOC_OVERRIDE
-#define malloc(sz)          cmem_malloc(sz)
-#define free(ptr)           cmem_free(ptr)
-#define realloc(ptr, sz)    cmem_realloc(ptr, sz)
-#define calloc(n, sz)       cmem_calloc(n, sz)
+#define malloc(sz) cmem_malloc(sz)
+#define free(ptr) cmem_free(ptr)
+#define realloc(ptr, sz) cmem_realloc(ptr, sz)
+#define calloc(n, sz) cmem_calloc(n, sz)
 #endif
 
 #ifdef __cplusplus

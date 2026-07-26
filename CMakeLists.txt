@@ -22,6 +22,32 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -pthread")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pthread")
 
+# 代码格式检查
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+    add_custom_target(format-check
+        COMMAND ${CLANG_FORMAT} --dry-run --Werror
+            include/cmem.h
+            include/cmem.hpp
+            include/cmem_pmr.hpp
+            include/cmem_override.h
+            src/cmem.c
+            tests/test_main.c
+            tests/test_cpp.cpp
+            benchmarks/bench_main.c
+            examples/example_basic.c
+            examples/example_embedded.c
+            examples/example_leak_analysis.c
+            examples/example_arena_tree.c
+        COMMENT "Checking code formatting with clang-format"
+        VERBATIM
+    )
+else()
+    add_custom_target(format-check
+        COMMAND ${CMAKE_COMMAND} -E echo "clang-format not found, skipping format check"
+    )
+endif()
+
 # 构建类型默认 Release
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -33,6 +59,7 @@ include_directories(include)
 # 静态库目标
 add_library(cmem STATIC src/cmem.c)
 target_link_libraries(cmem PRIVATE pthread rt)
+add_dependencies(cmem format-check)
 set_target_properties(cmem PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${CMEM_VERSION}
@@ -88,25 +115,32 @@ install(EXPORT cmemTargets
 # 测试可执行文件
 add_executable(unit_tests tests/test_main.c)
 target_link_libraries(unit_tests PRIVATE cmem pthread rt)
+add_dependencies(unit_tests format-check)
 
 add_executable(cpp_tests tests/test_cpp.cpp)
 target_link_libraries(cpp_tests PRIVATE cmem pthread rt)
+add_dependencies(cpp_tests format-check)
 
 add_executable(benchmark benchmarks/bench_main.c)
 target_link_libraries(benchmark PRIVATE cmem pthread rt)
+add_dependencies(benchmark format-check)
 
 # 示例程序
 add_executable(example_basic examples/example_basic.c)
 target_link_libraries(example_basic PRIVATE cmem pthread rt)
+add_dependencies(example_basic format-check)
 
 add_executable(example_embedded examples/example_embedded.c)
 target_link_libraries(example_embedded PRIVATE cmem pthread rt)
+add_dependencies(example_embedded format-check)
 
 add_executable(example_leak_analysis examples/example_leak_analysis.c)
 target_link_libraries(example_leak_analysis PRIVATE cmem pthread rt)
+add_dependencies(example_leak_analysis format-check)
 
 add_executable(example_arena_tree examples/example_arena_tree.c)
 target_link_libraries(example_arena_tree PRIVATE cmem pthread rt)
+add_dependencies(example_arena_tree format-check)
 
 # CTest 集成
 enable_testing()

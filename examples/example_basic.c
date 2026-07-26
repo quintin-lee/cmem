@@ -16,10 +16,13 @@
  * @param size Size of the allocation in bytes.
  * @param user_data Optional user data passed to the callback.
  */
-void my_event_logger(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size, void* user_data) {
-    (void)pool; (void)user_data;
-    const char* ev_name = (event == MP_EVENT_ALLOC) ? "ALLOC" :
-                          ((event == MP_EVENT_FREE) ? "FREE" : "OTHER");
+void my_event_logger(memory_pool_t* pool, mp_event_type_t event, void* ptr, size_t size,
+                     void* user_data)
+{
+    (void) pool;
+    (void) user_data;
+    const char* ev_name =
+        (event == MP_EVENT_ALLOC) ? "ALLOC" : ((event == MP_EVENT_FREE) ? "FREE" : "OTHER");
     printf(" [PROFILER LOG] Event: %-5s | Address: %p | Size: %zu bytes\n", ev_name, ptr, size);
 }
 
@@ -27,11 +30,13 @@ void my_event_logger(memory_pool_t* pool, mp_event_type_t event, void* ptr, size
  * @brief Demonstrates basic cmem usage with event profiling enabled.
  * @return 0 on success, 1 on failure.
  */
-int main() {
+int main()
+{
     printf("=== Example 1: Basic cmem Usage with Event Profiler ===\n\n");
 
     memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_DEBUG_CANARY);
-    if (!pool) {
+    if (!pool)
+    {
         fprintf(stderr, "Failed to create cmem pool!\n");
         return 1;
     }
@@ -39,8 +44,8 @@ int main() {
     mp_set_event_callback(pool, my_event_logger, NULL);
 
     printf("1. Allocating memory blocks...\n");
-    char* greeting = (char*)mp_alloc(pool, 40);
-    int* numbers = (int*)mp_alloc(pool, 64);
+    char* greeting = (char*) mp_alloc(pool, 40);
+    int* numbers = (int*) mp_alloc(pool, 64);
 
     strcpy(greeting, "Hello cmem Memory Manager!");
     printf("   greeting: %s\n\n", greeting);
