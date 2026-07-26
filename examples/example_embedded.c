@@ -43,6 +43,7 @@ int main()
     assert((uintptr_t) block1 >= base && (uintptr_t) block1 < limit);
     assert((uintptr_t) block2 >= base && (uintptr_t) block2 < limit);
     assert((uintptr_t) block3 >= base && (uintptr_t) block3 < limit);
+    (void) limit;
 
     printf("All allocations confirmed inside static arena memory boundary!\n");
 

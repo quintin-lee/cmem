@@ -35,6 +35,11 @@ int main()
     void* n1 = mp_alloc_loc(net_arena, 1024, __FILE__, __LINE__, __func__);
 
     assert(r1 && s1 && s2 && a1 && n1);
+    (void) r1;
+    (void) s1;
+    (void) s2;
+    (void) a1;
+    (void) n1;
 
     printf("\n2. Dumping Hierarchical Arena Tree Structure (mp_dump_tree_info):\n");
     mp_dump_tree_info(root_pool);
