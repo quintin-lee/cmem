@@ -17,7 +17,10 @@ memory_profile.html
 *.html
 *.log
 
+compile_commands.json
+
 # CodeGraph and IDE metadata
 .codegraph/
 .vscode/
 .idea/
+.cache

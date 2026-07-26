@@ -208,39 +208,71 @@ struct memory_pool {
 };
 
 /* Lock Utilities */
+
+/**
+ * @brief Acquires a read lock on the memory pool for thread-safe concurrent reads.
+ * @param pool Pointer to the memory pool
+ */
 static inline void pool_rdlock(memory_pool_t* pool) {
     if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
         pthread_rwlock_rdlock(&pool->rwlock);
     }
 }
 
+/**
+ * @brief Releases the read lock on the memory pool.
+ * @param pool Pointer to the memory pool
+ */
 static inline void pool_rdunlock(memory_pool_t* pool) {
     if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
         pthread_rwlock_unlock(&pool->rwlock);
     }
 }
 
+/**
+ * @brief Acquires a write lock on the memory pool for exclusive access.
+ * @param pool Pointer to the memory pool
+ */
 static inline void pool_wrlock(memory_pool_t* pool) {
     if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
         pthread_rwlock_wrlock(&pool->rwlock);
     }
 }
 
+/**
+ * @brief Releases the write lock on the memory pool.
+ * @param pool Pointer to the memory pool
+ */
 static inline void pool_wrunlock(memory_pool_t* pool) {
     if (pool && (pool->flags & MP_FLAG_THREAD_SAFE)) {
         pthread_rwlock_unlock(&pool->rwlock);
     }
 }
 
+/**
+ * @brief Acquires the write lock (alias for pool_wrlock).
+ * @param pool Pointer to the memory pool
+ */
 static inline void pool_lock(memory_pool_t* pool) {
     pool_wrlock(pool);
 }
 
+/**
+ * @brief Releases the write lock (alias for pool_wrunlock).
+ * @param pool Pointer to the memory pool
+ */
 static inline void pool_unlock(memory_pool_t* pool) {
     pool_wrunlock(pool);
 }
 
 /* Event Profiling Dispatcher */
+/**
+ * @brief Dispatches a profiling/debug event to the registered callback if present.
+ * @param pool Pointer to the memory pool
+ * @param ev Event type (alloc, free, realloc, etc.)
+ * @param ptr Pointer involved in the event
+ * @param size Size of the allocation
+ */
 static inline void trigger_event(memory_pool_t* pool, mp_event_type_t ev, void* ptr, size_t size) {
     if (pool->event_cb) {
         pool->event_cb(pool, ev, ptr, size, pool->event_user_data);
@@ -248,6 +280,13 @@ static inline void trigger_event(memory_pool_t* pool, mp_event_type_t ev, void* 
 }
 
 /* Backing Memory Allocator Helpers */
+/**
+ * @brief Allocates raw system memory with optional alignment, HugePages, Guard Pages, and NUMA binding.
+ * @param pool Pointer to the memory pool (for flags and NUMA node)
+ * @param size Number of bytes to allocate
+ * @param alignment Memory alignment requirement (power of two)
+ * @return Pointer to allocated memory, or NULL on failure
+ */
 static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
     void* ptr = NULL;
     if (pool && pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc) {
@@ -296,6 +335,12 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment) {
     return ptr;
 }
 
+/**
+ * @brief Frees raw system memory, respecting static buffer, custom allocator, HugePages, and Guard Pages modes.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the memory to free
+ * @param size Size of the allocation
+ */
 static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size) {
     if (pool->flags & MP_FLAG_STATIC_BUFFER) return;
     if (pool->has_custom_sys_alloc && pool->sys_allocator.sys_free) {
@@ -319,16 +364,32 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size) {
 }
 
 /* Bitwise Utilities for TLSF */
+/**
+ * @brief Finds the most significant set bit (fls - find last set) for TLSF first-level mapping.
+ * @param val Value to inspect
+ * @return Index of highest set bit (0-31), or -1 if val is 0
+ */
 static inline int tlsf_fls(size_t val) {
     if (val == 0) return -1;
     return 31 - __builtin_clz((uint32_t)val);
 }
 
+/**
+ * @brief Finds the least significant set bit (ffs - find first set) for TLSF second-level mapping.
+ * @param val Value to inspect
+ * @return Index of lowest set bit (0-31), or -1 if val is 0
+ */
 static inline int tlsf_ffs(uint32_t val) {
     if (val == 0) return -1;
     return __builtin_ctz(val);
 }
 
+/**
+ * @brief Maps a size to TLSF first-level and second-level indices for insertion.
+ * @param size Size to map
+ * @param fl Output first-level index
+ * @param sl Output second-level index
+ */
 static void tlsf_mapping_insert(size_t size, int* fl, int* sl) {
     if (size < (1 << TLSF_SL_SHIFT)) {
         *fl = 0;
@@ -339,6 +400,13 @@ static void tlsf_mapping_insert(size_t size, int* fl, int* sl) {
     }
 }
 
+/**
+ * @brief Maps a size to TLSF first-level and second-level indices for search/query.
+ * Rounds up the size to the nearest representable block boundary.
+ * @param size Size to map
+ * @param fl Output first-level index
+ * @param sl Output second-level index
+ */
 static void tlsf_mapping_search(size_t size, int* fl, int* sl) {
     if (size >= (1 << TLSF_SL_SHIFT)) {
         size_t round = (1 << (*fl = tlsf_fls(size) - TLSF_SL_SHIFT)) - 1;
@@ -348,6 +416,11 @@ static void tlsf_mapping_search(size_t size, int* fl, int* sl) {
 }
 
 /* --- Slab Allocator Implementation --- */
+/**
+ * @brief Initializes all Slab size classes for a newly created memory pool.
+ * @param pool Pointer to the memory pool
+ * @return true on success
+ */
 static bool slab_init(memory_pool_t* pool) {
     for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
         pool->slab_classes[i].slot_size = kSlabSizes[i];
@@ -358,6 +431,12 @@ static bool slab_init(memory_pool_t* pool) {
     return true;
 }
 
+/**
+ * @brief Creates a new Slab page for a given size class, initializing the free list.
+ * @param pool Pointer to the memory pool
+ * @param class_idx Slab size class index (0-6)
+ * @return Pointer to the new Slab page metadata, or NULL on failure
+ */
 static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx) {
     size_t slot_payload_size = kSlabSizes[class_idx];
     size_t header_overhead = sizeof(mp_block_header_t);
@@ -393,6 +472,13 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx) 
     return page;
 }
 
+/**
+ * @brief Allocates a small object from the Slab allocator for the given size class.
+ * @param pool Pointer to the memory pool
+ * @param class_idx Slab size class index
+ * @param req_size Requested payload size
+ * @return Pointer to the payload, or NULL on failure
+ */
 static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size) {
     mp_slab_class_t* sc = &pool->slab_classes[class_idx];
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
@@ -463,6 +549,11 @@ static void* slab_alloc(memory_pool_t* pool, uint8_t class_idx, size_t req_size)
     return payload;
 }
 
+/**
+ * @brief Returns a previously allocated Slab slot back to its page free list.
+ * @param pool Pointer to the memory pool
+ * @param header Block header of the allocation being freed
+ */
 static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
     uint8_t class_idx = header->slab_class;
     mp_slab_class_t* sc = &pool->slab_classes[class_idx];
@@ -500,6 +591,11 @@ static void slab_free(memory_pool_t* pool, mp_block_header_t* header) {
     }
 }
 
+/**
+ * @brief Refills the thread-local cache with Slab slots for lock-free fast-path allocation.
+ * @param pool Pointer to the memory pool
+ * @param class_idx Slab size class index to refill
+ */
 static inline void tls_cache_refill(memory_pool_t* pool, uint8_t class_idx) {
     for (int i = 0; i < 32; i++) {
         void* ptr = slab_alloc(pool, class_idx, kSlabSizes[class_idx]);
@@ -513,6 +609,13 @@ static inline void tls_cache_refill(memory_pool_t* pool, uint8_t class_idx) {
 }
 
 /* --- TLSF Implementation --- */
+/**
+ * @brief Creates a new TLSF pool, optionally using pre-allocated custom memory.
+ * @param pool Pointer to the parent memory pool
+ * @param size Size of the TLSF memory region
+ * @param custom_mem Optional pre-allocated memory buffer, or NULL to allocate from system
+ * @return Pointer to the new TLSF pool, or NULL on failure
+ */
 static tlsf_pool_t* tlsf_create_pool_custom(memory_pool_t* pool, size_t size, void* custom_mem) {
     size = (size + 7) & ~7;
     void* raw_mem = custom_mem;
@@ -545,6 +648,11 @@ static tlsf_pool_t* tlsf_create_pool_custom(memory_pool_t* pool, size_t size, vo
     return tpool;
 }
 
+/**
+ * @brief Inserts a free block into the TLSF free-list bitmap structure.
+ * @param tpool Pointer to the TLSF pool
+ * @param block Pointer to the block to insert
+ */
 static void tlsf_insert_free_block(tlsf_pool_t* tpool, tlsf_block_t* block) {
     int fl, sl;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
@@ -561,6 +669,11 @@ static void tlsf_insert_free_block(tlsf_pool_t* tpool, tlsf_block_t* block) {
     tpool->sl_bitmap[fl] |= (1U << sl);
 }
 
+/**
+ * @brief Removes a free block from the TLSF free-list bitmap structure.
+ * @param tpool Pointer to the TLSF pool
+ * @param block Pointer to the block to remove
+ */
 static void tlsf_remove_free_block(tlsf_pool_t* tpool, tlsf_block_t* block) {
     int fl, sl;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
@@ -584,6 +697,13 @@ static void tlsf_remove_free_block(tlsf_pool_t* tpool, tlsf_block_t* block) {
     }
 }
 
+/**
+ * @brief Finds the best-fit free block in the TLSF pool for the requested size.
+ * Uses two-level bitmap search for O(1) lookup.
+ * @param tpool Pointer to the TLSF pool
+ * @param total_needed Total size needed (including headers)
+ * @return Pointer to the best-fit block, or NULL if none available
+ */
 static tlsf_block_t* tlsf_find_suitable_block(tlsf_pool_t* tpool, size_t total_needed) {
     int fl = 0, sl = 0;
     tlsf_mapping_search(total_needed, &fl, &sl);
@@ -605,6 +725,12 @@ static tlsf_block_t* tlsf_find_suitable_block(tlsf_pool_t* tpool, size_t total_n
     return NULL;
 }
 
+/**
+ * @brief Allocates a medium-sized object from the TLSF allocator (512B ~ 4MB).
+ * @param pool Pointer to the memory pool
+ * @param req_size Requested payload size
+ * @return Pointer to the payload, or NULL on failure
+ */
 static void* tlsf_alloc(memory_pool_t* pool, size_t req_size) {
     size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + req_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
     total_needed = (total_needed + 7) & ~7;
@@ -695,6 +821,11 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size) {
     return payload;
 }
 
+/**
+ * @brief Returns a TLSF-allocated block back to the free pool, coalescing with neighbors.
+ * @param pool Pointer to the memory pool
+ * @param header Block header of the allocation being freed
+ */
 static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
     tlsf_block_t* block = (tlsf_block_t*)header->raw_base;
     tlsf_pool_t* tpool = (tlsf_pool_t*)header->subpool;
@@ -733,6 +864,14 @@ static void tlsf_free(memory_pool_t* pool, mp_block_header_t* header) {
     tlsf_insert_free_block(tpool, block);
 }
 
+/**
+ * @brief Attempts to expand a TLSF block in-place by absorbing the next free block.
+ * Avoids memcpy overhead if expansion is possible.
+ * @param pool Pointer to the memory pool
+ * @param header Block header of the allocation to expand
+ * @param new_size New requested payload size
+ * @return true if expansion succeeded in-place, false otherwise
+ */
 static bool tlsf_try_inplace_expand(memory_pool_t* pool, mp_block_header_t* header, size_t new_size) {
     if (header->alloc_type != ALLOC_TYPE_TLSF) return false;
     tlsf_block_t* block = (tlsf_block_t*)header->raw_base;
@@ -788,6 +927,9 @@ static bool tlsf_try_inplace_expand(memory_pool_t* pool, mp_block_header_t* head
 }
 
 /* --- Lock-Free Ring Buffer Allocator Implementation --- */
+/**
+ * @brief Ring buffer allocator structure (DPDK-style single-producer single-consumer).
+ */
 struct cmem_ring_buffer {
     size_t slot_size;
     size_t capacity;
@@ -798,6 +940,12 @@ struct cmem_ring_buffer {
     void* buffer;
 };
 
+/**
+ * @brief Creates a lock-free ring buffer allocator with power-of-two capacity.
+ * @param slot_size Size of each slot in bytes
+ * @param capacity Number of slots (rounded up to next power of two)
+ * @return Pointer to the ring buffer, or NULL on failure
+ */
 cmem_ring_buffer_t* mp_ring_create(size_t slot_size, size_t capacity) {
     if (slot_size == 0 || capacity == 0) return NULL;
     size_t real_cap = 1;
@@ -828,6 +976,11 @@ cmem_ring_buffer_t* mp_ring_create(size_t slot_size, size_t capacity) {
     return ring;
 }
 
+/**
+ * @brief Allocates a slot from the lock-free ring buffer (producer path).
+ * @param ring Pointer to the ring buffer
+ * @return Pointer to the slot payload, or NULL if full
+ */
 void* mp_ring_alloc(cmem_ring_buffer_t* ring) {
     if (!ring) return NULL;
     size_t head = CMEM_ATOMIC_FETCH_ADD(&ring->head, 1, CMEM_ORDER_RELAXED);
@@ -840,6 +993,12 @@ void* mp_ring_alloc(cmem_ring_buffer_t* ring) {
     return ring->slots[head & ring->mask];
 }
 
+/**
+ * @brief Returns a slot to the lock-free ring buffer (consumer path).
+ * @param ring Pointer to the ring buffer
+ * @param ptr Pointer to the slot to return
+ * @return true on success, false on invalid input
+ */
 bool mp_ring_free(cmem_ring_buffer_t* ring, void* ptr) {
     if (!ring || !ptr) return false;
     size_t tail = CMEM_ATOMIC_FETCH_ADD(&ring->tail, 1, CMEM_ORDER_RELEASE);
@@ -847,6 +1006,10 @@ bool mp_ring_free(cmem_ring_buffer_t* ring, void* ptr) {
     return true;
 }
 
+/**
+ * @brief Destroys the ring buffer and frees all associated memory.
+ * @param ring Pointer to the ring buffer
+ */
 void mp_ring_destroy(cmem_ring_buffer_t* ring) {
     if (!ring) return;
     if (ring->slots) free(ring->slots);
@@ -855,6 +1018,9 @@ void mp_ring_destroy(cmem_ring_buffer_t* ring) {
 }
 
 /* --- 0-Overhead Typed Object Pool Implementation --- */
+/**
+ * @brief Typed object pool structure for fixed-size object allocation.
+ */
 struct mp_typed_pool {
     size_t elem_size;
     size_t capacity;
@@ -863,6 +1029,12 @@ struct mp_typed_pool {
     void* raw_buf;
 };
 
+/**
+ * @brief Creates a 0-overhead typed object pool for fixed-size elements.
+ * @param elem_size Size of each element (rounded up to 8 bytes, minimum sizeof(void*))
+ * @param capacity Maximum number of elements in the pool
+ * @return Pointer to the typed pool, or NULL on failure
+ */
 mp_typed_pool_t* mp_typed_pool_create(size_t elem_size, size_t capacity) {
     if (elem_size == 0 || capacity == 0) return NULL;
     size_t real_elem_sz = (elem_size < sizeof(void*)) ? sizeof(void*) : elem_size;
@@ -894,6 +1066,11 @@ mp_typed_pool_t* mp_typed_pool_create(size_t elem_size, size_t capacity) {
     return tpool;
 }
 
+/**
+ * @brief Allocates a fixed-size object from the typed pool (zero header overhead).
+ * @param tpool Pointer to the typed pool
+ * @return Pointer to the object, or NULL if pool is exhausted
+ */
 void* mp_typed_alloc(mp_typed_pool_t* tpool) {
     if (!tpool || !tpool->free_list) return NULL;
 
@@ -903,6 +1080,11 @@ void* mp_typed_alloc(mp_typed_pool_t* tpool) {
     return ptr;
 }
 
+/**
+ * @brief Returns a fixed-size object back to the typed pool free list.
+ * @param tpool Pointer to the typed pool
+ * @param ptr Pointer to the object to free
+ */
 void mp_typed_free(mp_typed_pool_t* tpool, void* ptr) {
     if (!tpool || !ptr) return;
 
@@ -911,6 +1093,10 @@ void mp_typed_free(mp_typed_pool_t* tpool, void* ptr) {
     if (tpool->active_count > 0) tpool->active_count--;
 }
 
+/**
+ * @brief Destroys the typed pool and frees the underlying buffer.
+ * @param tpool Pointer to the typed pool
+ */
 void mp_typed_pool_destroy(mp_typed_pool_t* tpool) {
     if (!tpool) return;
     if (tpool->raw_buf) free(tpool->raw_buf);
@@ -918,10 +1104,23 @@ void mp_typed_pool_destroy(mp_typed_pool_t* tpool) {
 }
 
 /* --- Public API Implementation --- */
+/**
+ * @brief Creates a new memory pool instance with the given initial capacity and flags.
+ * @param initial_capacity Initial memory capacity in bytes (0 for default)
+ * @param flags Configuration flags (thread safety, canary, etc.)
+ * @return Pointer to the new memory pool, or NULL on failure
+ */
 memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags) {
     return mp_create_custom(initial_capacity, flags, NULL);
 }
 
+/**
+ * @brief Creates a POSIX shared memory pool in /dev/shm for zero-copy inter-process communication.
+ * @param shm_name Name of the shared memory object (e.g. "/my_pool")
+ * @param capacity Capacity in bytes
+ * @param flags Configuration flags
+ * @return Pointer to the new shared memory pool, or NULL on failure
+ */
 memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_t flags) {
     if (!shm_name || capacity < 64 * 1024) capacity = 1024 * 1024;
 
@@ -952,6 +1151,11 @@ memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_
     return pool;
 }
 
+/**
+ * @brief Destroys a shared memory pool and unlinks the POSIX shared memory segment.
+ * @param pool Pointer to the shared memory pool
+ * @param shm_name Name of the shared memory object to unlink
+ */
 void mp_destroy_shared(memory_pool_t* pool, const char* shm_name) {
     if (!pool) return;
     size_t sz = pool->stats.total_pool_size;
@@ -962,6 +1166,14 @@ void mp_destroy_shared(memory_pool_t* pool, const char* shm_name) {
     }
 }
 
+/**
+ * @brief Creates a child memory pool linked to a parent pool for hierarchical arena management.
+ * @param parent Pointer to the parent memory pool (can be NULL)
+ * @param initial_capacity Initial capacity for the child pool
+ * @param flags Configuration flags
+ * @param arena_name Human-readable name for the child arena
+ * @return Pointer to the new child memory pool, or NULL on failure
+ */
 memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags, const char* arena_name) {
     memory_pool_t* child = mp_create(initial_capacity, flags);
     if (!child) return NULL;
@@ -979,6 +1191,12 @@ memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, m
     return child;
 }
 
+/**
+ * @brief Parses the CMEM_CONF environment variable to enable runtime configuration flags.
+ * Supports: canary=1, zero=1, tls=1, track=1, poison=1, aligned=1, guard=1, hugepages=1
+ * @param default_flags Default flags to merge with parsed flags
+ * @return Merged flags value
+ */
 mp_flags_t mp_parse_env_flags(mp_flags_t default_flags) {
     const char* env_conf = getenv("CMEM_CONF");
     if (!env_conf || strlen(env_conf) == 0) return default_flags;
@@ -997,6 +1215,13 @@ mp_flags_t mp_parse_env_flags(mp_flags_t default_flags) {
     return flags;
 }
 
+/**
+ * @brief Creates a memory pool with a custom backing allocator vtable.
+ * @param initial_capacity Initial memory capacity in bytes
+ * @param flags Configuration flags
+ * @param sys_allocator Custom system allocator function table, or NULL for default
+ * @return Pointer to the new memory pool, or NULL on failure
+ */
 memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t* sys_allocator) {
     flags = mp_parse_env_flags(flags);
 
@@ -1028,6 +1253,13 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const
     return pool;
 }
 
+/**
+ * @brief Creates a memory pool inside a pre-allocated static buffer (zero OS malloc dependency).
+ * @param buffer Pre-allocated buffer memory
+ * @param buffer_size Size of the buffer in bytes
+ * @param flags Configuration flags
+ * @return Pointer to the new memory pool, or NULL on failure
+ */
 memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_t flags) {
     if (!buffer || buffer_size < sizeof(memory_pool_t) + sizeof(tlsf_pool_t) + TLSF_MIN_BLOCK_SIZE) {
         return NULL;
@@ -1058,6 +1290,11 @@ memory_pool_t* mp_create_from_buffer(void* buffer, size_t buffer_size, mp_flags_
     return pool;
 }
 
+/**
+ * @brief Sets a human-readable name for the memory pool arena.
+ * @param pool Pointer to the memory pool
+ * @param name Null-terminated name string
+ */
 void mp_set_name(memory_pool_t* pool, const char* name) {
     if (!pool || !name) return;
     pool_lock(pool);
@@ -1065,16 +1302,31 @@ void mp_set_name(memory_pool_t* pool, const char* name) {
     pool_unlock(pool);
 }
 
+/**
+ * @brief Gets the human-readable name of the memory pool arena.
+ * @param pool Pointer to the memory pool
+ * @return Pointer to the name string, or NULL if pool is invalid
+ */
 const char* mp_get_name(memory_pool_t* pool) {
     if (!pool) return NULL;
     return pool->arena_name;
 }
 
+/**
+ * @brief Gets the parent pool pointer if this pool is a child arena.
+ * @param pool Pointer to the memory pool
+ * @return Pointer to the parent pool, or NULL if this is a root pool
+ */
 memory_pool_t* mp_get_parent(memory_pool_t* pool) {
     if (!pool) return NULL;
     return pool->parent;
 }
 
+/**
+ * @brief Gets the count of direct child arenas linked to this pool.
+ * @param pool Pointer to the memory pool
+ * @return Number of direct children, or 0 if pool is invalid
+ */
 size_t mp_get_child_count(memory_pool_t* pool) {
     if (!pool) return 0;
     pool_rdlock(pool);
@@ -1088,6 +1340,11 @@ size_t mp_get_child_count(memory_pool_t* pool) {
     return count;
 }
 
+/**
+ * @brief Calculates the memory pool pressure ratio relative to its limit or total size.
+ * @param pool Pointer to the memory pool
+ * @return Pressure ratio between 0.0 (0%) and 1.0 (100%)
+ */
 double mp_pressure(memory_pool_t* pool) {
     if (!pool) return 0.0;
     pool_rdlock(pool);
@@ -1103,6 +1360,11 @@ double mp_pressure(memory_pool_t* pool) {
     return ratio;
 }
 
+/**
+ * @brief Returns the total bytes that could be reclaimed by trimming fully-free Slab pages.
+ * @param pool Pointer to the memory pool
+ * @return Number of reclaimable bytes
+ */
 size_t mp_freeable(memory_pool_t* pool) {
     if (!pool) return 0;
     pool_rdlock(pool);
@@ -1123,6 +1385,11 @@ size_t mp_freeable(memory_pool_t* pool) {
     return freeable_bytes;
 }
 
+/**
+ * @brief Returns the estimated physical RSS resident memory size of the pool.
+ * @param pool Pointer to the memory pool
+ * @return Total reserved bytes from the OS
+ */
 size_t mp_resident(memory_pool_t* pool) {
     if (!pool) return 0;
     pool_rdlock(pool);
@@ -1131,6 +1398,10 @@ size_t mp_resident(memory_pool_t* pool) {
     return res;
 }
 
+/**
+ * @brief Resets cumulative performance metrics and peak memory statistics.
+ * @param pool Pointer to the memory pool
+ */
 void mp_reset_stats(memory_pool_t* pool) {
     if (!pool) return;
     pool_lock(pool);
@@ -1145,6 +1416,13 @@ void mp_reset_stats(memory_pool_t* pool) {
     pool_unlock(pool);
 }
 
+/**
+ * @brief Returns the optimal size class for a requested byte size.
+ * For sizes <= 512B, returns the next Slab size class (8, 16, 32, 64, 128, 256, 512).
+ * For larger sizes, returns the size aligned to 8 bytes.
+ * @param size Requested size in bytes
+ * @return Preferred/aligned size
+ */
 size_t mp_preferred_size(size_t size) {
     if (size == 0) return 0;
     if (size <= SLAB_MAX_SIZE) {
@@ -1157,6 +1435,11 @@ size_t mp_preferred_size(size_t size) {
     return (size + 7) & ~7;
 }
 
+/**
+ * @brief Destroys the memory pool and recursively destroys all linked child arenas.
+ * Releases all system memory, Slab pages, TLSF pools, and synchronization primitives.
+ * @param pool Pointer to the memory pool
+ */
 void mp_destroy(memory_pool_t* pool) {
     if (!pool) return;
 
@@ -1207,6 +1490,11 @@ void mp_destroy(memory_pool_t* pool) {
     }
 }
 
+/**
+ * @brief Resets the memory pool and all linked child arenas to an empty state.
+ * All allocations are logically freed in O(1) time; underlying memory is retained for reuse.
+ * @param pool Pointer to the memory pool
+ */
 void mp_reset(memory_pool_t* pool) {
     if (!pool) return;
     pool_lock(pool);
@@ -1280,6 +1568,11 @@ void mp_reset(memory_pool_t* pool) {
     pool_unlock(pool);
 }
 
+/**
+ * @brief Sets a hard maximum memory budget limit on the pool.
+ * @param pool Pointer to the memory pool
+ * @param max_bytes Maximum allowed active bytes (0 for unlimited)
+ */
 void mp_set_memory_limit(memory_pool_t* pool, size_t max_bytes) {
     if (!pool) return;
     pool_lock(pool);
@@ -1287,6 +1580,11 @@ void mp_set_memory_limit(memory_pool_t* pool, size_t max_bytes) {
     pool_unlock(pool);
 }
 
+/**
+ * @brief Compacts the memory pool by releasing completely free Slab pages back to the OS.
+ * @param pool Pointer to the memory pool
+ * @return Number of bytes freed back to the OS
+ */
 size_t mp_compact(memory_pool_t* pool) {
     if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) return 0;
     pool_lock(pool);
@@ -1319,6 +1617,11 @@ size_t mp_compact(memory_pool_t* pool) {
     return freed_bytes;
 }
 
+/**
+ * @brief Purges unused Slab pages using Linux madvise MADV_DONTNEED to reduce physical RSS.
+ * @param pool Pointer to the memory pool
+ * @return Number of bytes purged
+ */
 size_t mp_purge_lazy(memory_pool_t* pool) {
     if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) return 0;
     pool_lock(pool);
@@ -1356,6 +1659,14 @@ size_t mp_purge_lazy(memory_pool_t* pool) {
     return purged_bytes;
 }
 
+/**
+ * @brief Portable wrapper for madvise / VirtualAlloc memory advice across Linux and Windows.
+ * @param pool Pointer to the memory pool
+ * @param addr Start address of the memory region
+ * @param length Length of the memory region in bytes
+ * @param advice Advice value (e.g. MADV_DONTNEED on Linux)
+ * @return 0 on success, -1 on failure
+ */
 int mp_madvise(memory_pool_t* pool, void* addr, size_t length, int advice) {
     if (!addr || length == 0) return -1;
     (void)pool;
@@ -1388,6 +1699,12 @@ int mp_madvise(memory_pool_t* pool, void* addr, size_t length, int advice) {
 #endif
 }
 
+/**
+ * @brief Trims and reclaims unused memory capacity back to the OS, recursively for child arenas.
+ * @param pool Pointer to the memory pool
+ * @param pad Minimum number of bytes to keep reserved
+ * @return Total bytes reclaimed across all arenas
+ */
 size_t mp_trim(memory_pool_t* pool, size_t pad) {
     if (!pool) return 0;
 
@@ -1410,6 +1727,12 @@ size_t mp_trim(memory_pool_t* pool, size_t pad) {
     return total_reclaimed;
 }
 
+/**
+ * @brief Registers an event callback for real-time profiling and debugging.
+ * @param pool Pointer to the memory pool
+ * @param callback Event callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
 void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, void* user_data) {
     if (!pool) return;
     pool_lock(pool);
@@ -1418,6 +1741,14 @@ void mp_set_event_callback(memory_pool_t* pool, mp_event_callback_t callback, vo
     pool_unlock(pool);
 }
 
+/**
+ * @brief Configures high and low watermark threshold alert callbacks.
+ * @param pool Pointer to the memory pool
+ * @param high_ratio High watermark ratio (0.0-1.0) that triggers the callback
+ * @param low_ratio Low watermark ratio (0.0-1.0) that clears the high state
+ * @param cb Watermark callback function pointer
+ * @param user_data Optional user data passed to the callback
+ */
 void mp_set_watermark_callback(memory_pool_t* pool, double high_ratio, double low_ratio, mp_watermark_callback_t cb, void* user_data) {
     if (!pool) return;
     pool_lock(pool);
@@ -1429,6 +1760,12 @@ void mp_set_watermark_callback(memory_pool_t* pool, double high_ratio, double lo
     pool_unlock(pool);
 }
 
+/**
+ * @brief Binds memory pool backing allocations to a specific Linux NUMA CPU node.
+ * @param pool Pointer to the memory pool
+ * @param numa_node NUMA node ID (-1 for default)
+ * @return true on success
+ */
 bool mp_set_numa_node(memory_pool_t* pool, int numa_node) {
     if (!pool) return false;
     pool_lock(pool);
@@ -1438,6 +1775,12 @@ bool mp_set_numa_node(memory_pool_t* pool, int numa_node) {
     return true;
 }
 
+/**
+ * @brief Enables an emergency fallback reserve cushion for critical OOM scenarios.
+ * @param pool Pointer to the memory pool
+ * @param reserve_bytes Size of the emergency reserve buffer in bytes
+ * @return true on success
+ */
 bool mp_enable_emergency_reserve(memory_pool_t* pool, size_t reserve_bytes) {
     if (!pool || reserve_bytes == 0) return false;
     pool_lock(pool);
@@ -1492,6 +1835,15 @@ static void active_list_remove(memory_pool_t* pool, mp_block_header_t* header) {
     if (header->next) header->next->prev = header->prev;
 }
 
+/**
+ * @brief Allocates memory block with source location tracking for leak diagnostics.
+ * @param pool Pointer to the memory pool
+ * @param size Size in bytes
+ * @param file Source file name (usually __FILE__)
+ * @param line Source line number (usually __LINE__)
+ * @param func Source function name (usually __func__)
+ * @return Pointer to the allocated payload, or NULL on failure
+ */
 void* mp_alloc_loc(memory_pool_t* pool, size_t size, const char* file, int line, const char* func) {
     void* ptr = mp_alloc(pool, size);
     if (ptr) {
@@ -1506,6 +1858,16 @@ void* mp_alloc_loc(memory_pool_t* pool, size_t size, const char* file, int line,
     return ptr;
 }
 
+/**
+ * @brief Allocates zeroed memory block with source location tracking.
+ * @param pool Pointer to the memory pool
+ * @param num Number of elements
+ * @param size Size of each element in bytes
+ * @param file Source file name
+ * @param line Source line number
+ * @param func Source function name
+ * @return Pointer to the allocated payload, or NULL on failure
+ */
 void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* file, int line, const char* func) {
     void* ptr = mp_calloc(pool, num, size);
     if (ptr) {
@@ -1520,6 +1882,16 @@ void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* fi
     return ptr;
 }
 
+/**
+ * @brief Reallocates memory block with source location tracking.
+ * @param pool Pointer to the memory pool
+ * @param ptr Existing allocation pointer (or NULL for new allocation)
+ * @param new_size New requested size in bytes
+ * @param file Source file name
+ * @param line Source line number
+ * @param func Source function name
+ * @return Pointer to the reallocated payload, or NULL on failure
+ */
 void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char* file, int line, const char* func) {
     void* new_ptr = mp_realloc(pool, ptr, new_size);
     if (new_ptr) {
@@ -1534,6 +1906,11 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
     return new_ptr;
 }
 
+/**
+ * @brief Maps a byte size to a Slab class index for small-object allocation.
+ * @param size Requested size in bytes
+ * @return Slab class index (0-6), or 6 for sizes > 256B
+ */
 static inline uint8_t get_slab_class_index(size_t size) {
     if (size <= 8) return 0;
     if (size <= 16) return 1;
@@ -1544,6 +1921,12 @@ static inline uint8_t get_slab_class_index(size_t size) {
     return 6;
 }
 
+/**
+ * @brief Core allocation dispatch function handling TLS cache, Slab, TLSF, and OS fallback paths.
+ * @param pool Pointer to the memory pool
+ * @param size Requested size in bytes
+ * @return Pointer to the payload, or NULL on failure
+ */
 static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
 
@@ -1704,6 +2087,13 @@ static void* mp_alloc_internal(memory_pool_t* pool, size_t size) {
     return ptr;
 }
 
+/**
+ * @brief Allocates a memory block from the pool.
+ * If MP_FLAG_CACHE_ALIGNED is set, delegates to mp_aligned_alloc with 64-byte alignment.
+ * @param pool Pointer to the memory pool
+ * @param size Requested size in bytes
+ * @return Pointer to the payload, or NULL on failure
+ */
 void* mp_alloc(memory_pool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
     if (pool->flags & MP_FLAG_CACHE_ALIGNED) {
@@ -1712,6 +2102,14 @@ void* mp_alloc(memory_pool_t* pool, size_t size) {
     return mp_alloc_internal(pool, size);
 }
 
+/**
+ * @brief Allocates multiple memory blocks of the same size in a single operation.
+ * @param pool Pointer to the memory pool
+ * @param size Size of each block in bytes
+ * @param out_ptrs Output array to store allocated pointers
+ * @param count Maximum number of blocks to allocate
+ * @return Number of blocks successfully allocated
+ */
 size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t count) {
     if (!pool || !out_ptrs || count == 0) return 0;
     size_t allocated = 0;
@@ -1723,6 +2121,12 @@ size_t mp_alloc_batch(memory_pool_t* pool, size_t size, void** out_ptrs, size_t 
     return allocated;
 }
 
+/**
+ * @brief Frees multiple memory blocks in a single operation.
+ * @param pool Pointer to the memory pool
+ * @param ptrs Array of pointers to free
+ * @param count Number of pointers in the array
+ */
 void mp_free_batch(memory_pool_t* pool, void** ptrs, size_t count) {
     if (!pool || !ptrs || count == 0) return;
     for (size_t i = 0; i < count; i++) {
@@ -1733,6 +2137,13 @@ void mp_free_batch(memory_pool_t* pool, void** ptrs, size_t count) {
     }
 }
 
+/**
+ * @brief Allocates and zero-initializes memory for an array of elements.
+ * @param pool Pointer to the memory pool
+ * @param num Number of elements
+ * @param size Size of each element in bytes
+ * @return Pointer to the allocated payload, or NULL on failure
+ */
 void* mp_calloc(memory_pool_t* pool, size_t num, size_t size) {
     size_t total_size = num * size;
     void* ptr = mp_alloc(pool, total_size);
@@ -1742,6 +2153,11 @@ void* mp_calloc(memory_pool_t* pool, size_t num, size_t size) {
     return ptr;
 }
 
+/**
+ * @brief Frees a memory block back to the pool, performing canary checks and poison fill if enabled.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the payload to free
+ */
 void mp_free(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr) return;
 
@@ -1817,6 +2233,14 @@ void mp_free(memory_pool_t* pool, void* ptr) {
     pool_unlock(pool);
 }
 
+/**
+ * @brief Reallocates a memory block to a new size.
+ * Attempts in-place expansion for TLSF blocks to avoid memcpy.
+ * @param pool Pointer to the memory pool
+ * @param ptr Existing allocation pointer (or NULL for new allocation)
+ * @param new_size New requested size in bytes
+ * @return Pointer to the reallocated payload, or NULL on failure
+ */
 void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size) {
     if (!ptr) return mp_alloc(pool, new_size);
     if (new_size == 0) {
@@ -1855,6 +2279,14 @@ void* mp_realloc(memory_pool_t* pool, void* ptr, size_t new_size) {
     return new_ptr;
 }
 
+/**
+ * @brief Overflow-safe reallocarray: reallocates an array with nmemb elements of size.
+ * @param pool Pointer to the memory pool
+ * @param ptr Existing allocation pointer
+ * @param nmemb Number of elements
+ * @param size Size of each element in bytes
+ * @return Pointer to the reallocated payload, or NULL on overflow/failure
+ */
 void* mp_reallocarray_loc(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size, const char* file, int line, const char* func) {
     if (nmemb != 0 && size > SIZE_MAX / nmemb) {
         return NULL;
@@ -1862,6 +2294,14 @@ void* mp_reallocarray_loc(memory_pool_t* pool, void* ptr, size_t nmemb, size_t s
     return mp_realloc_loc(pool, ptr, nmemb * size, file, line, func);
 }
 
+/**
+ * @brief Overflow-safe reallocarray without location tracking.
+ * @param pool Pointer to the memory pool
+ * @param ptr Existing allocation pointer
+ * @param nmemb Number of elements
+ * @param size Size of each element in bytes
+ * @return Pointer to the reallocated payload, or NULL on overflow/failure
+ */
 void* mp_reallocarray(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size) {
     if (nmemb != 0 && size > SIZE_MAX / nmemb) {
         return NULL;
@@ -1869,6 +2309,15 @@ void* mp_reallocarray(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size)
     return mp_realloc(pool, ptr, nmemb * size);
 }
 
+/**
+ * @brief Duplicates a null-terminated string into the memory pool with location tracking.
+ * @param pool Pointer to the memory pool
+ * @param str Source string to duplicate
+ * @param file Source file name
+ * @param line Source line number
+ * @param func Source function name
+ * @return Pointer to the duplicated string, or NULL on failure
+ */
 char* mp_strdup_loc(memory_pool_t* pool, const char* str, const char* file, int line, const char* func) {
     if (!str) return NULL;
     size_t len = strlen(str);
@@ -1879,10 +2328,26 @@ char* mp_strdup_loc(memory_pool_t* pool, const char* str, const char* file, int 
     return dup;
 }
 
+/**
+ * @brief Duplicates a null-terminated string into the memory pool.
+ * @param pool Pointer to the memory pool
+ * @param str Source string to duplicate
+ * @return Pointer to the duplicated string, or NULL on failure
+ */
 char* mp_strdup(memory_pool_t* pool, const char* str) {
     return mp_strdup_loc(pool, str, NULL, 0, NULL);
 }
 
+/**
+ * @brief Duplicates a binary memory region into the pool with location tracking.
+ * @param pool Pointer to the memory pool
+ * @param src Source memory region
+ * @param n Number of bytes to copy
+ * @param file Source file name
+ * @param line Source line number
+ * @param func Source function name
+ * @return Pointer to the duplicated memory, or NULL on failure
+ */
 void* mp_memdup_loc(memory_pool_t* pool, const void* src, size_t n, const char* file, int line, const char* func) {
     if (!src || n == 0) return NULL;
     void* dup = mp_alloc_loc(pool, n, file, line, func);
@@ -1892,10 +2357,26 @@ void* mp_memdup_loc(memory_pool_t* pool, const void* src, size_t n, const char* 
     return dup;
 }
 
+/**
+ * @brief Duplicates a binary memory region into the pool.
+ * @param pool Pointer to the memory pool
+ * @param src Source memory region
+ * @param n Number of bytes to copy
+ * @return Pointer to the duplicated memory, or NULL on failure
+ */
 void* mp_memdup(memory_pool_t* pool, const void* src, size_t n) {
     return mp_memdup_loc(pool, src, n, NULL, 0, NULL);
 }
 
+/**
+ * @brief Formats a string and allocates the result in the pool with location tracking.
+ * @param pool Pointer to the memory pool
+ * @param file Source file name
+ * @param line Source line number
+ * @param func Source function name
+ * @param fmt Printf-style format string
+ * @return Pointer to the formatted string, or NULL on failure
+ */
 char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const char* func, const char* fmt, ...) {
     if (!fmt) return NULL;
     va_list args;
@@ -1918,6 +2399,12 @@ char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const cha
     return buf;
 }
 
+/**
+ * @brief Formats a string and allocates the result in the pool.
+ * @param pool Pointer to the memory pool
+ * @param fmt Printf-style format string
+ * @return Pointer to the formatted string, or NULL on failure
+ */
 char* mp_asprintf(memory_pool_t* pool, const char* fmt, ...) {
     if (!fmt) return NULL;
     va_list args;
@@ -1940,6 +2427,13 @@ char* mp_asprintf(memory_pool_t* pool, const char* fmt, ...) {
     return buf;
 }
 
+/**
+ * @brief Allocates memory with a specific byte alignment requirement.
+ * @param pool Pointer to the memory pool
+ * @param alignment Byte alignment (must be power of two, minimum sizeof(void*))
+ * @param size Requested payload size in bytes
+ * @return Pointer to the aligned payload, or NULL on failure
+ */
 void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     if ((alignment & (alignment - 1)) != 0 || alignment < sizeof(void*)) {
         return NULL;
@@ -1976,18 +2470,36 @@ void* mp_aligned_alloc(memory_pool_t* pool, size_t alignment, size_t size) {
     return (void*)aligned_addr;
 }
 
+/**
+ * @brief Returns the usable allocated capacity of a pointer block.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the payload
+ * @return Usable size in bytes, or 0 if invalid
+ */
 size_t mp_usable_size(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr || !mp_ptr_valid(pool, ptr)) return 0;
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
     return header->usable_size;
 }
 
+/**
+ * @brief Returns the requested payload size of an allocated pointer block.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to the payload
+ * @return Requested size in bytes, or 0 if invalid
+ */
 size_t mp_alloc_size(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr || !mp_ptr_valid(pool, ptr)) return 0;
     mp_block_header_t* header = (mp_block_header_t*)((uint8_t*)ptr - sizeof(mp_block_header_t));
     return header->requested_size;
 }
 
+/**
+ * @brief Validates if a pointer belongs to an active allocation in the memory pool.
+ * @param pool Pointer to the memory pool
+ * @param ptr Pointer to validate
+ * @return true if the pointer is valid and active, false otherwise
+ */
 bool mp_ptr_valid(memory_pool_t* pool, void* ptr) {
     if (!pool || !ptr) return false;
     pool_rdlock(pool);
@@ -2011,6 +2523,11 @@ bool mp_ptr_valid(memory_pool_t* pool, void* ptr) {
 
 /* --- Heap Integrity, Leak Analysis & HTML Dashboard --- */
 
+/**
+ * @brief Audits heap integrity by checking header magics and canary redzones of all active allocations.
+ * @param pool Pointer to the memory pool
+ * @return true if heap is healthy, false if corruption detected
+ */
 bool mp_audit_heap(memory_pool_t* pool) {
     if (!pool) return true;
     pool_lock(pool);
@@ -2049,6 +2566,13 @@ bool mp_audit_heap(memory_pool_t* pool) {
     return healthy;
 }
 
+/**
+ * @brief Generates a detailed memory leak analysis report with file/line locations and callstacks.
+ * @param pool Pointer to the memory pool
+ * @param report_buf Output buffer for the report text
+ * @param max_len Maximum length of the output buffer
+ * @return Number of bytes written to report_buf
+ */
 size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len) {
     if (!pool || !report_buf || max_len == 0) return 0;
     pool_lock(pool);
@@ -2113,6 +2637,12 @@ size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len) {
     return offset;
 }
 
+/**
+ * @brief Exports the memory leak analysis report to a text file.
+ * @param pool Pointer to the memory pool
+ * @param filepath Path to the output text file
+ * @return true on success
+ */
 bool mp_export_leak_report(memory_pool_t* pool, const char* filepath) {
     if (!pool || !filepath) return false;
     char buffer[16384];
@@ -2127,6 +2657,12 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath) {
     return true;
 }
 
+/**
+ * @brief Exports an interactive visual HTML profiler dashboard to a file.
+ * @param pool Pointer to the memory pool
+ * @param filepath Path to the output HTML file
+ * @return true on success
+ */
 bool mp_export_html_report(memory_pool_t* pool, const char* filepath) {
     if (!pool || !filepath) return false;
     FILE* f = fopen(filepath, "w");
@@ -2237,6 +2773,12 @@ typedef struct {
     char     alloc_func[64];
 } cmem_snapshot_record_t;
 
+/**
+ * @brief Exports a binary post-mortem memory crash snapshot dump to file.
+ * @param pool Pointer to the memory pool
+ * @param filepath Path to the output binary snapshot file
+ * @return true on success
+ */
 bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath) {
     if (!pool || !filepath) return false;
     FILE* f = fopen(filepath, "wb");
@@ -2275,6 +2817,13 @@ bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath) {
     return true;
 }
 
+/**
+ * @brief Parses a binary post-mortem memory snapshot file into readable text report.
+ * @param filepath Path to the binary snapshot file
+ * @param out_report Output buffer for the text report
+ * @param max_len Maximum length of the output buffer
+ * @return true on success
+ */
 bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max_len) {
     if (!filepath || !out_report || max_len == 0) return false;
     FILE* f = fopen(filepath, "rb");
@@ -2316,6 +2865,14 @@ bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max
     return true;
 }
 
+/**
+ * @brief Compares two binary snapshot files and generates an incremental leak diff report.
+ * @param snapshot_a_path Path to the baseline snapshot
+ * @param snapshot_b_path Path to the target snapshot
+ * @param out_report Output buffer for the diff report
+ * @param max_len Maximum length of the output buffer
+ * @return true on success
+ */
 bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path, char* out_report, size_t max_len) {
     if (!snapshot_a_path || !snapshot_b_path || !out_report || max_len == 0) return false;
 
@@ -2400,6 +2957,11 @@ bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path,
     return true;
 }
 
+/**
+ * @brief Retrieves current statistical metrics of the memory pool.
+ * @param pool Pointer to the memory pool
+ * @param stats Output statistics structure
+ */
 void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     if (!pool || !stats) return;
     pool_rdlock(pool);
@@ -2425,6 +2987,10 @@ void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats) {
     pool_rdunlock(pool);
 }
 
+/**
+ * @brief Prints detailed summary and health status of the memory pool to stdout.
+ * @param pool Pointer to the memory pool
+ */
 void mp_dump_info(memory_pool_t* pool) {
     if (!pool) return;
     mp_stats_t stats;
@@ -2446,6 +3012,10 @@ void mp_dump_info(memory_pool_t* pool) {
     printf("==============================================================\n\n");
 }
 
+/**
+ * @brief Prints ASCII allocation size distribution histogram chart to stdout.
+ * @param pool Pointer to the memory pool
+ */
 void mp_dump_histogram(memory_pool_t* pool) {
     if (!pool) return;
     mp_stats_t stats;
@@ -2476,6 +3046,11 @@ void mp_dump_histogram(memory_pool_t* pool) {
     printf("=========================================================================\n\n");
 }
 
+/**
+ * @brief Recursively prints a memory pool arena tree node and its children.
+ * @param pool Pointer to the memory pool node to print
+ * @param indent Current indentation level
+ */
 static void print_arena_node(memory_pool_t* pool, int indent) {
     if (!pool) return;
     for (int i = 0; i < indent; i++) printf("  ");
@@ -2489,6 +3064,10 @@ static void print_arena_node(memory_pool_t* pool, int indent) {
     }
 }
 
+/**
+ * @brief Dumps memory pool tree hierarchy to stdout.
+ * @param pool Pointer to the root memory pool
+ */
 void mp_dump_tree_info(memory_pool_t* pool) {
     if (!pool) return;
     pool_lock(pool);
@@ -2498,6 +3077,13 @@ void mp_dump_tree_info(memory_pool_t* pool) {
     pool_unlock(pool);
 }
 
+/**
+ * @brief Dumps memory pool stats into JSON format buffer for telemetry monitoring.
+ * @param pool Pointer to the memory pool
+ * @param buf Output buffer for JSON text
+ * @param max_len Maximum length of the output buffer
+ * @return Number of bytes written to buf
+ */
 size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
     if (!pool || !buf || max_len == 0) return 0;
     mp_stats_t stats;
@@ -2529,6 +3115,13 @@ size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len) {
     return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
+/**
+ * @brief Formats and dumps memory pool metrics into Prometheus text exposition format.
+ * @param pool Pointer to the memory pool
+ * @param out_buf Output buffer for Prometheus metrics text
+ * @param max_len Maximum length of the output buffer
+ * @return Number of bytes written to out_buf
+ */
 size_t mp_export_prometheus_metrics(memory_pool_t* pool, char* out_buf, size_t max_len) {
     if (!pool || !out_buf || max_len == 0) return 0;
     mp_stats_t stats;
@@ -2568,6 +3161,11 @@ size_t mp_export_prometheus_metrics(memory_pool_t* pool, char* out_buf, size_t m
     return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
+/**
+ * @brief Checks if there are any un-freed memory allocations and prints a leak report if found.
+ * @param pool Pointer to the memory pool
+ * @return true if no leaks detected, false otherwise
+ */
 bool mp_check_leaks(memory_pool_t* pool) {
     if (!pool) return true;
     pool_lock(pool);
@@ -2587,6 +3185,9 @@ bool mp_check_leaks(memory_pool_t* pool) {
 }
 
 /* --- Game & Graphics Pipeline Dual Ping-Pong Frame Arena --- */
+/**
+ * @brief Frame arena structure for double-buffered per-frame allocations.
+ */
 struct cmem_frame_arena {
     memory_pool_t* pool_a;
     memory_pool_t* pool_b;
@@ -2594,6 +3195,11 @@ struct cmem_frame_arena {
     size_t frame_index;
 };
 
+/**
+ * @brief Creates a game & graphics dual ping-pong frame arena allocator.
+ * @param frame_capacity Capacity per frame buffer in bytes
+ * @return Pointer to the frame arena, or NULL on failure
+ */
 cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity) {
     cmem_frame_arena_t* farena = (cmem_frame_arena_t*)malloc(sizeof(cmem_frame_arena_t));
     if (!farena) return NULL;
@@ -2613,11 +3219,21 @@ cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity) {
     return farena;
 }
 
+/**
+ * @brief Allocates temporary memory for the current frame from the active buffer.
+ * @param farena Pointer to the frame arena
+ * @param size Requested size in bytes
+ * @return Pointer to the payload, or NULL on failure
+ */
 void* mp_frame_alloc(cmem_frame_arena_t* farena, size_t size) {
     if (!farena || !farena->active_pool) return NULL;
     return mp_alloc(farena->active_pool, size);
 }
 
+/**
+ * @brief Ends the current frame and swaps the active ping-pong buffer with O(1) reset.
+ * @param farena Pointer to the frame arena
+ */
 void mp_frame_end(cmem_frame_arena_t* farena) {
     if (!farena) return;
     farena->frame_index++;
@@ -2630,6 +3246,10 @@ void mp_frame_end(cmem_frame_arena_t* farena) {
     }
 }
 
+/**
+ * @brief Destroys the frame arena allocator instance and frees both buffers.
+ * @param farena Pointer to the frame arena
+ */
 void mp_frame_arena_destroy(cmem_frame_arena_t* farena) {
     if (!farena) return;
     if (farena->pool_a) mp_destroy(farena->pool_a);
