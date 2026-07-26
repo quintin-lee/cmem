@@ -1252,9 +1252,13 @@ void mp_set_cgroup_aware(memory_pool_t* pool, bool enable) {
         FILE* f = fopen("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r");
         if (!f) f = fopen("/sys/fs/cgroup/memory.max", "r");
         if (f) {
-            unsigned long long limit = 0;
-            if (fscanf(f, "%llu", &limit) == 1 && limit > 0) {
-                pool->cgroup_mem_limit = (size_t)limit;
+            char buf[64] = {0};
+            if (fgets(buf, sizeof(buf), f) != NULL) {
+                char* endptr = NULL;
+                unsigned long long limit = strtoull(buf, &endptr, 10);
+                if (endptr != buf && limit > 0) {
+                    pool->cgroup_mem_limit = (size_t)limit;
+                }
             }
             fclose(f);
         }
