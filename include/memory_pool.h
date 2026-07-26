@@ -1,6 +1,11 @@
 /**
  * @file memory_pool.h
  * @brief Compatibility header for cmem library.
+ *
+ * This header provides backward compatibility by including the main cmem.h header.
+ * New code should include cmem.h directly.
+ *
+ * @deprecated Use @c #include "cmem.h" instead.
  */
 
 #ifndef MEMORY_POOL_H
