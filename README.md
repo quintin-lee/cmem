@@ -116,6 +116,68 @@
 - **`mp_alloc_batch` / `mp_free_batch`**：高吞吐单次批量分配/释放 $N$ 个内存块。
 - **`mp_reset_stats`**：重置累积 QPS、操作计数与 Peak 峰值统计数据。
 
+### 21. ⚙️ 运行时配置热加载 (Runtime Config Hot-Reload)
+- **`mp_reparse_env_flags(pool)`**：运行时重新解析 `CMEM_CONF` 环境变量并动态应用安全特性，无需重建池。
+- **`mp_get_env_generation(pool)`**：获取当前环境配置生成计数器，检测运行时配置是否已更新。
+
+### 22. 🗜️ 自动内存压缩触发 (Auto-Compaction Trigger)
+- **`mp_set_auto_compact(pool, enable, pressure_threshold, fragmentation_threshold)`**：配置基于内存压力或碎片率的自动压缩策略。
+- **`mp_auto_compact_check(pool)`**：内部自动检查并在必要时触发 `mp_compact()`，避免手动调用遗漏。
+
+### 23. 📊 分配延迟 P99 统计 (Latency Histogram)
+- **`mp_record_latency(pool, latency_ns)`**：记录单次分配延迟样本（纳秒级直方图）。
+- **`mp_get_latency_p99(pool)`** / **`mp_get_latency_avg(pool)`**：查询 P99 与平均分配延迟，评估尾延迟。
+- **`mp_reset_latency_stats(pool)`**：重置延迟统计直方图。
+
+### 24. 🎛️ 可配置 Slab Class 表 (Configurable Slab Classes)
+- **`mp_set_slab_classes(pool, sizes, count)`**：替换默认 Slab 尺寸类表，适配特定工作负载。
+- **`mp_get_slab_classes(pool, out_sizes, max_count)`** / **`mp_get_slab_class_count(pool)`**：查询当前 Slab 类配置。
+- **`mp_preferred_size_for_pool(pool, size)`**：基于池自定义 Slab 表计算最佳对齐尺寸。
+
+### 25. 📝 结构化事件日志 & pprof 导出 (Event Log & pprof)
+- **`mp_event_log_create(capacity)`** / **`mp_event_log_record(...)`** / **`mp_event_log_consume(...)`**：基于无锁 Ring Buffer 的结构化事件日志，支持事后 replay。
+- **`mp_event_log_pending(log)`** / **`mp_event_log_clear(log)`** / **`mp_event_log_destroy(log)`**：事件日志生命周期管理。
+- **`mp_export_pprof(pool, buf, max_len)`**：导出 pprof 兼容文本格式，支持火焰图生成。
+
+### 26. 🚀 Per-CPU Lock-Free Freelist (Low-Contention Fast Path)
+- **`MP_FLAG_PERCPU_FREELIST`**：为小对象分配启用 per-CPU 无锁 freelist，显著降低高并发场景下的锁竞争。
+- **`mp_set_percpu_freelist(pool, enable)`** / **`mp_get_percpu_freelist(pool)`** / **`mp_get_percpu_cpu_count(pool)`**：Per-CPU freelist 配置与查询。
+
+### 27. 🛡️ 内存错误恢复 (Error Recovery & Dirty Pool)
+- **`mp_mark_pool_dirty(pool)`** / **`mp_clear_pool_dirty(pool)`** / **`mp_is_pool_dirty(pool)`**：标记/清除/查询池的脏状态，检测到 canary 越界或 double free 后自动拒绝新分配。
+- **`mp_set_error_recovery_callback(pool, cb, udata)`**：注册内存错误恢复回调。
+- **`mp_isolate_bad_block(pool, ptr)`**：隔离坏块，将其从活动追踪中移除并标记为已释放。
+
+### 28. 🎯 线程级配额与熔断器 (Thread Quota & Circuit Breaker)
+- **`mp_set_thread_quota(pool, quota_bytes)`**：设置单线程内存配额上限，防止单个线程耗尽池资源。
+- **`mp_set_circuit_breaker(pool, enable)`** / **`mp_is_circuit_breaker_tripped(pool)`**：启用/查询线程级熔断器。
+- **`mp_get_thread_allocated_bytes(pool)`** / **`mp_reset_thread_quota(pool)`**：查询/重置当前线程已分配字节数。
+
+### 29. 🧊 Hot/Cold 页分离 (Hot/Cold Page Separation)
+- **`MP_FLAG_HOT_COLD_SEPARATION`**：启用热/冷页物理分离，提升 TLB 命中率。
+- **`mp_mark_page_hot(pool, page_raw_mem)`** / **`mp_mark_page_cold(pool, page_raw_mem)`**：标记页的温度属性。
+- **`mp_get_hot_page_count(pool)`** / **`mp_get_cold_page_count(pool)`**：查询热/冷页数量。
+- **`mp_separate_hot_cold_pages(pool)`**：执行热/冷页分离，将冷页移至独立内存区域。
+
+### 30. 🔒 加密内存支持 (Encrypted Memory)
+- **`MP_FLAG_ENCRYPTED_MEMORY`**：启用加密内存模式，mlock 加 madvise(MADV_DONTDUMP) 双重防护。
+- **`mp_lock_memory(pool, addr, length)`** / **`mp_unlock_memory(pool, addr, length)`**：mlock/munlock 内存页，防止敏感数据被 swap 到磁盘。
+- **`mp_protect_from_dump(pool, addr, length)`**：madvise(MADV_DONTDUMP) 排除内存免于 core dump。
+- **`mp_secure_zero(pool, ptr, length)`**：volatile 安全清零，防止编译器优化导致的数据残留。
+- **`mp_set_encrypted_memory(pool, enable)`**：一键启用/禁用加密内存模式。
+
+### 31. 🛡️ AddressSanitizer 集成层 (ASan Integration)
+- **`MP_FLAG_ASAN_INTEGRATION`**：启用 ASan 兼容模式，与 AddressSanitizer shadow memory 协同工作。
+- **`mp_asan_is_enabled()`**：检测当前是否运行在 ASan 环境下。
+- **`mp_asan_report_error(pool, ptr, size, is_write)`**：向 ASan 报告自定义内存错误。
+- **`mp_asan_check_memory(pool, ptr, size)`**：检查内存区域是否存在 ASan 错误。
+- **`mp_set_asan_integration(pool, enable)`**：启用/禁用 ASan 集成。
+
+### 32. 🚀 在线 Pool 扩容 (Online Pool Expansion)
+- **`mp_expand_pool(pool, additional_bytes)`**：在不停止服务的情况下为池追加容量，通过新增 TLSF 池链表实现。
+- **`mp_can_expand(pool)`**：查询池是否支持扩容。
+- **`mp_get_expandable_size(pool)`**：查询池当前还可扩容的字节数。
+
 ---
 
 ## 📦 头文件包含 (Headers)
@@ -529,6 +591,57 @@ int main() {
 | `mp_enable_emergency_reserve(pool, bytes)` | 启用紧急 OOM 兜底内存储备垫 |
 | `mp_set_numa_node(pool, numa_node)` | 绑定内存池底层分配到指定 Linux NUMA CPU 节点 |
 | `mp_parse_env_flags(default_flags)` | 解析 `CMEM_CONF` 环境变量并返回合并配置标志 |
+| `mp_reparse_env_flags(pool)` | 运行时重新解析 `CMEM_CONF` 并动态应用安全特性 |
+| `mp_get_env_generation(pool)` | 获取当前环境配置生成计数器 |
+| `mp_set_auto_compact(pool, enable, pressure, fragmentation)` | 配置自动压缩触发阈值 |
+| `mp_auto_compact_check(pool)` | 检查并触发自动压缩 |
+| `mp_set_arena_quota(pool, quota_bytes, cb, udata)` | 设置单 Arena 内存配额与超限回调 |
+| `mp_check_arena_quota(pool)` | 检查 Arena 是否在配额范围内 |
+| `mp_record_latency(pool, latency_ns)` | 记录分配延迟样本（纳秒直方图） |
+| `mp_get_latency_p99(pool)` / `mp_get_latency_avg(pool)` | 查询 P99 / 平均分配延迟 |
+| `mp_reset_latency_stats(pool)` | 重置延迟统计直方图 |
+| `mp_set_slab_classes(pool, sizes, count)` | 自定义 Slab 尺寸类表 |
+| `mp_get_slab_classes(pool, out_sizes, max_count)` | 查询当前 Slab 类配置 |
+| `mp_get_slab_class_count(pool)` | 查询 Slab 类数量 |
+| `mp_preferred_size_for_pool(pool, size)` | 基于池自定义 Slab 表计算最佳尺寸 |
+| `mp_event_log_create(capacity)` | 创建结构化事件日志 Ring Buffer |
+| `mp_event_log_record(log, event_type, ptr, size)` | 记录事件到日志 |
+| `mp_event_log_consume(log, entry)` | 消费日志条目 |
+| `mp_event_log_pending(log)` | 查询待处理事件数 |
+| `mp_event_log_clear(log)` | 清空日志 |
+| `mp_event_log_destroy(log)` | 销毁事件日志 |
+| `mp_export_pprof(pool, buf, max_len)` | 导出 pprof 兼容文本 |
+| `mp_set_percpu_freelist(pool, enable)` | 启用/禁用 Per-CPU 无锁 freelist |
+| `mp_get_percpu_freelist(pool)` | 查询 Per-CPU freelist 状态 |
+| `mp_get_percpu_cpu_count(pool)` | 查询 Per-CPU 检测到的 CPU 数 |
+| `mp_set_fallback_on_oom(pool, enable)` | 启用 OOM 时回退到系统 malloc |
+| `mp_set_gc_callback(pool, cb, udata)` | 注册 GC 回调（OOM 前释放非关键缓存） |
+| `mp_set_eviction_callback(pool, cb, udata)` | 注册逐出回调（压力下驱逐低优先级对象） |
+| `mp_mark_pool_dirty(pool)` / `mp_clear_pool_dirty(pool)` / `mp_is_pool_dirty(pool)` | 标记/清除/查询脏池状态 |
+| `mp_set_error_recovery_callback(pool, cb, udata)` | 注册内存错误恢复回调 |
+| `mp_isolate_bad_block(pool, ptr)` | 隔离坏块 |
+| `mp_set_thread_quota(pool, quota_bytes)` | 设置单线程内存配额 |
+| `mp_set_circuit_breaker(pool, enable)` | 启用/禁用线程级熔断器 |
+| `mp_is_circuit_breaker_tripped(pool)` | 查询熔断器是否触发 |
+| `mp_get_thread_allocated_bytes(pool)` | 查询当前线程已分配字节数 |
+| `mp_reset_thread_quota(pool)` | 重置当前线程配额计数器 |
+| `mp_abi_version()` | 获取 ABI 版本号 |
+| `mp_set_cgroup_aware(pool, enable)` | 启用容器 cgroup 内存限制感知 |
+| `mp_get_cgroup_mem_limit(pool)` | 获取检测到的 cgroup 内存限制 |
+| `mp_mark_page_hot(pool, page_raw_mem)` / `mp_mark_page_cold(pool, page_raw_mem)` | 标记 Slab 页温度 |
+| `mp_get_hot_page_count(pool)` / `mp_get_cold_page_count(pool)` | 查询热/冷页数量 |
+| `mp_separate_hot_cold_pages(pool)` | 执行热/冷页物理分离 |
+| `mp_lock_memory(pool, addr, length)` / `mp_unlock_memory(pool, addr, length)` | mlock/munlock 内存页 |
+| `mp_protect_from_dump(pool, addr, length)` | madvise(MADV_DONTDUMP) 排除 core dump |
+| `mp_secure_zero(pool, ptr, length)` | volatile 安全清零 |
+| `mp_set_encrypted_memory(pool, enable)` | 启用/禁用加密内存模式 |
+| `mp_asan_is_enabled()` | 检测 ASan 是否激活 |
+| `mp_asan_report_error(pool, ptr, size, is_write)` | 向 ASan 报告内存错误 |
+| `mp_asan_check_memory(pool, ptr, size)` | 检查 ASan 错误 |
+| `mp_set_asan_integration(pool, enable)` | 启用/禁用 ASan 集成 |
+| `mp_expand_pool(pool, additional_bytes)` | 在线扩容池容量 |
+| `mp_can_expand(pool)` | 查询池是否可扩容 |
+| `mp_get_expandable_size(pool)` | 查询池可扩容字节数 |
 | `mp_frame_arena_create(capacity)` | 创建游戏/图形双缓冲 Ping-Pong 帧竞技场 |
 | `mp_frame_alloc(farena, size)` | 为当前帧分配临时内存 |
 | `mp_frame_end(farena)` | 结束当前帧并交换 Ping-Pong 缓冲区 |
@@ -560,7 +673,11 @@ typedef enum {
     MP_FLAG_CACHE_ALIGNED      = (1 << 7),             // 强制 64B Cache Line 对齐
     MP_FLAG_GUARD_PAGES        = (1 << 8),             // 页级 Guard Pages (PROT_NONE)
     MP_FLAG_SHARED_MEMORY      = (1 << 9),             // POSIX 共享内存 IPC 模式
-    MP_FLAG_HUGE_PAGES         = (1 << 10)             // Linux HugePages (2MB/1GB)
+    MP_FLAG_HUGE_PAGES         = (1 << 10),            // Linux HugePages (2MB/1GB)
+    MP_FLAG_PERCPU_FREELIST    = (1 << 11),            // Per-CPU 无锁 freelist
+    MP_FLAG_HOT_COLD_SEPARATION = (1 << 12),           // Hot/Cold 页分离 (TLB 优化)
+    MP_FLAG_ENCRYPTED_MEMORY   = (1 << 13),            // 加密内存 (mlock + MADV_DONTDUMP)
+    MP_FLAG_ASAN_INTEGRATION   = (1 << 14)             // AddressSanitizer 集成层
 } mp_flags_t;
 ```
 
@@ -772,6 +889,19 @@ cmem/
 - Arena Reset 与 JSON 统计导出
 - 静态缓冲区与事件回调
 - 多线程安全验证
+- 运行时配置热加载 (`mp_reparse_env_flags`)
+- 自动压缩触发 (`mp_set_auto_compact`)
+- 分配延迟 P99 统计 (`mp_record_latency`)
+- 可配置 Slab Class 表 (`mp_set_slab_classes`)
+- 结构化事件日志 & pprof 导出
+- Per-CPU Lock-Free Freelist
+- 内存错误恢复 (Dirty Pool / Bad-Block Isolation)
+- 线程级配额与熔断器 (Thread Quota / Circuit Breaker)
+- ABI 版本 & cgroup 感知
+- Hot/Cold 页分离
+- 加密内存支持 (mlock / MADV_DONTDUMP / secure zero)
+- AddressSanitizer 集成层
+- 在线 Pool 扩容
 
 ---
 
