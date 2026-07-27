@@ -1,0 +1,44 @@
+name: Fuzzing
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  schedule:
+    - cron: '0 0 * * 0'
+
+jobs:
+  fuzz-libfuzzer:
+    name: libFuzzer Fuzzing
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Build Fuzzer
+        run: |
+          clang -g -O1 -fsanitize=fuzzer,address,undefined \
+            -std=c11 -I./include src/cmem.c tests/fuzz_alloc.c \
+            -o fuzz_alloc -lpthread -lrt
+
+      - name: Run Fuzzing (10 minutes)
+        run: |
+          mkdir -p fuzz_corpus
+          echo "AABBCCDD" > fuzz_corpus/seed1
+          echo "0123456789" > fuzz_corpus/seed2
+          ./fuzz_alloc -max_total_time=60 -rss_limit_mb=1024 fuzz_corpus fuzz_artifacts || true
+
+      - name: Upload Fuzzing Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz_artifacts/
+          retention-days: 14
