@@ -1,0 +1,45 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  coverage:
+    name: Code Coverage (gcc, Debug)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies & Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build lcov
+
+      - name: Build with Coverage
+        run: |
+          cmake -B build_coverage -G Ninja -DCMAKE_BUILD_TYPE=Coverage
+          cmake --build build_coverage
+
+      - name: Run Tests
+        run: |
+          ctest --test-dir build_coverage --output-on-failure
+
+      - name: Capture Coverage Data
+        run: |
+          lcov --capture --initial --directory . --output-file coverage_base.info --ignore-errors mismatch
+          lcov --capture --directory build_coverage --output-file coverage_test.info --ignore-errors mismatch
+          lcov --add-tracefile coverage_base.info --add-tracefile coverage_test.info --output-file coverage_merged.info
+          lcov --remove coverage_merged.info '/usr/*' '*/tests/*' --output-file coverage.info
+          lcov --list coverage.info
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.info
+          fail_ci_if_error: false
+          verbose: true
