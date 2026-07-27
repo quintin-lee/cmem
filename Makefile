@@ -17,6 +17,7 @@ SONAME = libcmem.so.$(VERSION)
 SRC = src/cmem.c
 TEST_SRC = tests/test_main.c
 ADV_TEST_SRC = tests/test_advanced.c
+STRESS_SRC = tests/stress_test.c
 CPP_TEST_SRC = tests/test_cpp.cpp
 BENCH_SRC = benchmarks/bench_main.c
 
@@ -26,7 +27,7 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test
 
 all: format-check lib test test_advanced test_cpp bench examples
 
@@ -40,6 +41,7 @@ help:
 	@echo "  test_all     - Build and run all C tests"
 	@echo "  test_cpp     - Build and run C++17 PMR/STL tests (with ASan/UBSan)"
 	@echo "  bench        - Build and run performance benchmarks"
+	@echo "  stress_test  - Build and run long-run high-concurrency stress test"
 	@echo "  examples     - Build and run all example programs"
 	@echo "  install      - Install library and headers to $(PREFIX)"
 	@echo "  uninstall    - Remove installed files from $(PREFIX)"
@@ -78,6 +80,12 @@ test_advanced: format-check $(SRC) $(ADV_TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEBUG) $(SRC) $(ADV_TEST_SRC) -o $(BUILD_DIR)/advanced_tests $(LDFLAGS)
 	@echo "Running C advanced unit tests..."
 	./$(BUILD_DIR)/advanced_tests
+
+# 长时间高并发压测
+stress_test: format-check $(SRC) $(STRESS_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SRC) $(STRESS_SRC) -o $(BUILD_DIR)/stress_test $(LDFLAGS)
+	@echo "Running long-run stress test..."
+	./$(BUILD_DIR)/stress_test
 
 # 运行所有 C 测试
 test_all: test test_advanced

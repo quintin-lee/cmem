@@ -49,6 +49,7 @@ typedef std::atomic<size_t> cmem_atomic_size_t;
 #define CMEM_ORDER_RELEASE std::memory_order_release
 #else
 #include <stdatomic.h>
+#include <errno.h>
 typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) atomic_fetch_add_explicit(obj, arg, order)
 #define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) atomic_fetch_sub_explicit(obj, arg, order)
@@ -581,13 +582,33 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx)
         header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
     total_slot_size = (total_slot_size + 7) & ~7;
 
-    void* raw_mem = sys_mem_alloc(pool, SLAB_PAGE_SIZE, SLAB_PAGE_SIZE);
-    if (!raw_mem)
+    size_t map_size = SLAB_PAGE_SIZE + SLAB_PAGE_SIZE - 1;
+    void* raw_mem =
+        mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw_mem == MAP_FAILED)
         return NULL;
 
-    mp_slab_page_t* page = (mp_slab_page_t*) raw_mem;
+    uintptr_t start = (uintptr_t) raw_mem;
+    uintptr_t aligned = (start + SLAB_PAGE_SIZE - 1) & ~(SLAB_PAGE_SIZE - 1);
+    if (aligned + SLAB_PAGE_SIZE > start + map_size)
+    {
+        munmap(raw_mem, map_size);
+        return NULL;
+    }
+
+    if (aligned > start)
+    {
+        munmap((void*) start, aligned - start);
+    }
+    if (aligned + SLAB_PAGE_SIZE < start + map_size)
+    {
+        munmap((void*) (aligned + SLAB_PAGE_SIZE), start + map_size - aligned - SLAB_PAGE_SIZE);
+    }
+
+    void* page_mem = (void*) aligned;
+    mp_slab_page_t* page = (mp_slab_page_t*) page_mem;
     page->class_index = class_idx;
-    page->page_raw_mem = raw_mem;
+    page->page_raw_mem = page_mem;
     page->next = NULL;
     page->prev = NULL;
     page->is_hot = false;
@@ -596,7 +617,7 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx)
     page->total_slots = (uint16_t) (usable_bytes / total_slot_size);
     page->free_count = page->total_slots;
 
-    uint8_t* ptr = (uint8_t*) raw_mem + sizeof(mp_slab_page_t);
+    uint8_t* ptr = (uint8_t*) page_mem + sizeof(mp_slab_page_t);
     page->free_list = (mp_slab_slot_t*) ptr;
 
     for (uint16_t i = 0; i < page->total_slots; i++)
@@ -3208,14 +3229,14 @@ void mp_destroy(memory_pool_t* pool)
             while (curr)
             {
                 mp_slab_page_t* next = curr->next;
-                sys_mem_free(pool, curr->page_raw_mem, SLAB_PAGE_SIZE);
+                munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
                 curr = next;
             }
             curr = pool->slab_classes[i].full_pages;
             while (curr)
             {
                 mp_slab_page_t* next = curr->next;
-                sys_mem_free(pool, curr->page_raw_mem, SLAB_PAGE_SIZE);
+                munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
                 curr = next;
             }
         }
@@ -3385,7 +3406,7 @@ size_t mp_compact(memory_pool_t* pool)
                 if (curr->next)
                     curr->next->prev = curr->prev;
 
-                sys_mem_free(pool, curr->page_raw_mem, SLAB_PAGE_SIZE);
+                munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
                 freed_bytes += SLAB_PAGE_SIZE;
                 if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE)
                 {
