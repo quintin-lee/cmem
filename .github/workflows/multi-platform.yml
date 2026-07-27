@@ -1,0 +1,55 @@
+name: Multi-Platform CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  macos:
+    name: macOS Build & Test
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build
+
+      - name: Run Tests
+        run: |
+          ctest --test-dir build --output-on-failure
+
+  alpine:
+    name: Alpine Linux Build & Test
+    runs-on: ubuntu-latest
+
+    container:
+      image: alpine:latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          apk add --no-cache build-base cmake ninja-build
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build
+
+      - name: Run Tests
+        run: |
+          ctest --test-dir build --output-on-failure
