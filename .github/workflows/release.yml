@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build
+
+      - name: Build Release Static Library
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target cmem
+
+      - name: Build Release Shared Library
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+          cmake --build build --target cmem
+
+      - name: Build Examples
+        run: |
+          cmake --build build
+          cmake --install build --prefix install
+
+      - name: Create Release Archive
+        run: |
+          tar -czf cmem-${{ github.ref_name }}-linux-x86_64.tar.gz \
+            -C install include/ \
+            -C install/lib libcmem.a libcmem.so* \
+            -C install bin example_*
+
+      - name: Generate Checksums
+        run: |
+          sha256sum cmem-${{ github.ref_name }}-linux-x86_64.tar.gz > cmem-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            cmem-${{ github.ref_name }}-linux-x86_64.tar.gz
+            cmem-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
