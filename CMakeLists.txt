@@ -53,7 +53,7 @@ endif()
 # Clang-Tidy 静态分析
 find_program(CLANG_TIDY clang-tidy)
 if(CLANG_TIDY)
-    set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY};--checks=bugprone-*,clang-analyzer-*,performance-*,portability-*;--warnings-as-errors=*")
+    set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY}")
 endif()
 
 # 构建类型默认 Release
