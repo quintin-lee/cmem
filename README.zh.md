@@ -12,6 +12,59 @@
 
 ---
 
+## 🚀 快速开始
+
+### 安装
+
+```bash
+git clone https://github.com/quintin-lee/cmem.git
+cd cmem
+make install PREFIX=/usr/local
+```
+
+或使用 CMake：
+
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --install build --prefix /usr/local
+```
+
+### 基本用法
+
+```c
+#include "cmem.h"
+
+int main() {
+    memory_pool_t* pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+    
+    void* p = mp_alloc(pool, 128);
+    if (p) {
+        memset(p, 0, 128);
+        mp_free(pool, p);
+    }
+    
+    mp_destroy(pool);
+    return 0;
+}
+```
+
+### C++17 PMR 用法
+
+```cpp
+#include "cmem_pmr.hpp"
+
+int main() {
+    cmem::MemoryPool pool(64 * 1024 * 1024);
+    std::vector<int, cmem::allocator<int>> vec(pool.get_resource());
+    
+    vec.push_back(42);
+    return 0;
+}
+```
+
+---
+
 ## 🌟 核心架构 (Architecture)
 
 **cmem** 采用现代 **分层混合架构**，在保证 $O(1)$ 分配时间复杂度的同时，大幅降低内存碎片率并显著提升 L1/L2 缓存局部性：

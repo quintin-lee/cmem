@@ -14,6 +14,59 @@
 
 ---
 
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+git clone https://github.com/quintin-lee/cmem.git
+cd cmem
+make install PREFIX=/usr/local
+```
+
+Or use CMake:
+
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --install build --prefix /usr/local
+```
+
+### Basic Usage
+
+```c
+#include "cmem.h"
+
+int main() {
+    memory_pool_t* pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+    
+    void* p = mp_alloc(pool, 128);
+    if (p) {
+        memset(p, 0, 128);
+        mp_free(pool, p);
+    }
+    
+    mp_destroy(pool);
+    return 0;
+}
+```
+
+### C++17 PMR Usage
+
+```cpp
+#include "cmem_pmr.hpp"
+
+int main() {
+    cmem::MemoryPool pool(64 * 1024 * 1024);
+    std::vector<int, cmem::allocator<int>> vec(pool.get_resource());
+    
+    vec.push_back(42);
+    return 0;
+}
+```
+
+---
+
 ## 🌟 Core Architecture (Architecture)
 
 **cmem** adopts a modern **Tiered Hybrid Architecture** that ensures $O(1)$ allocation time complexity while greatly reducing memory fragmentation and significantly improving L1/L2 Cache locality:
