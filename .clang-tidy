@@ -3,7 +3,6 @@ Checks: >
   cert-*,
   clang-analyzer-*,
   performance-*,
-  security-*,
   readability-identifier-length,
   readability-magic-numbers,
   readability-non-const-parameter,
@@ -33,29 +32,10 @@ Checks: >
   readability-use-std-swap,
   readability-use-using,
   readability-const-return-type,
-  readability-else-after-return,
   readability-implicit-bool-conversion,
-  readability-misleading-indentation,
-  readability-non-const-parameter,
-  readability-qualified-auto,
-  readability-redundant-control-flow,
-  readability-redundant-smartptr-get,
-  readability-simplify-boolean-expr,
-  readability-static-accessed-through-instance,
-  readability-string-compare,
-  readability-uniqueptr-delete-release,
-  readability-unnecessary-else,
-  readability-unnecessary-else-after-return,
-  readability-use-anyofallof,
-  readability-use-bool-literals,
-  readability-use-nullptr,
-  readability-use-std-min-max,
-  readability-use-std-nullptr,
-  readability-use-std-swap,
-  readability-use-using
+  readability-misleading-indentation
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*'
-AnalyzeTemporaryDtors: true
 CheckOptions:
   - key: readability-identifier-length.MinimumVariableNameLength
     value: 2

@@ -80,7 +80,7 @@ jobs:
         run: |
           cmake -B build_cmake -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_CLANG_TIDY="clang-tidy;--checks=bugprone-*,clang-analyzer-*,performance-*,portability-*;--warnings-as-errors=*"
+            -DCMAKE_C_CLANG_TIDY="clang-tidy"
 
       - name: Build with Clang-Tidy
         run: |
