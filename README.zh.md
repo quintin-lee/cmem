@@ -1,5 +1,13 @@
 # cmem - 通用高性能分层内存管理器
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI Build & Test](https://github.com/quintin-lee/cmem/actions/workflows/ci.yml/badge.svg)](https://github.com/quintin-lee/cmem/actions/workflows/ci.yml)
+[![C11](https://img.shields.io/badge/C-C11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
+[![clang-format](https://img.shields.io/badge/Code%20Style-clang--format-green.svg)](https://clang.llvm.org/docs/ClangFormat.html)
+[![ASan+UBSan](https://img.shields.io/badge/Sanitizer-ASan%20%2B%20UBSan-red.svg)](https://clang.llvm.org/docs/AddressSanitizer.html)
+[![Valgrind](https://img.shields.io/badge/Valgrind-Tested-orange.svg)](https://valgrind.org/)
+
 **cmem** 是一个基于 **C11 / C++17** 设计的通用高性能分层内存管理工具。它综合了 **Slab** 和 **TLSF** 等工业级分配器的核心优势，提供全面的内存诊断、内省查询、级联树形 Arena 组织、跨平台 OS 页回收到 C++17 PMR 容器适配。
 
 ---
