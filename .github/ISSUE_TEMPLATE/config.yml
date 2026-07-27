@@ -1,0 +1,21 @@
+{
+  "issue": {
+    "template": {
+      "bug_report.md": {
+        "name": "Bug Report",
+        "about": "Create a report to help us improve cmem",
+        "title": "[BUG] "
+      },
+      "feature_request.md": {
+        "name": "Feature Request",
+        "about": "Suggest an idea for cmem",
+        "title": "[FEAT] "
+      }
+    }
+  },
+  "pull_request": {
+    "template": {
+      "pull_request_template.md": {}
+    }
+  }
+}
