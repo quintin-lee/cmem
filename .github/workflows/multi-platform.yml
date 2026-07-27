@@ -40,7 +40,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          apk add --no-cache build-base cmake ninja-build
+          apk add --no-cache build-base cmake ninja
 
       - name: Configure CMake
         run: |

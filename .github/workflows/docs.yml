@@ -8,6 +8,11 @@ on:
   release:
     types: [published]
 
+permissions:
+  id-token: write
+  contents: read
+  pages: write
+
 jobs:
   build-docs:
     name: Build Doxygen Documentation

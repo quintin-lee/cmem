@@ -27,6 +27,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
+#endif
 #ifdef __linux__
 #include <sys/syscall.h>
 #ifndef CMEM_MPOL_BIND
