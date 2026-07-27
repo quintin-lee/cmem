@@ -155,36 +155,36 @@ target_link_libraries(unit_tests PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(unit_tests format-check)
 
 add_executable(advanced_tests tests/test_advanced.c)
-target_link_libraries(advanced_tests PRIVATE cmem pthread rt)
+target_link_libraries(advanced_tests PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(advanced_tests format-check)
 
 add_executable(cpp_tests tests/test_cpp.cpp)
-target_link_libraries(cpp_tests PRIVATE cmem pthread rt)
+target_link_libraries(cpp_tests PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(cpp_tests format-check)
 
 add_executable(benchmark benchmarks/bench_main.c)
-target_link_libraries(benchmark PRIVATE cmem pthread rt)
+target_link_libraries(benchmark PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(benchmark format-check)
 
 # 示例程序
 add_executable(example_basic examples/example_basic.c)
-target_link_libraries(example_basic PRIVATE cmem pthread rt)
+target_link_libraries(example_basic PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(example_basic format-check)
 
 add_executable(example_embedded examples/example_embedded.c)
-target_link_libraries(example_embedded PRIVATE cmem pthread rt)
+target_link_libraries(example_embedded PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(example_embedded format-check)
 
 add_executable(example_leak_analysis examples/example_leak_analysis.c)
-target_link_libraries(example_leak_analysis PRIVATE cmem pthread rt)
+target_link_libraries(example_leak_analysis PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(example_leak_analysis format-check)
 
 add_executable(example_arena_tree examples/example_arena_tree.c)
-target_link_libraries(example_arena_tree PRIVATE cmem pthread rt)
+target_link_libraries(example_arena_tree PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(example_arena_tree format-check)
 
 add_executable(stress_test tests/stress_test.c)
-target_link_libraries(stress_test PRIVATE cmem pthread rt)
+target_link_libraries(stress_test PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(stress_test format-check)
 
 # CTest 集成
