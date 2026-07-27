@@ -13,14 +13,12 @@
 
 static memory_pool_t* g_pool = NULL;
 
-__attribute__((constructor))
-static void init_pool(void)
+__attribute__((constructor)) static void init_pool(void)
 {
     g_pool = mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
 }
 
-__attribute__((destructor))
-static void destroy_pool(void)
+__attribute__((destructor)) static void destroy_pool(void)
 {
     if (g_pool)
     {
