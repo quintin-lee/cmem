@@ -76,9 +76,16 @@ endif()
 # 包含目录
 include_directories(include)
 
+# 平台相关库
+if(APPLE)
+    set(RT_LIBRARY "")
+else()
+    find_library(RT_LIBRARY rt)
+endif()
+
 # 静态库目标
 add_library(cmem STATIC src/cmem.c)
-target_link_libraries(cmem PRIVATE pthread rt)
+target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
 add_dependencies(cmem format-check)
 set_target_properties(cmem PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -144,7 +151,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmem.pc
 
 # 测试可执行文件
 add_executable(unit_tests tests/test_main.c)
-target_link_libraries(unit_tests PRIVATE cmem pthread rt)
+target_link_libraries(unit_tests PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(unit_tests format-check)
 
 add_executable(advanced_tests tests/test_advanced.c)

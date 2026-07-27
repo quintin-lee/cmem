@@ -24,7 +24,15 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#if defined(__has_include)
+#if __has_include(<execinfo.h>)
 #include <execinfo.h>
+#define CMEM_HAS_EXECINFO 1
+#endif
+#else
+#include <execinfo.h>
+#define CMEM_HAS_EXECINFO 1
+#endif
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -3715,7 +3723,11 @@ void* mp_alloc_loc(memory_pool_t* pool, size_t size, const char* file, int line,
         header->alloc_func = func;
         if (pool->flags & MP_FLAG_TRACK_LOCATIONS)
         {
+#ifdef CMEM_HAS_EXECINFO
             header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
+#else
+            header->backtrace_depth = 0;
+#endif
         }
     }
     return ptr;
@@ -3744,7 +3756,11 @@ void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* fi
         header->alloc_func = func;
         if (pool->flags & MP_FLAG_TRACK_LOCATIONS)
         {
+#ifdef CMEM_HAS_EXECINFO
             header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
+#else
+            header->backtrace_depth = 0;
+#endif
         }
     }
     return ptr;
@@ -3773,7 +3789,11 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
         header->alloc_func = func;
         if (pool->flags & MP_FLAG_TRACK_LOCATIONS)
         {
+#ifdef CMEM_HAS_EXECINFO
             header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
+#else
+            header->backtrace_depth = 0;
+#endif
         }
     }
     return new_ptr;
@@ -4831,7 +4851,11 @@ size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len)
 
         if (curr->backtrace_depth > 0)
         {
+#ifdef CMEM_HAS_EXECINFO
             char** symbols = backtrace_symbols(curr->backtrace_addrs, curr->backtrace_depth);
+#else
+            char** symbols = NULL;
+#endif
             offset += snprintf(report_buf + offset, max_len - offset, "  Callstack Frames:\n");
             for (int f = 0; f < curr->backtrace_depth && offset < max_len; f++)
             {
