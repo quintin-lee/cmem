@@ -7,7 +7,10 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-#define _POSIX_C_SOURCE 200809L
+
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1
+#endif
 
 #include "cmem.h"
 #include <stdio.h>
@@ -27,10 +30,14 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
+
 #ifdef __APPLE__
-#ifndef MAP_ANONYMOUS
-#define MAP_ANONYMOUS MAP_ANON
-#endif
+static inline int cmem_sched_getcpu(void)
+{
+    return 0;
+}
+#else
+#define cmem_sched_getcpu() sched_getcpu()
 #endif
 #ifdef __linux__
 #include <sys/syscall.h>
@@ -852,7 +859,7 @@ static void percpu_destroy(memory_pool_t* pool)
  */
 static inline int percpu_cpu_index(void)
 {
-    int cpu = sched_getcpu();
+    int cpu = cmem_sched_getcpu();
     if (cpu < 0)
         cpu = 0;
     return cpu;
@@ -3516,6 +3523,7 @@ int mp_madvise(memory_pool_t* pool, void* addr, size_t length, int advice)
     return madvise((void*) aligned_start, aligned_len, advice);
 #else
     (void) advice;
+    (void) aligned_len;
     return 0;
 #endif
 #endif

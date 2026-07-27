@@ -3,6 +3,8 @@
  * @brief High-Throughput Performance Benchmark comparing system malloc vs cmem.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "cmem.h"
 #include <stdio.h>
 #include <stdlib.h>
