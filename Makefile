@@ -27,7 +27,7 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis
 
 all: format-check lib test test_advanced test_cpp bench examples
 
@@ -40,9 +40,12 @@ help:
 	@echo "  test_advanced- Build and run C advanced unit tests (with ASan/UBSan)"
 	@echo "  test_all     - Build and run all C tests"
 	@echo "  test_cpp     - Build and run C++17 PMR/STL tests (with ASan/UBSan)"
-	@echo "  bench        - Build and run performance benchmarks"
-	@echo "  stress_test  - Build and run long-run high-concurrency stress test"
-	@echo "  examples     - Build and run all example programs"
+  @echo "  bench        - Build and run performance benchmarks"
+  @echo "  bench-regression - Run performance regression baseline"
+  @echo "  stress_test  - Build and run long-run high-concurrency stress test"
+  @echo "  coverage     - Generate code coverage report (requires lcov)"
+  @echo "  static-analysis - Run cppcheck static analysis"
+  @echo "  examples     - Build and run all example programs"
 	@echo "  install      - Install library and headers to $(PREFIX)"
 	@echo "  uninstall    - Remove installed files from $(PREFIX)"
 	@echo "  package      - Create source tarball for distribution"
@@ -204,12 +207,31 @@ format:
 		src/*.c \
 		tests/*.c tests/*.cpp \
 		examples/*.c \
-		benchmarks/*.c
+		benchmarks/*.c \
+		tests/stress_test.c
 
 # 静态分析 (需要 cppcheck)
 static-analysis:
 	@which cppcheck > /dev/null || (echo "cppcheck not found"; exit 1)
 	cppcheck --enable=all --std=c11 --suppress=missingIncludeSystem -I include src/
+
+# 代码覆盖率
+coverage:
+	@which lcov > /dev/null || (echo "lcov not found; install lcov"); exit 1
+	@which genhtml > /dev/null || (echo "genhtml not found; install lcov"); exit 1
+	rm -f coverage.info coverage.info.cleaned
+	lcov --capture --initial --directory . --output-file coverage.info.cleaned --ignore-errors mismatch
+	lcov --capture --directory . --output-file coverage.info --ignore-errors mismatch
+	lcov --add-tracefile coverage.info.cleaned --add-tracefile coverage.info --output-file coverage.info.merged
+	lcov --remove coverage.info.merged '/usr/*' '*/tests/*' --output-file coverage.info
+	genhtml coverage.info --output-directory coverage_report --title "cmem Coverage Report"
+	@echo "Coverage report generated at coverage_report/index.html"
+
+# 性能回归测试
+bench-regression:
+	@echo "Running performance regression baseline..."
+	@./build/bench_main > bench_baseline.txt 2>&1
+	@echo "Baseline saved to bench_baseline.txt"
 
 # 生成文档 (需要 doxygen)
 docs:

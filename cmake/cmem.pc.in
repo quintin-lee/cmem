@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: cmem
+Description: Universal High-Performance Tiered Memory Manager
+Version: @CMEM_VERSION@
+Libs: -L${libdir} -lcmem -lpthread -lrt
+Cflags: -I${includedir}

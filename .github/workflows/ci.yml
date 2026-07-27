@@ -36,9 +36,11 @@ jobs:
           make clean
           make all
           make test
+          make test_advanced
           make test_cpp
           make bench
           make examples
+          make stress_test STRESS_DURATION_SEC=10 STRESS_REPORT_INTERVAL_SEC=2
 
       - name: Configure CMake Build
         env:
@@ -60,3 +62,43 @@ jobs:
         run: |
           valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/unit_tests
           valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/cpp_tests
+
+  clang-tidy:
+    name: Clang-Tidy Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies & Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang-tidy
+
+      - name: Configure CMake Build with Clang-Tidy
+        run: |
+          cmake -B build_cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_CLANG_TIDY="clang-tidy;--checks=bugprone-*,clang-analyzer-*,performance-*,portability-*;--warnings-as-errors=*"
+
+      - name: Build with Clang-Tidy
+        run: |
+          cmake --build build_cmake
+
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies & Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Check Code Formatting
+        run: |
+          make format-check

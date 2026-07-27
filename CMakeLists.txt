@@ -40,6 +40,7 @@ if(CLANG_FORMAT)
             ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_embedded.c
             ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_leak_analysis.c
             ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_arena_tree.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/stress_test.c
         COMMENT "Checking code formatting with clang-format"
         VERBATIM
     )
@@ -49,9 +50,27 @@ else()
     )
 endif()
 
+# Clang-Tidy 静态分析
+find_program(CLANG_TIDY clang-tidy)
+if(CLANG_TIDY)
+    set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY};--checks=bugprone-*,clang-analyzer-*,performance-*,portability-*;--warnings-as-errors=*")
+endif()
+
 # 构建类型默认 Release
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# 代码覆盖率配置
+set(CMAKE_C_FLAGS_COVERAGE "-g -O0 -fprofile-arcs -ftest-coverage")
+set(CMAKE_CXX_FLAGS_COVERAGE "${CMAKE_C_FLAGS_COVERAGE}")
+set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "${CMAKE_EXE_LINKER_FLAGS} -fprofile-arcs -ftest-coverage")
+set(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "${CMAKE_SHARED_LINKER_FLAGS} -fprofile-arcs -ftest-coverage")
+
+if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+    message(STATUS "Building with code coverage instrumentation")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_COVERAGE}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_COVERAGE}")
 endif()
 
 # 包含目录
@@ -113,6 +132,16 @@ install(EXPORT cmemTargets
     DESTINATION lib/cmake/cmem
 )
 
+# pkg-config 支持
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmem.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/cmem.pc
+    @ONLY
+)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmem.pc
+    DESTINATION lib/pkgconfig
+)
+
 # 测试可执行文件
 add_executable(unit_tests tests/test_main.c)
 target_link_libraries(unit_tests PRIVATE cmem pthread rt)
@@ -146,6 +175,10 @@ add_dependencies(example_leak_analysis format-check)
 add_executable(example_arena_tree examples/example_arena_tree.c)
 target_link_libraries(example_arena_tree PRIVATE cmem pthread rt)
 add_dependencies(example_arena_tree format-check)
+
+add_executable(stress_test tests/stress_test.c)
+target_link_libraries(stress_test PRIVATE cmem pthread rt)
+add_dependencies(stress_test format-check)
 
 # CTest 集成
 enable_testing()
