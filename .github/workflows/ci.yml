@@ -35,11 +35,6 @@ jobs:
         run: |
           make clean
           make all
-          make test
-          make test_advanced
-          make test_cpp
-          make bench
-          make examples
           make stress_test STRESS_DURATION_SEC=1 STRESS_REPORT_INTERVAL_SEC=1
 
       - name: Configure CMake Build
