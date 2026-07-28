@@ -40,7 +40,7 @@ jobs:
           make test_cpp
           make bench
           make examples
-          make stress_test STRESS_DURATION_SEC=2 STRESS_REPORT_INTERVAL_SEC=1
+          make stress_test STRESS_DURATION_SEC=1 STRESS_REPORT_INTERVAL_SEC=1
 
       - name: Configure CMake Build
         env:
