@@ -1,0 +1,48 @@
+name: Performance Regression
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  bench-regression:
+    name: Performance Regression (${{ matrix.compiler.cc }}, ${{ matrix.build_type }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: "gcc", cxx: "g++" }
+          - { cc: "clang", cxx: "clang++" }
+        build_type: [ "Release" ]
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build
+
+      - name: Build Benchmark
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --build build --target benchmark
+
+      - name: Run Benchmark
+        run: |
+          ./build/benchmark > bench_${{ matrix.compiler.cc }}_${{ matrix.build_type }}.txt
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.compiler.cc }}-${{ matrix.build_type }}
+          path: bench_*.txt
+          retention-days: 30

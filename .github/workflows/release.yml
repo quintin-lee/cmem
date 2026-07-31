@@ -10,50 +10,91 @@ permissions:
 
 jobs:
   build-release:
-    name: Build Release Artifacts
-    runs-on: ubuntu-latest
+    name: Build Release Artifacts (${{ matrix.platform }})
+    runs-on: ${{ matrix.runs-on }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runs-on: ubuntu-latest
+            os: linux
+          - platform: macos-arm64
+            runs-on: macos-latest
+            os: macos
+          - platform: windows-x86_64
+            runs-on: windows-latest
+            os: windows
 
     steps:
       - name: Checkout Codebase
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc g++ cmake ninja-build
 
-      - name: Build Release Static Library
+      - name: Install Dependencies (macOS)
+        if: runner.os == 'MacOS'
+        run: |
+          brew install cmake ninja
+
+      - name: Configure CMake
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target cmem
 
-      - name: Build Release Shared Library
-        run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
-          cmake --build build --target cmem
-
-      - name: Build Examples
+      - name: Build
         run: |
           cmake --build build
+
+      - name: Install
+        run: |
           cmake --install build --prefix install
 
-      - name: Create Release Archive
+      - name: Package Artifacts
         run: |
-          tar -czf cmem-${{ github.ref_name }}-linux-x86_64.tar.gz \
-            -C install include/ \
-            -C install/lib libcmem.a libcmem.so* \
-            -C install bin example_*
+          if (${{ runner.os == 'Windows' }}) {
+            Compress-Archive -Path install\include\*, install\lib\* -DestinationPath cmem-${{ github.ref_name }}-${{ matrix.platform }}.zip
+          } else {
+            tar -czf cmem-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz -C install .
+          }
+        shell: bash
 
       - name: Generate Checksums
         run: |
-          sha256sum cmem-${{ github.ref_name }}-linux-x86_64.tar.gz > cmem-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
+          if (${{ runner.os == 'Windows' }}); then
+            certutil -hashfile cmem-${{ github.ref_name }}-${{ matrix.platform }}.zip SHA256 | Select-String "SHA256" | ForEach-Object { $_.ToString().Split()[3] } | Set-Content cmem-${{ github.ref_name }}-${{ matrix.platform }}.zip.sha256
+          else
+            sha256sum cmem-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz > cmem-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz.sha256
+          fi
+        shell: bash
 
-      - name: Create GitHub Release
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmem-${{ github.ref_name }}-${{ matrix.platform }}
+          path: |
+            cmem-${{ github.ref_name }}-${{ matrix.platform }}.*
+          retention-days: 90
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            cmem-${{ github.ref_name }}-linux-x86_64.tar.gz
-            cmem-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
+          files: "artifacts/**/*"
           generate_release_notes: true
           draft: false
           prerelease: false

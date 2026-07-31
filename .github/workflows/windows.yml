@@ -1,0 +1,48 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  windows-build:
+    name: Windows Build & Test (${{ matrix.compiler }})
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: "cl", name: "MSVC" }
+          - { cc: "gcc", name: "MinGW" }
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        run: |
+          if ($env:CC -eq "gcc") {
+            choco install mingw -y
+            echo "C:\Program Files\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+        env:
+          CC: ${{ matrix.compiler.cc }}
+        shell: pwsh
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+
+      - name: Build
+        run: |
+          cmake --build build
+        shell: pwsh
+
+      - name: Run Tests
+        run: |
+          ctest --test-dir build --output-on-failure
+        shell: pwsh
