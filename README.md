@@ -4,6 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI Build & Test](https://github.com/quintin-lee/cmem/actions/workflows/ci.yml/badge.svg)](https://github.com/quintin-lee/cmem/actions/workflows/ci.yml)
+[![Code Coverage](https://codecov.io/gh/quintin-lee/cmem/branch/main/graph/badge.svg)](https://codecov.io/gh/quintin-lee/cmem)
 [![C11](https://img.shields.io/badge/C-C11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
 [![clang-format](https://img.shields.io/badge/Code%20Style-clang--format-green.svg)](https://clang.llvm.org/docs/ClangFormat.html)
