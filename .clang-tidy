@@ -34,7 +34,6 @@ Checks: >
   readability-const-return-type,
   readability-implicit-bool-conversion,
   readability-misleading-indentation
-WarningsAsErrors: ''
 HeaderFilterRegex: '.*'
 CheckOptions:
   - key: readability-identifier-length.MinimumVariableNameLength
