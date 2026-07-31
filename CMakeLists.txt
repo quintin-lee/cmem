@@ -52,7 +52,7 @@ endif()
 
 # Clang-Tidy 静态分析
 find_program(CLANG_TIDY clang-tidy)
-if(CLANG_TIDY)
+if(CLANG_TIDY AND NOT DEFINED CMAKE_C_CLANG_TIDY)
     set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY}")
 endif()
 
