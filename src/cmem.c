@@ -5541,9 +5541,13 @@ cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity)
     if (!farena->pool_a || !farena->pool_b)
     {
         if (farena->pool_a)
+        {
             mp_destroy(farena->pool_a);
+        }
         if (farena->pool_b)
+        {
             mp_destroy(farena->pool_b);
+        }
         free(farena);
         return NULL;
     }
@@ -5562,7 +5566,9 @@ cmem_frame_arena_t* mp_frame_arena_create(size_t frame_capacity)
 void* mp_frame_alloc(cmem_frame_arena_t* farena, size_t size)
 {
     if (!farena || !farena->active_pool)
+    {
         return NULL;
+    }
     return mp_alloc(farena->active_pool, size);
 }
 
@@ -5573,7 +5579,9 @@ void* mp_frame_alloc(cmem_frame_arena_t* farena, size_t size)
 void mp_frame_end(cmem_frame_arena_t* farena)
 {
     if (!farena)
+    {
         return;
+    }
     farena->frame_index++;
     if (farena->active_pool == farena->pool_a)
     {
@@ -5594,10 +5602,16 @@ void mp_frame_end(cmem_frame_arena_t* farena)
 void mp_frame_arena_destroy(cmem_frame_arena_t* farena)
 {
     if (!farena)
+    {
         return;
+    }
     if (farena->pool_a)
+    {
         mp_destroy(farena->pool_a);
+    }
     if (farena->pool_b)
+    {
         mp_destroy(farena->pool_b);
+    }
     free(farena);
 }
