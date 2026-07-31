@@ -77,7 +77,7 @@ endif()
 include_directories(include)
 
 # 平台相关库
-if(APPLE)
+if(APPLE OR WIN32)
     set(RT_LIBRARY "")
 else()
     find_library(RT_LIBRARY rt)
