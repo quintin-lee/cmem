@@ -190,6 +190,7 @@ add_dependencies(stress_test format-check)
 # Fuzz target (libFuzzer)
 add_executable(fuzz_alloc tests/fuzz_alloc.c)
 target_link_libraries(fuzz_alloc PRIVATE cmem pthread ${RT_LIBRARY})
+target_compile_definitions(fuzz_alloc PRIVATE STANDALONE_FUZZ)
 set_target_properties(fuzz_alloc PROPERTIES
     C_CLANG_TIDY ""
     CXX_CLANG_TIDY ""
