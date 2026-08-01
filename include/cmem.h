@@ -116,7 +116,8 @@ extern "C"
         MP_EVENT_DOUBLE_FREE,       /**< Double-free or invalid free detected */
         MP_EVENT_RESET,             /**< Memory pool reset */
         MP_EVENT_COMPACT,           /**< Memory pool compaction */
-        MP_EVENT_OOM                /**< Out-of-memory condition reached */
+        MP_EVENT_OOM,               /**< Out-of-memory condition reached */
+        MP_EVENT_DIRTY              /**< Pool marked dirty due to memory corruption */
     } mp_event_type_t;
 
     /**

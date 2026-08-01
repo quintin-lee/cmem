@@ -995,13 +995,13 @@ static inline mp_slab_slot_t* percpu_pop(memory_pool_t* pool, int cpu, uint8_t c
     mp_percpu_freelist_entry_t* entry =
         &((mp_percpu_freelist_entry_t*) pool->percpu_freelists)[idx];
     cmem_atomic_size_t* headp = &entry->head;
-    size_t head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
+    size_t head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_ACQUIRE);
     if (head == 0)
         return NULL;
 
     mp_slab_slot_t* slot = (mp_slab_slot_t*) head;
     mp_slab_slot_t* next = slot->next;
-    if (!CMEM_ATOMIC_COMPARE_EXCHANGE(headp, &head, (size_t) next, CMEM_ORDER_RELAXED,
+    if (!CMEM_ATOMIC_COMPARE_EXCHANGE(headp, &head, (size_t) next, CMEM_ORDER_ACQUIRE,
                                       CMEM_ORDER_RELAXED))
     {
         return NULL;
@@ -1035,7 +1035,7 @@ static inline bool percpu_push(memory_pool_t* pool, int cpu, uint8_t class_idx,
     {
         old_head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
         slot->next = (mp_slab_slot_t*) old_head;
-    } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(headp, &old_head, (size_t) slot, CMEM_ORDER_RELAXED,
+    } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(headp, &old_head, (size_t) slot, CMEM_ORDER_RELEASE,
                                            CMEM_ORDER_RELAXED));
     entry->count++;
     return true;
@@ -1465,8 +1465,7 @@ void mp_mark_pool_dirty(memory_pool_t* pool)
     pool_lock(pool);
     pool->is_dirty = true;
     pool_unlock(pool);
-    fprintf(stderr, "[CMEM ERROR] Pool [%s] marked as DIRTY due to memory corruption\n",
-            pool->arena_name);
+    trigger_event(pool, MP_EVENT_DIRTY, NULL, 0);
 }
 
 /**
@@ -1743,11 +1742,16 @@ void mp_secure_zero(memory_pool_t* pool, void* ptr, size_t length)
 {
     if (!pool || !ptr || length == 0)
         return;
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_memset(ptr, 0, length);
+    __asm__ __volatile__("" : : "r"(ptr) : "memory");
+#else
     volatile unsigned char* p = (volatile unsigned char*) ptr;
     while (length--)
     {
         *p++ = 0;
     }
+#endif
 }
 
 /**
@@ -1813,6 +1817,11 @@ void mp_asan_report_error(memory_pool_t* pool, void* ptr, size_t size, bool is_w
 #ifdef __SANITIZE_ADDRESS__
     fprintf(stderr, "[CMEM ASan] Memory error detected at %p (size=%zu, write=%d)\n", ptr, size,
             is_write ? 1 : 0);
+    if (pool && pool->error_recovery_cb)
+    {
+        pool->error_recovery_cb(pool, true, pool->stats.active_bytes, pool->stats.max_memory_limit,
+                                pool->error_recovery_user_data);
+    }
     __builtin_trap();
 #endif
 }
@@ -1826,9 +1835,15 @@ void mp_asan_report_error(memory_pool_t* pool, void* ptr, size_t size, bool is_w
  */
 bool mp_asan_check_memory(memory_pool_t* pool, void* ptr, size_t size)
 {
-    (void) pool;
-    (void) ptr;
-    (void) size;
+    if (!pool || !ptr || size == 0)
+        return false;
+    pool_rdlock(pool);
+    bool dirty = pool->is_dirty;
+    pool_rdunlock(pool);
+    if (dirty)
+        return false;
+    if (!mp_ptr_valid(pool, ptr))
+        return false;
 #ifdef __SANITIZE_ADDRESS__
     return true;
 #else
@@ -1961,16 +1976,21 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size)
     if (total_needed < TLSF_MIN_BLOCK_SIZE)
         total_needed = TLSF_MIN_BLOCK_SIZE;
 
+    pool_lock(pool);
     tlsf_pool_t* tpool = pool->tlsf_root;
     if (!tpool)
     {
         size_t init_sz = 4 * 1024 * 1024;
         pool->tlsf_root = tlsf_create_pool_custom(pool, init_sz, NULL);
         if (!pool->tlsf_root)
+        {
+            pool_unlock(pool);
             return NULL;
+        }
         tpool = pool->tlsf_root;
         pool->stats.total_pool_size += init_sz + sizeof(tlsf_pool_t);
     }
+    pool_unlock(pool);
 
     tlsf_block_t* block = NULL;
     tlsf_pool_t* target_pool = tpool;
@@ -1989,13 +2009,18 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size)
             return NULL;
         size_t expand_sz =
             (total_needed * 2 > 4 * 1024 * 1024) ? total_needed * 2 : 4 * 1024 * 1024;
+        pool_lock(pool);
         tlsf_pool_t* new_p = tlsf_create_pool_custom(pool, expand_sz, NULL);
         if (!new_p)
+        {
+            pool_unlock(pool);
             return NULL;
+        }
         new_p->next = pool->tlsf_root;
         pool->tlsf_root = new_p;
         target_pool = new_p;
         pool->stats.total_pool_size += expand_sz + sizeof(tlsf_pool_t);
+        pool_unlock(pool);
 
         block = tlsf_find_suitable_block(target_pool, total_needed);
         if (!block)
@@ -2662,9 +2687,16 @@ void mp_destroy_shared(memory_pool_t* pool, const char* shm_name)
 memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags,
                                const char* arena_name)
 {
-    memory_pool_t* child = mp_create(initial_capacity, flags);
+    memory_pool_t* child =
+        mp_create_custom(initial_capacity, flags, parent ? &parent->sys_allocator : NULL);
     if (!child)
         return NULL;
+
+    if (parent && parent->has_custom_sys_alloc)
+    {
+        child->has_custom_sys_alloc = true;
+        child->sys_allocator = parent->sys_allocator;
+    }
 
     child->parent = parent;
     if (arena_name)

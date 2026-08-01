@@ -14,10 +14,14 @@
  * @warning This header uses preprocessor macros to override standard symbols.
  *          Define CMEM_NO_MALLOC_OVERRIDE before including to disable the override.
  *
+ * @warning Include this header AFTER all system/library headers to avoid
+ *          replacing malloc/free inside system internals. Use
+ *          #include "cmem_override_cleanup.h" at the end of translation units
+ *          that need to call real system malloc again.
+ *
  * Example usage:
  * @code
  *   // In your main header or first .c file:
- *   #define CMEM_NO_MALLOC_OVERRIDE  // comment out to enable override
  *   #include "cmem_override.h"
  *
  *   // All subsequent malloc/free calls use cmem transparently
@@ -34,7 +38,6 @@
 #define CMEM_OVERRIDE_H
 
 #include "cmem.h"
-#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -110,6 +113,12 @@ extern "C"
  * Define CMEM_NO_MALLOC_OVERRIDE before including this header to disable.
  */
 #ifndef CMEM_NO_MALLOC_OVERRIDE
+#if defined(__has_extension) && __has_extension(pragma_push_macro)
+#pragma push_macro("malloc")
+#pragma push_macro("free")
+#pragma push_macro("realloc")
+#pragma push_macro("calloc")
+#endif
 #define malloc(sz) cmem_malloc(sz)
 #define free(ptr) cmem_free(ptr)
 #define realloc(ptr, sz) cmem_realloc(ptr, sz)
