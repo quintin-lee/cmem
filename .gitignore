@@ -19,6 +19,13 @@ memory_profile.html
 
 compile_commands.json
 
+# Coverage artifacts
+coverage.info
+coverage_*.info
+*.gcda
+*.gcno
+*.gcov
+
 # CodeGraph and IDE metadata
 .codegraph/
 .vscode/
