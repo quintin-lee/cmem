@@ -12,11 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Release workflow with auto-generated release notes and multi-platform artifacts
 - `CONTRIBUTING.md` with development workflow and gitmoji commit conventions
 - Codecov coverage threshold enforcement (`85%` project, `80%` patch)
+- Docker reproducible build support (`Dockerfile`, `.dockerignore`, `make docker-build`)
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
 
 ### Changed
 - Updated benchmark results in README with real measured values
 - Strengthened API/ABI stability promise in README
 - Documented GitHub Private Vulnerability Reporting setup in `SECURITY.md`
+- Added ThreadSanitizer badge, Docker instructions, and runtime analysis section to README
+- Added test step to release workflow for pre-release validation
 
 ### Fixed
 - Removed redundant `pool_lock`/`pool_unlock` in `tlsf_alloc` to prevent rwlock recursion deadlock
@@ -28,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - Updated LICENSE copyright year to `2024-2026`
+- Added OS-specific ignore patterns to `.gitignore`
 
 ## [1.0.0] - 2026-07-27
 
