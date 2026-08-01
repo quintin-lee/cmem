@@ -680,7 +680,7 @@ cmem/
 ├── src/
 │   └── cmem.c              # Core implementation
 ├── tests/
-│   ├── test_main.c         # C unit tests (35+ test cases)
+│   ├── test_main.c         # C unit tests (60+ test cases)
 │   └── test_cpp.cpp        # C++ PMR + STL allocator tests
 ├── benchmarks/
 │   └── bench_main.c        # Performance benchmarks
@@ -733,7 +733,7 @@ The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
 | **Linux (glibc)** | ✅ Full | NUMA, HugePages, Shared Memory, madvise, mlock |
 | **Linux (musl)** | ⚠️ Partial | Basic allocator works; NUMA/HugePages may need porting |
 | **macOS** | ⚠️ Partial | No NUMA/HugePages/Shared Memory; madvise limited |
-| **Windows (MSVC)** | ⚠️ Partial | Requires porting `mmap`/`madvise` to `VirtualAlloc` |
+| **Windows (MSVC)** | ⚠️ Partial | Ported `mmap`/`madvise` to `VirtualAlloc`; POSIX shared memory not available |
 | **FreeBSD** | ⚠️ Basic | May work with minor `#ifdef` adjustments |
 | **Android** | ⚠️ Basic | Bionic libc; test before production |
 

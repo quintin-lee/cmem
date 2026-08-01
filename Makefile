@@ -217,8 +217,8 @@ static-analysis:
 
 # 代码覆盖率
 coverage:
-	@which lcov > /dev/null || (echo "lcov not found; install lcov"); exit 1
-	@which genhtml > /dev/null || (echo "genhtml not found; install lcov"); exit 1
+	@which lcov > /dev/null || (echo "lcov not found; install lcov"; exit 1)
+	@which genhtml > /dev/null || (echo "genhtml not found; install lcov"; exit 1)
 	rm -f coverage.info coverage.info.cleaned
 	lcov --capture --initial --directory . --output-file coverage.info.cleaned --ignore-errors mismatch
 	lcov --capture --directory . --output-file coverage.info --ignore-errors mismatch
@@ -236,4 +236,5 @@ bench-regression:
 # 生成文档 (需要 doxygen)
 docs:
 	@which doxygen > /dev/null || (echo "doxygen not found"; exit 1)
-	doxygen Doxyfile 2>/dev/null || echo "Doxyfile not found, skipping docs generation"
+	@test -f Doxyfile || (echo "Doxyfile not found, skipping docs generation"; exit 0)
+	doxygen Doxyfile
