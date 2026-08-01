@@ -459,7 +459,7 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment)
     }
     else
     {
-        ptr = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        ptr = malloc(size);
     }
 #else
     if (pool && pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc)
@@ -547,7 +547,7 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size)
         cmem_munmap(ptr, size);
         return;
     }
-    _aligned_free(ptr);
+    free(ptr);
 #else
     if (pool->flags & MP_FLAG_HUGE_PAGES)
     {
@@ -2521,7 +2521,13 @@ void mp_typed_pool_destroy(mp_typed_pool_t* tpool)
     if (!tpool)
         return;
     if (tpool->raw_buf)
+    {
+#ifdef _WIN32
+        _aligned_free(tpool->raw_buf);
+#else
         free(tpool->raw_buf);
+#endif
+    }
     free(tpool);
 }
 
