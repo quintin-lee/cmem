@@ -659,12 +659,21 @@ ctest --test-dir build --output-on-failure
 
 ## 📊 Performance Benchmarks
 
-| Scenario | System Malloc | cmem | Speedup |
+> **Note**: Results vary by platform, compiler, and CPU. The following are representative measurements on a modern x86_64 Linux system with `MP_FLAG_THREAD_LOCAL_CACHE` enabled.
+
+| Scenario | System Malloc | cmem | Result |
 | :--- | :--- | :--- | :--- |
-| Small Objects (32-256B x 1M ops) | ~450 Mops/sec | ~1,800 Mops/sec | **~4.0x** |
-| Medium Objects (1KB-64KB x 100K ops) | ~180 Mops/sec | ~420 Mops/sec | **~2.3x** |
-| Arena Reset (500 allocs x 1000 rounds) | 12.4 ms | 0.8 ms | **~15x** |
-| Multi-threaded (8 threads x 100K allocs) | High contention | Near-linear scaling | **~8x** |
+| Small Objects (32-256B x 1M ops) | 2.25 Mops/sec | 1.21 Mops/sec | Overhead from safety features |
+| Medium Objects (1KB-64KB x 100K ops) | ~0.5 Mops/sec | ~0.4 Mops/sec | TLSF path with headers |
+| Arena Reset (500 allocs x 1000 rounds) | 118.6 ms | 52.9 ms | **~2.2x faster** |
+| Batch Free (256 slots) | O(n) individual free | O(1) batch free | **Significant for bulk cleanup** |
+
+### Key Takeaways
+
+- **cmem is not a drop-in replacement for raw throughput**: It prioritizes memory safety, introspection, and debug features over raw allocator speed. For latency-sensitive paths, use `MP_FLAG_PERCPU_FREELIST` or `MP_FLAG_THREAD_LOCAL_CACHE`.
+- **Batch operations excel**: `mp_reset()` and `mp_free_batch()` provide O(1) arena teardown vs O(n) individual frees.
+- **TLSF in-place realloc**: When adjacent blocks are free, `mp_realloc()` avoids memcpy entirely.
+- **Production tuning**: Disable `MP_FLAG_DEBUG_CANARY` and `MP_FLAG_POISON_ON_FREE` in Release builds to reduce overhead.
 
 ---
 
@@ -709,6 +718,8 @@ The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
 
 ### Stability Promise
 
+cmem follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
+
 | Change Type | ABI Break? | Semantic Version |
 | :--- | :--- | :--- |
 | Bug fix (no API change) | No | Patch |
@@ -717,6 +728,10 @@ The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
 | Internal refactoring | No | Patch |
 | Struct layout change | Yes | Major |
 | Flag enum value change | Yes | Major |
+
+**API Stability**: Public APIs in `include/cmem.h` and `include/cmem.hpp` are stable within a major version. New symbols may be added in minor versions but never removed or renamed without a major version bump.
+
+**ABI Compatibility**: The ABI version (`mp_abi_version()`) is incremented only when binary compatibility is broken. Applications linking against `libcmem.so` should check this version at startup if they need to support multiple cmem versions.
 
 ### Compatibility Rules
 
