@@ -544,7 +544,18 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size)
 #ifdef _WIN32
     if (pool->flags & MP_FLAG_HUGE_PAGES || pool->flags & MP_FLAG_GUARD_PAGES)
     {
-        cmem_munmap(ptr, size);
+        if (pool->flags & MP_FLAG_GUARD_PAGES)
+        {
+            SYSTEM_INFO si;
+            GetSystemInfo(&si);
+            size_t page_sz = si.dwPageSize;
+            uint8_t* base = (uint8_t*) ptr - page_sz;
+            VirtualFree(base, 0, MEM_RELEASE);
+        }
+        else if (pool->flags & MP_FLAG_HUGE_PAGES)
+        {
+            cmem_munmap(ptr, size);
+        }
         return;
     }
     _aligned_free(ptr);
