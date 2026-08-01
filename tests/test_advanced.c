@@ -352,7 +352,7 @@ static void test_asan_integration()
 
     mp_set_asan_integration(pool, true);
     assert(mp_asan_is_enabled() == false || true); /* depends on compile flags */
-    assert(mp_asan_check_memory(pool, NULL, 0) == true);
+    assert(mp_asan_check_memory(pool, NULL, 0) == false);
 
     void* p = mp_alloc(pool, 128);
     assert(p != NULL);

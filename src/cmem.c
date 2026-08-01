@@ -1976,7 +1976,6 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size)
     if (total_needed < TLSF_MIN_BLOCK_SIZE)
         total_needed = TLSF_MIN_BLOCK_SIZE;
 
-    pool_lock(pool);
     tlsf_pool_t* tpool = pool->tlsf_root;
     if (!tpool)
     {
@@ -1984,13 +1983,11 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size)
         pool->tlsf_root = tlsf_create_pool_custom(pool, init_sz, NULL);
         if (!pool->tlsf_root)
         {
-            pool_unlock(pool);
             return NULL;
         }
         tpool = pool->tlsf_root;
         pool->stats.total_pool_size += init_sz + sizeof(tlsf_pool_t);
     }
-    pool_unlock(pool);
 
     tlsf_block_t* block = NULL;
     tlsf_pool_t* target_pool = tpool;
@@ -2009,18 +2006,15 @@ static void* tlsf_alloc(memory_pool_t* pool, size_t req_size)
             return NULL;
         size_t expand_sz =
             (total_needed * 2 > 4 * 1024 * 1024) ? total_needed * 2 : 4 * 1024 * 1024;
-        pool_lock(pool);
         tlsf_pool_t* new_p = tlsf_create_pool_custom(pool, expand_sz, NULL);
         if (!new_p)
         {
-            pool_unlock(pool);
             return NULL;
         }
         new_p->next = pool->tlsf_root;
         pool->tlsf_root = new_p;
         target_pool = new_p;
         pool->stats.total_pool_size += expand_sz + sizeof(tlsf_pool_t);
-        pool_unlock(pool);
 
         block = tlsf_find_suitable_block(target_pool, total_needed);
         if (!block)
