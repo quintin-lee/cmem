@@ -27,7 +27,7 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build
 
 all: format-check lib test test_advanced test_cpp bench examples
 
@@ -49,6 +49,7 @@ help:
 	@echo "  install      - Install library and headers to $(PREFIX)"
 	@echo "  uninstall    - Remove installed files from $(PREFIX)"
 	@echo "  package      - Create source tarball for distribution"
+	@echo "  docker-build - Build and test inside Docker container (Ubuntu 22.04)"
 	@echo "  clean        - Remove build artifacts"
 	@echo "  distclean    - Remove build artifacts and generated files"
 	@echo ""
@@ -162,6 +163,12 @@ package: distclean
 		--exclude='*/.vscode' --exclude='*/.idea' --exclude='*/.cache' \
 		-czf cmem-$(VERSION).tar.gz cmem
 	@echo "Package created: ../cmem-$(VERSION).tar.gz"
+
+# Docker 可重现构建
+docker-build:
+	@echo "Building cmem in Docker (Ubuntu 22.04)..."
+	docker build --rm -t cmem-build .
+	@echo "Docker build complete. Run with: docker run -it cmem-build /bin/bash"
 
 # 清理构建产物
 clean:

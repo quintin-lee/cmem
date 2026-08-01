@@ -8,10 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Long-run high-concurrency stress test with `mp_pressure` and RSS monitoring
+- Standalone `main()` for `fuzz_alloc` via `STANDALONE_FUZZ` compile definition
+- GitHub Release workflow with auto-generated release notes and multi-platform artifacts
+- `CONTRIBUTING.md` with development workflow and gitmoji commit conventions
+- Codecov coverage threshold enforcement (`85%` project, `80%` patch)
 
 ### Changed
-- Slab page allocation now uses aligned `mmap` fallback for 64KB page alignment
+- Updated benchmark results in README with real measured values
+- Strengthened API/ABI stability promise in README
+- Documented GitHub Private Vulnerability Reporting setup in `SECURITY.md`
+
+### Fixed
+- Removed redundant `pool_lock`/`pool_unlock` in `tlsf_alloc` to prevent rwlock recursion deadlock
+- Fixed ASan integration test assertion for `mp_asan_check_memory(pool, NULL, 0)`
+- Enforced memory limit before huge allocation test for cross-platform portability
+- Guarded `__has_extension` usage in `cmem_override.h` for GCC compatibility
+- Fixed clang-format violations in `tests/fuzz_alloc.c`
+- Linked `fuzz_alloc` with `STANDALONE_FUZZ` definition in CMake
+
+### Documentation
+- Updated LICENSE copyright year to `2024-2026`
 
 ## [1.0.0] - 2026-07-27
 

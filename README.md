@@ -4,12 +4,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI Build & Test](https://github.com/quintin-lee/cmem/actions/workflows/ci.yml/badge.svg)](https://github.com/quintin-lee/cmem/actions/workflows/ci.yml)
-[![Code Coverage](https://codecov.io/gh/quintin-lee/cmem/branch/main/graph/badge.svg)](https://codecov.io/gh/quintin-lee/cmem)
+[![Code Coverage](https://codecov.io/gh/quintin-lee/cmem/branch/master/graph/badge.svg)](https://codecov.io/gh/quintin-lee/cmem)
 [![C11](https://img.shields.io/badge/C-C11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
 [![clang-format](https://img.shields.io/badge/Code%20Style-clang--format-green.svg)](https://clang.llvm.org/docs/ClangFormat.html)
 [![ASan+UBSan](https://img.shields.io/badge/Sanitizer-ASan%20%2B%20UBSan-red.svg)](https://clang.llvm.org/docs/AddressSanitizer.html)
 [![Valgrind](https://img.shields.io/badge/Valgrind-Tested-orange.svg)](https://valgrind.org/)
+[![Security](https://img.shields.io/badge/Security-PRIVATE%20REPORTING-green.svg)](https://github.com/quintin-lee/cmem/security/advisories)
 
 **cmem** is a universal, high-performance tiered memory management tool designed with **C11 / C++17**. It combines the core strengths of industrial-grade allocators such as **Slab** and **TLSF**, providing comprehensive memory diagnostics, introspection queries, cascading tree-shaped Arena organization, cross-platform OS page reclamation, and C++17 PMR container adaptation.
 
@@ -653,7 +654,23 @@ make examples
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
+
+# Docker reproducible build (Ubuntu 22.04)
+make docker-build
 ```
+
+### Docker
+
+The project includes a `Dockerfile` for reproducible builds:
+
+```bash
+make docker-build
+# or manually:
+docker build --rm -t cmem-build .
+docker run -it cmem-build /bin/bash
+```
+
+This builds and tests cmem in a clean Ubuntu 22.04 environment with all dependencies pre-installed.
 
 ---
 
