@@ -3630,8 +3630,10 @@ int mp_madvise(memory_pool_t* pool, void* addr, size_t length, int advice)
     (void) pool;
 
 #ifdef _WIN32
+    (void) pool;
     (void) advice;
-    VirtualAlloc(addr, length, MEM_RESET, PAGE_READWRITE);
+    (void) addr;
+    (void) length;
     return 0;
 #else
     long pg = sysconf(_SC_PAGESIZE);
