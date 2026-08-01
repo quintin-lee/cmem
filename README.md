@@ -11,6 +11,7 @@
 [![ASan+UBSan](https://img.shields.io/badge/Sanitizer-ASan%20%2B%20UBSan-red.svg)](https://clang.llvm.org/docs/AddressSanitizer.html)
 [![Valgrind](https://img.shields.io/badge/Valgrind-Tested-orange.svg)](https://valgrind.org/)
 [![Security](https://img.shields.io/badge/Security-PRIVATE%20REPORTING-green.svg)](https://github.com/quintin-lee/cmem/security/advisories)
+[![ThreadSanitizer](https://img.shields.io/badge/Sanitizer-ThreadSanitizer-blue.svg)](https://clang.llvm.org/docs/ThreadSanitizer.html)
 
 **cmem** is a universal, high-performance tiered memory management tool designed with **C11 / C++17**. It combines the core strengths of industrial-grade allocators such as **Slab** and **TLSF**, providing comprehensive memory diagnostics, introspection queries, cascading tree-shaped Arena organization, cross-platform OS page reclamation, and C++17 PMR container adaptation.
 
@@ -655,6 +656,10 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
 
+# ThreadSanitizer build (detect data races)
+make clean
+CC=clang CFLAGS="-fsanitize=thread -g -O1" make test
+
 # Docker reproducible build (Ubuntu 22.04)
 make docker-build
 ```
@@ -771,11 +776,17 @@ cmem follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 
 ### Compiler Support
 
-| Compiler | Minimum | Recommended |
-| :--- | :--- | :--- |
-| GCC | 7.0 | 13.0+ |
-| Clang | 6.0 | 17.0+ |
-| MSVC | 2017 | 2022+ |
+| Compiler | Minimum | Recommended | Sanitizers |
+| :--- | :--- | :--- | :--- |
+| GCC | 7.0 | 13.0+ | ASan, UBSan, TSan |
+| Clang | 6.0 | 17.0+ | ASan, UBSan, TSan |
+| MSVC | 2017 | 2022+ | ASan (VS 2019+) |
+
+### Runtime Analysis
+
+- **AddressSanitizer (ASan)**: Fully supported via `-fsanitize=address,undefined`
+- **ThreadSanitizer (TSan)**: Fully supported via `-fsanitize=thread` for data race detection
+- **Valgrind**: Tested on Linux glibc; use `--leak-check=full` for leak detection
 
 ---
 
