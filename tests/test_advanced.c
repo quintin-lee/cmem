@@ -671,6 +671,208 @@ static void test_alloc_error_paths()
     TEST_PASS("test_alloc_error_paths");
 }
 
+static void test_os_fallback_alloc()
+{
+    printf("\n--- Test: OS fallback allocation ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p = mp_alloc(pool, 5 * 1024 * 1024);
+    if (p)
+    {
+        mp_free(pool, p);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_os_fallback_alloc");
+}
+
+static void test_debug_canary_and_zero()
+{
+    printf("\n--- Test: Debug canary and zero-on-alloc ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 256);
+    assert(p1 != NULL);
+    memset(p1, 0xFF, 256);
+
+    void* p2 = mp_calloc(pool, 1, 512);
+    assert(p2 != NULL);
+
+    void* p3 = mp_realloc(pool, p1, 512);
+    assert(p3 != NULL);
+
+    mp_free(pool, p3);
+    mp_free(pool, p2);
+
+    mp_destroy(pool);
+    TEST_PASS("test_debug_canary_and_zero");
+}
+
+static void test_dirty_pool_rejection()
+{
+    printf("\n--- Test: Dirty pool rejection ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_mark_pool_dirty(pool);
+    assert(mp_is_pool_dirty(pool) == true);
+
+    void* p = mp_alloc(pool, 64);
+    assert(p == NULL);
+
+    mp_clear_pool_dirty(pool);
+    p = mp_alloc(pool, 64);
+    assert(p != NULL);
+    mp_free(pool, p);
+
+    mp_destroy(pool);
+    TEST_PASS("test_dirty_pool_rejection");
+}
+
+static void test_circuit_breaker()
+{
+    printf("\n--- Test: Circuit breaker ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_circuit_breaker(pool, true);
+    mp_set_thread_quota(pool, 32);
+    mp_set_fallback_on_oom(pool, false);
+
+    void* p1 = mp_alloc(pool, 32);
+    assert(p1 != NULL);
+
+    void* p2 = mp_alloc(pool, 32);
+    assert(p2 == NULL);
+
+    mp_set_circuit_breaker(pool, false);
+    mp_free(pool, p1);
+    mp_destroy(pool);
+    TEST_PASS("test_circuit_breaker");
+}
+
+static void test_tlsf_expansion()
+{
+    printf("\n--- Test: TLSF expansion ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* slots[64];
+    for (int i = 0; i < 64; i++)
+    {
+        slots[i] = mp_alloc(pool, 1024);
+        assert(slots[i] != NULL);
+    }
+    for (int i = 0; i < 64; i++)
+    {
+        mp_free(pool, slots[i]);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_tlsf_expansion");
+}
+
+static void test_purge_lazy_advanced()
+{
+    printf("\n--- Test: Purge lazy with empty pages ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* ptrs[400];
+    for (int i = 0; i < 400; i++)
+    {
+        ptrs[i] = mp_alloc(pool, 32);
+        assert(ptrs[i] != NULL);
+    }
+    for (int i = 0; i < 400; i++)
+    {
+        mp_free(pool, ptrs[i]);
+    }
+
+    size_t purged = mp_purge_lazy(pool);
+    printf("  Lazy RSS purge: %zu bytes\n", purged);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_purge_lazy_advanced");
+}
+
+static void test_snapshot_diff()
+{
+    printf("\n--- Test: Snapshot diff ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    char report[4096];
+    bool ok = mp_diff_snapshots(NULL, NULL, report, sizeof(report));
+    (void) ok;
+
+    mp_destroy(pool);
+    TEST_PASS("test_snapshot_diff");
+}
+
+static void test_tlsf_inplace_realloc()
+{
+    printf("\n--- Test: TLSF in-place realloc ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 1024);
+    assert(p1 != NULL);
+    void* p2 = mp_alloc(pool, 2048);
+    assert(p2 != NULL);
+    mp_free(pool, p2);
+
+    void* p3 = mp_realloc(pool, p1, 2048);
+    assert(p3 != NULL);
+    mp_free(pool, p3);
+
+    mp_destroy(pool);
+    TEST_PASS("test_tlsf_inplace_realloc");
+}
+
+static void test_slab_full_page_transition()
+{
+    printf("\n--- Test: Slab full page transition ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* slots[400];
+    for (int i = 0; i < 400; i++)
+    {
+        slots[i] = mp_alloc(pool, 32);
+        assert(slots[i] != NULL);
+    }
+    for (int i = 0; i < 400; i++)
+    {
+        mp_free(pool, slots[i]);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_slab_full_page_transition");
+}
+
+static void test_reset_with_full_pages()
+{
+    printf("\n--- Test: Reset with full pages ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* slots[400];
+    for (int i = 0; i < 400; i++)
+    {
+        slots[i] = mp_alloc(pool, 32);
+        assert(slots[i] != NULL);
+    }
+
+    mp_reset(pool);
+
+    mp_destroy(pool);
+    TEST_PASS("test_reset_with_full_pages");
+}
+
 /* ========================================================================== */
 /*  Entry Point                                                                */
 /* ========================================================================== */
@@ -709,6 +911,16 @@ int main()
     test_tls_cache_refill();
     test_static_buffer_pool();
     test_alloc_error_paths();
+    test_os_fallback_alloc();
+    test_debug_canary_and_zero();
+    test_dirty_pool_rejection();
+    test_circuit_breaker();
+    test_tlsf_expansion();
+    test_snapshot_diff();
+    test_tlsf_inplace_realloc();
+    test_slab_full_page_transition();
+    test_reset_with_full_pages();
+    test_purge_lazy_advanced();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
