@@ -113,11 +113,13 @@ extern "C"
  * Define CMEM_NO_MALLOC_OVERRIDE before including this header to disable.
  */
 #ifndef CMEM_NO_MALLOC_OVERRIDE
-#if defined(__has_extension) && __has_extension(pragma_push_macro)
+#if defined(__has_extension)
+#if __has_extension(pragma_push_macro)
 #pragma push_macro("malloc")
 #pragma push_macro("free")
 #pragma push_macro("realloc")
 #pragma push_macro("calloc")
+#endif
 #endif
 #define malloc(sz) cmem_malloc(sz)
 #define free(ptr) cmem_free(ptr)
