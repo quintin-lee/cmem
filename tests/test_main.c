@@ -1206,8 +1206,12 @@ void test_edge_cases()
     void* p0 = mp_alloc(pool, 0);
     assert(p0 == NULL);
 
+    mp_set_memory_limit(pool, 4096);
+    mp_enable_emergency_reserve(pool, 0);
     void* p_big = mp_alloc(pool, 1024ULL * 1024 * 1024 * 1024);
     assert(p_big == NULL);
+
+    mp_set_memory_limit(pool, 0);
 
     void* p_aligned = mp_aligned_alloc(pool, 128, 1);
     assert(p_aligned != NULL);
