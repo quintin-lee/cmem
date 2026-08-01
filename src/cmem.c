@@ -692,7 +692,7 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx)
     total_slot_size = (total_slot_size + 7) & ~7;
 
 #ifdef _WIN32
-    void* raw_mem = VirtualAlloc(NULL, SLAB_PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    void* raw_mem = cmem_aligned_malloc(SLAB_PAGE_SIZE, SLAB_PAGE_SIZE);
     if (raw_mem == NULL)
         return NULL;
 #else
@@ -3383,14 +3383,22 @@ void mp_destroy(memory_pool_t* pool)
             while (curr)
             {
                 mp_slab_page_t* next = curr->next;
+#ifdef _WIN32
+                cmem_aligned_free(curr->page_raw_mem);
+#else
                 cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
                 curr = next;
             }
             curr = pool->slab_classes[i].full_pages;
             while (curr)
             {
                 mp_slab_page_t* next = curr->next;
+#ifdef _WIN32
+                cmem_aligned_free(curr->page_raw_mem);
+#else
                 cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
                 curr = next;
             }
         }
@@ -3560,7 +3568,11 @@ size_t mp_compact(memory_pool_t* pool)
                 if (curr->next)
                     curr->next->prev = curr->prev;
 
+#ifdef _WIN32
+                cmem_aligned_free(curr->page_raw_mem);
+#else
                 cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
                 freed_bytes += SLAB_PAGE_SIZE;
                 if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE)
                 {
