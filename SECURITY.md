@@ -12,15 +12,25 @@ If you discover a security vulnerability in cmem, please report it responsibly.
 
 **Do not** open a public GitHub issue for security vulnerabilities.
 
-### Reporting Process
+### Reporting Channels
 
-1. Email security reports to: **cmem@example.com**
-2. Include the following information:
-   - Project and component affected
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact assessment
-   - Suggested fix (if available)
+You may report vulnerabilities through either of the following channels:
+
+1. **GitHub Private Vulnerability Reporting** (preferred)
+   - Use the "Security" tab on this repository and click "Private vulnerability reporting"
+   - This creates a private advisory visible only to maintainers
+
+2. **Email**
+   - Send details to: **cmem@example.com**
+   - Include the information listed below
+
+### Required Information
+
+- Project and component affected
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact assessment
+- Suggested fix (if available)
 
 ### Response Timeline
 
@@ -31,6 +41,15 @@ If you discover a security vulnerability in cmem, please report it responsibly.
   - High: 14-30 days
   - Medium: 30-60 days
   - Low: Next scheduled release
+
+### Maintainer Note: Enabling Private Vulnerability Reporting
+
+Maintainers should enable GitHub Private Vulnerability Reporting:
+1. Go to repository **Settings → Security → Private vulnerability reporting**
+2. Click **Enable private vulnerability reporting**
+3. Configure the default recipient (e.g., the maintainer email above)
+
+This allows reporters to submit security advisories directly through GitHub without exposing details publicly.
 
 ### Disclosure Policy
 
