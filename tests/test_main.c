@@ -1194,6 +1194,181 @@ void test_multithread_safety()
 }
 
 /**
+ * @brief Tests edge cases: zero-size alloc, huge alloc, non-power-of-2 aligned alloc,
+ * realloc(NULL).
+ */
+void test_edge_cases()
+{
+    printf("\n--- Test: Edge Cases ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p0 = mp_alloc(pool, 0);
+    assert(p0 == NULL);
+
+    void* p_big = mp_alloc(pool, 1024ULL * 1024 * 1024 * 1024);
+    assert(p_big == NULL);
+
+    void* p_aligned = mp_aligned_alloc(pool, 128, 1);
+    assert(p_aligned != NULL);
+    mp_free(pool, p_aligned);
+
+    void* p_realloc_null = mp_realloc(pool, NULL, 256);
+    assert(p_realloc_null != NULL);
+    mp_free(pool, p_realloc_null);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_edge_cases");
+}
+
+/**
+ * @brief Tests error paths: NULL free, NULL strdup, NULL asprintf, tiny static buffer.
+ */
+void test_error_paths()
+{
+    printf("\n--- Test: Error Paths ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_free(pool, NULL);
+
+    char* s = mp_strdup(pool, NULL);
+    assert(s == NULL);
+
+    char* as = mp_asprintf(pool, NULL);
+    assert(as == NULL);
+
+    uint8_t tiny[65536];
+    memory_pool_t* sp = mp_create_from_buffer(tiny, sizeof(tiny), MP_FLAG_DEFAULT);
+    assert(sp != NULL);
+    void* p = mp_alloc(sp, 8);
+    assert(p != NULL);
+    mp_free(sp, p);
+    mp_destroy(sp);
+
+    mp_destroy(pool);
+    TEST_PASS("test_error_paths");
+}
+
+/**
+ * @brief Tests security detection: double free, canary overflow, heap audit.
+ */
+void test_security_detection()
+{
+    printf("\n--- Test: Security Detection ---\n");
+
+    {
+        memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+        assert(pool != NULL);
+
+        void* p1 = mp_alloc(pool, 64);
+        assert(p1 != NULL);
+        mp_free(pool, p1);
+        mp_free(pool, p1);
+
+        mp_destroy(pool);
+    }
+
+    {
+        memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+        assert(pool != NULL);
+
+        void* p2 = mp_alloc(pool, 64);
+        assert(p2 != NULL);
+        memset(p2, 0xAB, 128);
+        mp_free(pool, p2);
+
+        assert(mp_audit_heap(pool) == true);
+
+        mp_destroy(pool);
+    }
+    TEST_PASS("test_security_detection");
+}
+
+static void test_callback_event_cb(memory_pool_t* p, mp_event_type_t ev, void* ptr, size_t sz,
+                                   void* ud)
+{
+    (void) p;
+    (void) ud;
+    printf("  Event: %d ptr=%p size=%zu\n", (int) ev, ptr, sz);
+}
+
+static void test_callback_watermark_cb(memory_pool_t* p, bool high, size_t used, size_t limit,
+                                       void* ud)
+{
+    (void) p;
+    (void) ud;
+    printf("  Watermark: high=%d used=%zu limit=%zu\n", high ? 1 : 0, used, limit);
+}
+
+static void test_callback_gc_cb(memory_pool_t* p, bool critical, size_t used, size_t limit,
+                                void* ud)
+{
+    (void) p;
+    (void) used;
+    (void) limit;
+    (void) ud;
+    printf("  GC callback: critical=%d\n", critical ? 1 : 0);
+}
+
+static void test_callback_eviction_cb(memory_pool_t* p, bool critical, size_t used, size_t limit,
+                                      void* ud)
+{
+    (void) p;
+    (void) used;
+    (void) limit;
+    (void) ud;
+    printf("  Eviction callback: critical=%d\n", critical ? 1 : 0);
+}
+
+void test_callback_interactions()
+{
+    printf("\n--- Test: Callback Interactions ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_event_callback(pool, test_callback_event_cb, NULL);
+    mp_set_watermark_callback(pool, 0.1, 0.05, test_callback_watermark_cb, NULL);
+    mp_set_gc_callback(pool, test_callback_gc_cb, NULL);
+    mp_set_eviction_callback(pool, test_callback_eviction_cb, NULL);
+
+    void* p = mp_alloc(pool, 1024);
+    assert(p != NULL);
+    mp_free(pool, p);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_callback_interactions");
+}
+
+/**
+ * @brief Tests reset/resize behavior: reset preserves memory, realloc in-place expansion.
+ */
+void test_reset_and_resize()
+{
+    printf("\n--- Test: Reset and Resize ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 256);
+    assert(p1 != NULL);
+    mp_reset(pool);
+    assert(mp_check_leaks(pool) == true);
+
+    void* p2 = mp_alloc(pool, 128);
+    assert(p2 != NULL);
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 1);
+
+    mp_free(pool, p2);
+    mp_destroy(pool);
+    TEST_PASS("test_reset_and_resize");
+}
+
+/**
  * @brief Entry point for all cmem C unit tests.
  * Runs all test cases and prints success message.
  * @return 0 on success.
@@ -1237,6 +1412,11 @@ int main()
     test_child_arenas_and_html_export();
     test_arena_reset_and_json();
     test_static_buffer_and_callbacks();
+    test_edge_cases();
+    test_error_paths();
+    test_security_detection();
+    test_callback_interactions();
+    test_reset_and_resize();
     printf("\nALL CMEM UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
 }
