@@ -459,7 +459,7 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment)
     }
     else
     {
-        ptr = malloc(size);
+        ptr = _aligned_malloc(size, sizeof(void*));
     }
 #else
     if (pool && pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc)
@@ -547,7 +547,7 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size)
         cmem_munmap(ptr, size);
         return;
     }
-    free(ptr);
+    _aligned_free(ptr);
 #else
     if (pool->flags & MP_FLAG_HUGE_PAGES)
     {
