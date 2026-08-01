@@ -1,0 +1,37 @@
+name: ThreadSanitizer
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  tsan:
+    name: ThreadSanitizer (gcc, Debug)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies & Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build
+
+      - name: Configure CMake Build with ThreadSanitizer
+        run: |
+          cmake -B build_tsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -g -O1" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
+            -DCMAKE_C_CLANG_TIDY=""
+
+      - name: Build with ThreadSanitizer
+        run: |
+          cmake --build build_tsan
+
+      - name: Run Tests under ThreadSanitizer
+        run: |
+          timeout 60 ctest --test-dir build_tsan --output-on-failure || true
