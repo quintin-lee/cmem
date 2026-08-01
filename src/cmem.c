@@ -2292,7 +2292,13 @@ void mp_ring_destroy(cmem_ring_buffer_t* ring)
     if (ring->slots)
         free(ring->slots);
     if (ring->buffer)
+    {
+#ifdef _WIN32
+        cmem_aligned_free(ring->buffer);
+#else
         free(ring->buffer);
+#endif
+    }
     free(ring);
 }
 
