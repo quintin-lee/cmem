@@ -9,7 +9,7 @@
 #ifdef _WIN32
 static inline int cmem_rand_r(unsigned int* seed)
 {
-    return (*seed = (1103515245u * (*seed) + 12345u)) % RAND_MAX;
+    return (int) ((*seed = (1103515245u * (*seed) + 12345u)) >> 16) & 0x7FFF;
 }
 #define rand_r(seed) cmem_rand_r(seed)
 #endif
