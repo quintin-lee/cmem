@@ -24,3 +24,8 @@ compile_commands.json
 .vscode/
 .idea/
 .cache
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
