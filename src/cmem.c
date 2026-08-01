@@ -23,6 +23,7 @@
 #include <inttypes.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <malloc.h>
 #else
 #if defined(__has_include)
 #if __has_include(<execinfo.h>)
@@ -47,6 +48,20 @@ static inline int cmem_sched_getcpu(void)
 #else
 #define cmem_sched_getcpu() sched_getcpu()
 #endif
+
+#ifdef _WIN32
+static inline void cmem_munmap(void* ptr, size_t size)
+{
+    (void) size;
+    VirtualFree(ptr, 0, MEM_RELEASE);
+}
+#else
+static inline void cmem_munmap(void* ptr, size_t size)
+{
+    munmap(ptr, size);
+}
+#endif
+
 #ifdef __linux__
 #include <sys/syscall.h>
 #ifndef CMEM_MPOL_BIND
@@ -411,6 +426,42 @@ static inline void trigger_event(memory_pool_t* pool, mp_event_type_t ev, void* 
 static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment)
 {
     void* ptr = NULL;
+#ifdef _WIN32
+    if (pool && pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc)
+    {
+        return pool->sys_allocator.sys_alloc(size, pool->sys_allocator.user_data);
+    }
+    if (pool && (pool->flags & MP_FLAG_HUGE_PAGES))
+    {
+        return NULL;
+    }
+    else if (pool && (pool->flags & MP_FLAG_GUARD_PAGES))
+    {
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        size_t page_sz = si.dwPageSize;
+        size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
+        size_t total_map = page_sz + aligned_payload + page_sz;
+        void* raw_map = VirtualAlloc(NULL, total_map, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (!raw_map)
+            return NULL;
+
+        uint8_t* base = (uint8_t*) raw_map;
+        DWORD old_prot;
+        VirtualProtect(base, page_sz, PAGE_NOACCESS, &old_prot);
+        VirtualProtect(base + page_sz + aligned_payload, page_sz, PAGE_NOACCESS, &old_prot);
+
+        ptr = base + page_sz;
+    }
+    else if (alignment > sizeof(void*))
+    {
+        ptr = _aligned_malloc(size, alignment);
+    }
+    else
+    {
+        ptr = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    }
+#else
     if (pool && pool->has_custom_sys_alloc && pool->sys_allocator.sys_alloc)
     {
         return pool->sys_allocator.sys_alloc(size, pool->sys_allocator.user_data);
@@ -469,6 +520,7 @@ static void* sys_mem_alloc(memory_pool_t* pool, size_t size, size_t alignment)
         syscall(SYS_mbind, ptr, size, CMEM_MPOL_BIND, &nodemask, sizeof(nodemask) * 8, 0);
     }
 #endif
+#endif
 
     return ptr;
 }
@@ -489,6 +541,14 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size)
         pool->sys_allocator.sys_free(ptr, size, pool->sys_allocator.user_data);
         return;
     }
+#ifdef _WIN32
+    if (pool->flags & MP_FLAG_HUGE_PAGES || pool->flags & MP_FLAG_GUARD_PAGES)
+    {
+        cmem_munmap(ptr, size);
+        return;
+    }
+    _aligned_free(ptr);
+#else
     if (pool->flags & MP_FLAG_HUGE_PAGES)
     {
         munmap(ptr, size);
@@ -505,6 +565,7 @@ static void sys_mem_free(memory_pool_t* pool, void* ptr, size_t size)
         return;
     }
     free(ptr);
+#endif
 }
 
 /* Bitwise Utilities for TLSF */
@@ -602,6 +663,11 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx)
         header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
     total_slot_size = (total_slot_size + 7) & ~7;
 
+#ifdef _WIN32
+    void* raw_mem = VirtualAlloc(NULL, SLAB_PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (raw_mem == NULL)
+        return NULL;
+#else
     size_t map_size = SLAB_PAGE_SIZE + SLAB_PAGE_SIZE - 1;
     void* raw_mem =
         mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -624,8 +690,13 @@ static mp_slab_page_t* slab_create_page(memory_pool_t* pool, uint8_t class_idx)
     {
         munmap((void*) (aligned + SLAB_PAGE_SIZE), start + map_size - aligned - SLAB_PAGE_SIZE);
     }
+#endif
 
+#ifdef _WIN32
+    void* page_mem = raw_mem;
+#else
     void* page_mem = (void*) aligned;
+#endif
     mp_slab_page_t* page = (mp_slab_page_t*) page_mem;
     page->class_index = class_idx;
     page->page_raw_mem = page_mem;
@@ -833,7 +904,11 @@ static void percpu_init(memory_pool_t* pool)
 {
     if (!pool || pool->percpu_freelists)
         return;
+#ifdef _WIN32
+    pool->num_cpus = (int) GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#else
     pool->num_cpus = (int) sysconf(_SC_NPROCESSORS_ONLN);
+#endif
     if (pool->num_cpus <= 0)
         pool->num_cpus = 1;
     if (pool->num_cpus > 256)
@@ -867,10 +942,14 @@ static void percpu_destroy(memory_pool_t* pool)
  */
 static inline int percpu_cpu_index(void)
 {
+#ifdef _WIN32
+    return 0;
+#else
     int cpu = cmem_sched_getcpu();
     if (cpu < 0)
         cpu = 0;
     return cpu;
+#endif
 }
 
 /**
@@ -2118,7 +2197,12 @@ cmem_ring_buffer_t* mp_ring_create(size_t slot_size, size_t capacity)
 
     ring->slots = (void**) calloc(real_cap, sizeof(void*));
     size_t total_buf = slot_size * real_cap;
+#ifdef _WIN32
+    ring->buffer = _aligned_malloc(total_buf, 64);
+    if (!ring->buffer)
+#else
     if (posix_memalign(&ring->buffer, 64, total_buf) != 0)
+#endif
     {
         free(ring->slots);
         free(ring);
@@ -2371,7 +2455,12 @@ mp_typed_pool_t* mp_typed_pool_create(size_t elem_size, size_t capacity)
     tpool->active_count = 0;
 
     size_t total_sz = real_elem_sz * capacity;
+#ifdef _WIN32
+    tpool->raw_buf = _aligned_malloc(total_sz, 64);
+    if (!tpool->raw_buf)
+#else
     if (posix_memalign(&tpool->raw_buf, 64, total_sz) != 0)
+#endif
     {
         free(tpool);
         return NULL;
@@ -2457,6 +2546,12 @@ memory_pool_t* mp_create(size_t initial_capacity, mp_flags_t flags)
  */
 memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_t flags)
 {
+    (void) shm_name;
+    (void) capacity;
+    (void) flags;
+#ifdef _WIN32
+    return NULL;
+#else
     if (!shm_name || capacity < 64 * 1024)
         capacity = 1024 * 1024;
 
@@ -2491,6 +2586,7 @@ memory_pool_t* mp_create_shared(const char* shm_name, size_t capacity, mp_flags_
         }
     }
     return pool;
+#endif
 }
 
 /**
@@ -2502,6 +2598,9 @@ void mp_destroy_shared(memory_pool_t* pool, const char* shm_name)
 {
     if (!pool)
         return;
+#ifdef _WIN32
+    (void) shm_name;
+#else
     size_t sz = pool->stats.total_pool_size;
     void* shm_ptr = (void*) pool;
     munmap(shm_ptr, sz);
@@ -2509,6 +2608,7 @@ void mp_destroy_shared(memory_pool_t* pool, const char* shm_name)
     {
         shm_unlink(shm_name);
     }
+#endif
 }
 
 /**
@@ -3249,14 +3349,14 @@ void mp_destroy(memory_pool_t* pool)
             while (curr)
             {
                 mp_slab_page_t* next = curr->next;
-                munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+                cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
                 curr = next;
             }
             curr = pool->slab_classes[i].full_pages;
             while (curr)
             {
                 mp_slab_page_t* next = curr->next;
-                munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+                cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
                 curr = next;
             }
         }
@@ -3426,7 +3526,7 @@ size_t mp_compact(memory_pool_t* pool)
                 if (curr->next)
                     curr->next->prev = curr->prev;
 
-                munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+                cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
                 freed_bytes += SLAB_PAGE_SIZE;
                 if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE)
                 {
@@ -3454,7 +3554,13 @@ size_t mp_purge_lazy(memory_pool_t* pool)
     pool_lock(pool);
 
     size_t purged_bytes = 0;
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    long page_sz = (long) si.dwPageSize;
+#else
     long page_sz = sysconf(_SC_PAGESIZE);
+#endif
     if (page_sz <= 0)
         page_sz = 4096;
 
@@ -3487,8 +3593,7 @@ size_t mp_purge_lazy(memory_pool_t* pool)
     }
 
     pool_unlock(pool);
-    printf("[CMEM PERF] Lazy RSS physical memory purge completed: %zu bytes released to Linux "
-           "kernel\n",
+    printf("[CMEM PERF] Lazy RSS physical memory purge completed: %zu bytes released\n",
            purged_bytes);
     return purged_bytes;
 }

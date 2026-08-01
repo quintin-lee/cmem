@@ -648,6 +648,10 @@ void test_slab_small_allocs()
  */
 void test_env_conf_tuning()
 {
+#ifdef _WIN32
+    printf("\n--- Test 20: CMEM_CONF Environment Variable Auto-Tuning ---\n");
+    printf("  SKIPPED on Windows (setenv/unsetenv not available)\n");
+#else
     printf("\n--- Test 20: CMEM_CONF Environment Variable Auto-Tuning ---\n");
     setenv("CMEM_CONF", "canary=1,poison=on,aligned=1", 1);
 
@@ -665,6 +669,7 @@ void test_env_conf_tuning()
     mp_destroy(pool);
 
     unsetenv("CMEM_CONF");
+#endif
     TEST_PASS("test_env_conf_tuning");
 }
 
@@ -796,6 +801,10 @@ void test_realtime_throughput_meter()
  */
 void test_shared_memory_ipc()
 {
+#ifdef _WIN32
+    printf("\n--- Test 14: POSIX Shared Memory Pool & Zero-Copy IPC ---\n");
+    printf("  SKIPPED on Windows (POSIX shared memory not available)\n");
+#else
     printf("\n--- Test 14: POSIX Shared Memory Pool & Zero-Copy IPC ---\n");
     const char* shm_name = "/cmem_test_shm_pool";
     memory_pool_t* pool = mp_create_shared(shm_name, 512 * 1024, MP_FLAG_THREAD_SAFE);
@@ -810,6 +819,7 @@ void test_shared_memory_ipc()
 
     mp_free(pool, p1);
     mp_destroy_shared(pool, shm_name);
+#endif
     TEST_PASS("test_shared_memory_ipc");
 }
 
