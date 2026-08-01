@@ -187,6 +187,20 @@ add_executable(stress_test tests/stress_test.c)
 target_link_libraries(stress_test PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(stress_test format-check)
 
+# Fuzz target (libFuzzer)
+add_executable(fuzz_alloc tests/fuzz_alloc.c)
+target_link_libraries(fuzz_alloc PRIVATE cmem pthread ${RT_LIBRARY})
+set_target_properties(fuzz_alloc PROPERTIES
+    C_CLANG_TIDY ""
+    CXX_CLANG_TIDY ""
+)
+add_custom_target(fuzz
+    COMMAND mkdir -p fuzz_corpus && echo "AABBCCDD" > fuzz_corpus/seed1 && echo "0123456789" > fuzz_corpus/seed2
+    COMMAND fuzz_alloc -max_total_time=60 -rss_limit_mb=1024 fuzz_corpus fuzz_artifacts
+    DEPENDS fuzz_alloc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+
 # CTest 集成
 enable_testing()
 add_test(NAME CUnitTests COMMAND unit_tests)
