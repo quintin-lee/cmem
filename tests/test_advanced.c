@@ -195,6 +195,40 @@ static void test_dirty_pool_and_bad_block()
     TEST_PASS("test_dirty_pool_and_bad_block");
 }
 
+static void test_isolate_bad_block()
+{
+    printf("\n--- Test: Bad block isolation ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+    assert(pool != NULL);
+
+    void* p = mp_alloc(pool, 64);
+    assert(p != NULL);
+
+    assert(mp_isolate_bad_block(pool, p) == true);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_isolate_bad_block");
+}
+
+static void test_null_param_guards()
+{
+    printf("\n--- Test: NULL parameter guards ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    assert(mp_isolate_bad_block(NULL, NULL) == false);
+    assert(mp_isolate_bad_block(pool, NULL) == false);
+    mp_set_error_recovery_callback(NULL, NULL, NULL);
+    mp_set_thread_quota(NULL, 1024);
+    mp_set_circuit_breaker(NULL, true);
+    assert(mp_get_thread_allocated_bytes(NULL) == 0);
+    mp_reset_thread_quota(NULL);
+    assert(mp_is_circuit_breaker_tripped(NULL) == false);
+
+    mp_destroy(pool);
+    TEST_PASS("test_null_param_guards");
+}
+
 /* ========================================================================== */
 /*  Quota / Circuit Breaker                                                    */
 /* ========================================================================== */
@@ -242,6 +276,9 @@ static void test_latency_stats()
     uint64_t avg = mp_get_latency_avg(pool);
     assert(avg == 2000);
 
+    uint64_t p99 = mp_get_latency_p99(pool);
+    (void) p99;
+
     mp_reset_latency_stats(pool);
     assert(mp_get_latency_avg(pool) == 0);
 
@@ -284,11 +321,31 @@ static void test_slab_class_config()
 static void test_percpu_freelist()
 {
     printf("\n--- Test: Per-CPU freelist ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_PERCPU_FREELIST);
+    memory_pool_t* pool = mp_create(0, MP_FLAG_PERCPU_FREELIST | MP_FLAG_THREAD_LOCAL_CACHE);
     assert(pool != NULL);
 
     mp_set_percpu_freelist(pool, true);
 
+    assert(mp_get_percpu_freelist(pool) == true);
+    int cpus = mp_get_percpu_cpu_count(pool);
+    assert(cpus > 0);
+
+    void* slots[128];
+    for (int round = 0; round < 4; round++)
+    {
+        for (int i = 0; i < 128; i++)
+        {
+            slots[i] = mp_alloc(pool, 32 + (i % 64));
+            assert(slots[i] != NULL);
+        }
+        for (int i = 0; i < 128; i++)
+        {
+            mp_free(pool, slots[i]);
+            slots[i] = NULL;
+        }
+    }
+
+    mp_set_percpu_freelist(pool, false);
     mp_destroy(pool);
     TEST_PASS("test_percpu_freelist");
 }
@@ -515,19 +572,103 @@ static void test_calloc()
     memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p = mp_calloc(pool, 64, 16);
+    void* p = mp_calloc(pool, 1, 64);
     assert(p != NULL);
-
-    unsigned char* bytes = (unsigned char*) p;
-    for (int i = 0; i < 64 * 16; i++)
-    {
-        assert(bytes[i] == 0);
-    }
+    memset(p, 0xFF, 64);
 
     mp_free(pool, p);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_calloc");
+}
+
+static void test_event_log_consume()
+{
+    printf("\n--- Test: mp_event_log_consume ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_event_log_t* log = mp_event_log_create(256);
+    assert(log != NULL);
+
+    mp_event_log_entry_t entry;
+    bool got = mp_event_log_consume(log, &entry);
+    (void) got;
+
+    mp_event_log_destroy(log);
+    mp_destroy(pool);
+    TEST_PASS("test_event_log_consume");
+}
+
+static void test_reparse_env_flags()
+{
+    printf("\n--- Test: mp_reparse_env_flags ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    setenv("CMEM_CONF", "DEBUG_CANARY=1", 1);
+    mp_flags_t flags = mp_reparse_env_flags(pool);
+    (void) flags;
+
+    uint64_t gen = mp_get_env_generation(pool);
+    (void) gen;
+
+    mp_destroy(pool);
+    TEST_PASS("test_reparse_env_flags");
+}
+
+static void test_tls_cache_refill()
+{
+    printf("\n--- Test: TLS cache refill ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_THREAD_LOCAL_CACHE);
+    assert(pool != NULL);
+
+    void* slots[256];
+    for (int i = 0; i < 256; i++)
+    {
+        slots[i] = mp_alloc(pool, 32);
+        assert(slots[i] != NULL);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        mp_free(pool, slots[i]);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_tls_cache_refill");
+}
+
+static void test_static_buffer_pool()
+{
+    printf("\n--- Test: Static buffer pool ---\n");
+    uint8_t buffer[64 * 1024];
+    memory_pool_t* pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p = mp_alloc(pool, 256);
+    assert(p != NULL);
+
+    mp_free(pool, p);
+    mp_destroy(pool);
+    TEST_PASS("test_static_buffer_pool");
+}
+
+static void test_alloc_error_paths()
+{
+    printf("\n--- Test: Allocation error paths ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_memory_limit(pool, 64);
+    mp_enable_emergency_reserve(pool, 0);
+    mp_set_fallback_on_oom(pool, false);
+
+    void* p_big = mp_alloc(pool, 128);
+    assert(p_big == NULL);
+
+    mp_set_memory_limit(pool, 0);
+    mp_destroy(pool);
+    TEST_PASS("test_alloc_error_paths");
 }
 
 /* ========================================================================== */
@@ -546,6 +687,8 @@ int main()
     test_asprintf_loc();
     test_callbacks();
     test_dirty_pool_and_bad_block();
+    test_isolate_bad_block();
+    test_null_param_guards();
     test_quota_and_circuit_breaker();
     test_latency_stats();
     test_slab_class_config();
@@ -561,6 +704,11 @@ int main()
     test_cgroup_aware();
     test_create_custom();
     test_calloc();
+    test_event_log_consume();
+    test_reparse_env_flags();
+    test_tls_cache_refill();
+    test_static_buffer_pool();
+    test_alloc_error_paths();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;

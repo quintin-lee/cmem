@@ -404,6 +404,30 @@ void test_emergency_reserve()
     TEST_PASS("test_emergency_reserve");
 }
 
+void test_fallback_on_oom()
+{
+    printf("\n--- Test: Fallback on OOM ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_memory_limit(pool, 100);
+    mp_set_fallback_on_oom(pool, true);
+    mp_enable_emergency_reserve(pool, 0);
+
+    void* p1 = mp_alloc(pool, 50);
+    assert(p1 != NULL);
+
+    void* p2 = mp_alloc(pool, 60);
+    assert(p2 != NULL);
+
+    mp_free(pool, p1);
+    mp_free(pool, p2);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_fallback_on_oom");
+}
+
 /**
  * @brief Tests Linux NUMA CPU node affinity binding.
  */
@@ -1392,6 +1416,7 @@ int main()
     test_slab_small_allocs();
     test_tlsf_medium_allocs();
     test_emergency_reserve();
+    test_fallback_on_oom();
     test_numa_node_binding();
     test_frame_arena();
     test_diff_snapshots();
