@@ -731,6 +731,10 @@ void test_binary_snapshot()
  */
 void test_huge_pages_alloc()
 {
+#ifdef _WIN32
+    printf("\n--- Test 17: Linux HugePages (2MB/1GB MAP_HUGETLB) Acceleration ---\n");
+    printf("  SKIPPED on Windows (HugePages not supported)\n");
+#else
     printf("\n--- Test 17: Linux HugePages (2MB/1GB MAP_HUGETLB) Acceleration ---\n");
     memory_pool_t* pool = mp_create(2 * 1024 * 1024, MP_FLAG_HUGE_PAGES);
     assert(pool != NULL);
@@ -744,6 +748,7 @@ void test_huge_pages_alloc()
     mp_free(pool, p1);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
+#endif
     TEST_PASS("test_huge_pages_alloc");
 }
 
