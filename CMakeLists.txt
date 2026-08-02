@@ -3,6 +3,8 @@ project(cmem VERSION 1.0.0 LANGUAGES C CXX
         DESCRIPTION "Universal High-Performance Tiered Memory Manager"
         HOMEPAGE_URL "https://github.com/your-repo/cmem")
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # 版本配置
 set(CMEM_VERSION_MAJOR 1)
 set(CMEM_VERSION_MINOR 0)
