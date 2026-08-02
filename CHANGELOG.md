@@ -11,9 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone `main()` for `fuzz_alloc` via `STANDALONE_FUZZ` compile definition
 - GitHub Release workflow with auto-generated release notes and multi-platform artifacts
 - `CONTRIBUTING.md` with development workflow and gitmoji commit conventions
-- Codecov coverage threshold enforcement (`85%` project, `80%` patch)
+- Codecov coverage threshold enforcement (`80%` project, `80%` patch)
 - Docker reproducible build support (`Dockerfile`, `.dockerignore`, `make docker-build`)
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
+- Targeted coverage tests for OS fallback allocation, debug canary/zero flags, slab full-page transitions, and lazy RSS purge paths
 
 ### Changed
 - Updated benchmark results in README with real measured values
@@ -29,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Guarded `__has_extension` usage in `cmem_override.h` for GCC compatibility
 - Fixed clang-format violations in `tests/fuzz_alloc.c`
 - Linked `fuzz_alloc` with `STANDALONE_FUZZ` definition in CMake
+- Fixed lcov `exclude` pattern error in `.github/workflows/coverage.yml` causing CI exit code 25
+- Resolved duplicate `error_recovery_cb` definition and clang-format violations in `tests/test_advanced.c`
 
 ### Documentation
 - Updated LICENSE copyright year to `2024-2026`
