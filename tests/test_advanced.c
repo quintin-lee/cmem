@@ -837,6 +837,83 @@ static void test_purge_lazy_advanced()
     TEST_PASS("test_purge_lazy_advanced");
 }
 
+static void test_get_allocation_info()
+{
+    printf("\n--- Test: Get allocation info ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
+    assert(pool != NULL);
+
+    void* p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    assert(p != NULL);
+
+    mp_allocation_info_t info;
+    bool ok = mp_get_allocation_info(pool, p, &info);
+    assert(ok == true);
+    assert(info.ptr == p);
+    assert(info.requested_size == 256);
+    assert(info.usable_size >= 256);
+    assert(info.alloc_type == ALLOC_TYPE_SLAB || info.alloc_type == ALLOC_TYPE_TLSF);
+    assert(info.alloc_file != NULL);
+    assert(info.alloc_line > 0);
+    assert(info.alloc_func != NULL);
+
+    mp_free(pool, p);
+
+    ok = mp_get_allocation_info(pool, p, &info);
+    assert(ok == false);
+
+    mp_destroy(pool);
+    TEST_PASS("test_get_allocation_info");
+}
+
+static void test_enumerate_regions()
+{
+    printf("\n--- Test: Enumerate regions ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    void* p1 = mp_alloc(pool, 64);
+    assert(p1 != NULL);
+    void* p2 = mp_alloc(pool, 1024);
+    assert(p2 != NULL);
+    mp_free(pool, p2);
+
+    mp_region_info_t regions[32];
+    size_t count = mp_enumerate_regions(pool, regions, 32);
+    assert(count > 0);
+
+    bool has_slab = false;
+    bool has_tlsf = false;
+    for (size_t i = 0; i < count; i++)
+    {
+        if (regions[i].type == ALLOC_TYPE_SLAB)
+            has_slab = true;
+        if (regions[i].type == ALLOC_TYPE_TLSF)
+            has_tlsf = true;
+        assert(regions[i].base != NULL);
+        assert(regions[i].size > 0);
+    }
+    assert(has_slab == true);
+    assert(has_tlsf == true);
+
+    mp_free(pool, p1);
+    mp_destroy(pool);
+    TEST_PASS("test_enumerate_regions");
+}
+
+static void test_report_leaks_on_destroy()
+{
+    printf("\n--- Test: Report leaks on destroy ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_REPORT_LEAKS_ON_DESTROY);
+    assert(pool != NULL);
+
+    void* p = mp_alloc(pool, 128);
+    assert(p != NULL);
+
+    mp_destroy(pool);
+    TEST_PASS("test_report_leaks_on_destroy");
+}
+
 static void test_snapshot_diff()
 {
     printf("\n--- Test: Snapshot diff ---\n");
@@ -961,6 +1038,9 @@ int main()
     test_slab_full_page_transition();
     test_reset_with_full_pages();
     test_purge_lazy_advanced();
+    test_get_allocation_info();
+    test_enumerate_regions();
+    test_report_leaks_on_destroy();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;

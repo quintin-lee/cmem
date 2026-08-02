@@ -414,6 +414,30 @@ class MemoryPool
     }
 
     /**
+     * @brief Retrieves detailed metadata for a single allocation.
+     *
+     * @param ptr Payload pointer returned by alloc()/calloc()/realloc()
+     * @param info Output structure filled with allocation metadata
+     * @return true if ptr is valid and info was filled, false otherwise
+     */
+    bool get_allocation_info(void* ptr, mp_allocation_info_t* info) const
+    {
+        return mp_get_allocation_info(pool_, ptr, info);
+    }
+
+    /**
+     * @brief Enumerates all memory regions backing this pool.
+     *
+     * @param regions Output array of mp_region_info_t
+     * @param max_regions Maximum number of entries the array can hold
+     * @return Number of regions written to the array
+     */
+    size_t enumerate_regions(mp_region_info_t* regions, size_t max_regions) const
+    {
+        return mp_enumerate_regions(pool_, regions, max_regions);
+    }
+
+    /**
      * @brief Returns the underlying C memory pool pointer.
      *
      * Useful for calling C API functions not wrapped by this class.

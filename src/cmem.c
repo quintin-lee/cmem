@@ -137,14 +137,6 @@ static const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512
 #define BLOCK_STATE_PREV_FREE 0x2
 #define BLOCK_SIZE_MASK (~(size_t) (BLOCK_STATE_FREE | BLOCK_STATE_PREV_FREE))
 
-typedef enum
-{
-    ALLOC_TYPE_SLAB = 1,
-    ALLOC_TYPE_TLSF = 2,
-    ALLOC_TYPE_OS = 3,
-    ALLOC_TYPE_EMERGENCY = 4
-} mp_alloc_type_t;
-
 /* Header prepended to every user payload */
 typedef struct mp_block_header
 {
@@ -3399,6 +3391,11 @@ void mp_destroy(memory_pool_t* pool)
     if (!pool)
         return;
 
+    if (pool->flags & MP_FLAG_REPORT_LEAKS_ON_DESTROY)
+    {
+        mp_check_leaks(pool);
+    }
+
     memory_pool_t* child = pool->first_child;
     while (child)
     {
@@ -4915,6 +4912,147 @@ bool mp_ptr_valid(memory_pool_t* pool, void* ptr)
     }
     pool_rdunlock(pool);
     return found;
+}
+
+/**
+ * @brief Retrieves detailed metadata for a single allocation.
+ *
+ * Fills the caller-provided mp_allocation_info_t structure with the
+ * allocation's tier, sizes, source location, and captured backtrace.
+ *
+ * @param pool Pointer to the memory pool
+ * @param ptr Payload pointer returned by mp_alloc/mp_calloc/mp_realloc
+ * @param info Output structure filled with allocation metadata
+ * @return true if ptr is valid and info was filled, false otherwise
+ */
+bool mp_get_allocation_info(memory_pool_t* pool, void* ptr, mp_allocation_info_t* info)
+{
+    if (!pool || !ptr || !info)
+        return false;
+
+    pool_rdlock(pool);
+    mp_block_header_t* header = (mp_block_header_t*) ((uint8_t*) ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD)
+    {
+        pool_rdunlock(pool);
+        return false;
+    }
+    bool found = false;
+    mp_block_header_t* curr = pool->active_head;
+    while (curr)
+    {
+        if (curr == header)
+        {
+            found = true;
+            break;
+        }
+        curr = curr->next;
+    }
+    if (!found)
+    {
+        pool_rdunlock(pool);
+        return false;
+    }
+
+    info->ptr = ptr;
+    info->requested_size = header->requested_size;
+    info->usable_size = header->usable_size;
+    info->alloc_type = (mp_alloc_type_t) header->alloc_type;
+    info->slab_class = header->slab_class;
+    info->raw_base = header->raw_base;
+    info->alloc_file = header->alloc_file;
+    info->alloc_line = header->alloc_line;
+    info->alloc_func = header->alloc_func;
+    info->backtrace_depth = header->backtrace_depth;
+    if (header->backtrace_depth > 0)
+    {
+        for (int i = 0; i < header->backtrace_depth && i < 8; i++)
+        {
+            info->backtrace_addrs[i] = header->backtrace_addrs[i];
+        }
+    }
+    else
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            info->backtrace_addrs[i] = NULL;
+        }
+    }
+
+    pool_rdunlock(pool);
+    return true;
+}
+
+/**
+ * @brief Enumerates all memory regions backing the pool.
+ *
+ * Fills the caller-provided array with descriptors for all underlying
+ * memory regions (Slab pages, TLSF pools, OS fallback mappings).
+ *
+ * @param pool Pointer to the memory pool
+ * @param regions Output array of mp_region_info_t
+ * @param max_regions Maximum number of entries the array can hold
+ * @return Number of regions written to the array
+ */
+size_t mp_enumerate_regions(memory_pool_t* pool, mp_region_info_t* regions, size_t max_regions)
+{
+    if (!pool || !regions || max_regions == 0)
+        return 0;
+
+    pool_rdlock(pool);
+    size_t count = 0;
+
+    for (int c = 0; c < SLAB_CLASS_COUNT && count < max_regions; c++)
+    {
+        mp_slab_class_t* sc = &pool->slab_classes[c];
+        mp_slab_page_t* curr = sc->partial_pages;
+        while (curr && count < max_regions)
+        {
+            regions[count].base = curr->page_raw_mem;
+            regions[count].size = SLAB_PAGE_SIZE;
+            regions[count].type = ALLOC_TYPE_SLAB;
+            regions[count].slab_class = c;
+            regions[count].is_hot = curr->is_hot;
+            count++;
+            curr = curr->next;
+        }
+        curr = sc->full_pages;
+        while (curr && count < max_regions)
+        {
+            regions[count].base = curr->page_raw_mem;
+            regions[count].size = SLAB_PAGE_SIZE;
+            regions[count].type = ALLOC_TYPE_SLAB;
+            regions[count].slab_class = c;
+            regions[count].is_hot = curr->is_hot;
+            count++;
+            curr = curr->next;
+        }
+    }
+
+    tlsf_pool_t* tcurr = pool->tlsf_root;
+    while (tcurr && count < max_regions)
+    {
+        regions[count].base = tcurr->raw_area;
+        regions[count].size = tcurr->raw_size;
+        regions[count].type = ALLOC_TYPE_TLSF;
+        regions[count].slab_class = 0;
+        regions[count].is_hot = false;
+        count++;
+        tcurr = tcurr->next;
+    }
+
+    if (pool->emergency_buf && count < max_regions)
+    {
+        regions[count].base = pool->emergency_buf;
+        regions[count].size = pool->emergency_size;
+        regions[count].type = ALLOC_TYPE_EMERGENCY;
+        regions[count].slab_class = 0;
+        regions[count].is_hot = false;
+        count++;
+    }
+
+    pool_rdunlock(pool);
+    return count;
 }
 
 /* --- Heap Integrity, Leak Analysis & HTML Dashboard --- */

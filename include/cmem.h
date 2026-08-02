@@ -98,7 +98,9 @@ extern "C"
             (1 << 12), /**< Enable Hot/Cold page separation for TLB optimization */
         MP_FLAG_ENCRYPTED_MEMORY =
             (1 << 13), /**< Enable encrypted memory with mlock and MADV_DONTDUMP */
-        MP_FLAG_ASAN_INTEGRATION = (1 << 14) /**< Enable AddressSanitizer integration layer */
+        MP_FLAG_ASAN_INTEGRATION = (1 << 14), /**< Enable AddressSanitizer integration layer */
+        MP_FLAG_REPORT_LEAKS_ON_DESTROY =
+            (1 << 15) /**< Automatically report leaks to stderr on mp_destroy() */
     } mp_flags_t;
 
     /**
@@ -119,6 +121,17 @@ extern "C"
         MP_EVENT_OOM,               /**< Out-of-memory condition reached */
         MP_EVENT_DIRTY              /**< Pool marked dirty due to memory corruption */
     } mp_event_type_t;
+
+    /**
+     * @brief Allocation tier types for diagnostic reporting.
+     */
+    typedef enum
+    {
+        ALLOC_TYPE_SLAB = 1,     /**< Small-object Slab allocator (<= 512B) */
+        ALLOC_TYPE_TLSF = 2,     /**< Medium-object TLSF allocator (512B ~ 4MB) */
+        ALLOC_TYPE_OS = 3,       /**< Direct OS fallback allocator (> 4MB) */
+        ALLOC_TYPE_EMERGENCY = 4 /**< Emergency reserve buffer */
+    } mp_alloc_type_t;
 
     /**
      * @brief Opaque handle to a memory pool instance.
@@ -203,6 +216,36 @@ extern "C"
         size_t
             size_histogram[CMEM_HISTOGRAM_BUCKETS]; /**< Allocation size distribution histogram */
     } mp_stats_t;
+
+    /**
+     * @brief Per-allocation metadata returned by mp_get_allocation_info().
+     */
+    typedef struct
+    {
+        void* ptr;                  /**< Payload pointer */
+        size_t requested_size;      /**< Originally requested payload size */
+        size_t usable_size;         /**< Actual usable capacity of this block */
+        mp_alloc_type_t alloc_type; /**< Allocation tier (Slab/TLSF/OS/Emergency) */
+        uint8_t slab_class;         /**< Slab class index (0 for non-Slab) */
+        void* raw_base;             /**< Raw base address from system/slab allocation */
+        const char* alloc_file;     /**< Source file where allocated (NULL if untracked) */
+        int alloc_line;             /**< Source line number (-1 if untracked) */
+        const char* alloc_func;     /**< Source function name (NULL if untracked) */
+        void* backtrace_addrs[8];   /**< Captured backtrace addresses (0 if untracked) */
+        int backtrace_depth;        /**< Number of backtrace frames captured */
+    } mp_allocation_info_t;
+
+    /**
+     * @brief Memory region descriptor returned by mp_enumerate_regions().
+     */
+    typedef struct
+    {
+        void* base;           /**< Base address of the region */
+        size_t size;          /**< Size of the region in bytes */
+        mp_alloc_type_t type; /**< Region type */
+        uint8_t slab_class;   /**< Slab class index (0 for non-Slab) */
+        bool is_hot;          /**< Hot page flag (for Slab pages) */
+    } mp_region_info_t;
 
     /* ========================================================================== */
     /*  Advanced Feature API Declarations                                         */
@@ -1096,6 +1139,37 @@ extern "C"
      * @return true if no leaks detected, false otherwise
      */
     bool mp_check_leaks(memory_pool_t* pool);
+
+    /* ========================================================================== */
+    /*  Advanced Diagnostic Utilities                                              */
+    /* ========================================================================== */
+
+    /**
+     * @brief Retrieves detailed metadata for a single allocation.
+     *
+     * This API allows upper-layer applications to inspect the internal state
+     * of an allocated block, including its tier, size, source location, and
+     * captured backtrace (if MP_FLAG_TRACK_LOCATIONS was enabled).
+     *
+     * @param pool Pointer to the memory pool
+     * @param ptr Payload pointer returned by mp_alloc/mp_calloc/mp_realloc
+     * @param info Output structure filled with allocation metadata
+     * @return true if ptr is valid and info was filled, false otherwise
+     */
+    bool mp_get_allocation_info(memory_pool_t* pool, void* ptr, mp_allocation_info_t* info);
+
+    /**
+     * @brief Enumerates all memory regions backing the pool.
+     *
+     * Fills the caller-provided array with descriptors for all underlying
+     * memory regions (Slab pages, TLSF pools, OS fallback mappings).
+     *
+     * @param pool Pointer to the memory pool
+     * @param regions Output array of mp_region_info_t
+     * @param max_regions Maximum number of entries the array can hold
+     * @return Number of regions written to the array
+     */
+    size_t mp_enumerate_regions(memory_pool_t* pool, mp_region_info_t* regions, size_t max_regions);
 
     /* ========================================================================== */
     /*  Runtime Config Hot-Reload                                                  */

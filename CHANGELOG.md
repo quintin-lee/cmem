@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker reproducible build support (`Dockerfile`, `.dockerignore`, `make docker-build`)
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
 - Targeted coverage tests for OS fallback allocation, debug canary/zero flags, slab full-page transitions, and lazy RSS purge paths
+- `mp_get_allocation_info()` for per-allocation metadata inspection (type, size, source location, backtrace)
+- `mp_enumerate_regions()` for enumerating all backing memory regions (Slab pages, TLSF pools, OS mappings)
+- `MP_FLAG_REPORT_LEAKS_ON_DESTROY` for automatic leak reporting on `mp_destroy()`
+- C++ `MemoryPool` wrappers: `get_allocation_info()` and `enumerate_regions()`
 
 ### Changed
 - Updated benchmark results in README with real measured values
