@@ -14,17 +14,17 @@
 
 #include "cmem.h"
 #include "cmem_internal.h"
+#include <assert.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-#include <pthread.h>
-#include <assert.h>
-#include <stdint.h>
-#include <inttypes.h>
 #ifdef _WIN32
-#include <windows.h>
 #include <malloc.h>
+#include <windows.h>
 #else
 #if defined(__has_include)
 #if __has_include(<execinfo.h>)
@@ -35,9 +35,9 @@
 #include <execinfo.h>
 #define CMEM_HAS_EXECINFO 1
 #endif
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -62,8 +62,8 @@ typedef std::atomic<size_t> cmem_atomic_size_t;
 #define CMEM_ORDER_ACQUIRE std::memory_order_acquire
 #define CMEM_ORDER_RELEASE std::memory_order_release
 #else
-#include <stdatomic.h>
 #include <errno.h>
+#include <stdatomic.h>
 typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) atomic_fetch_add_explicit(obj, arg, order)
 #define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) atomic_fetch_sub_explicit(obj, arg, order)
@@ -96,7 +96,7 @@ typedef atomic_size_t cmem_atomic_size_t;
 
 #define BLOCK_STATE_FREE 0x1
 #define BLOCK_STATE_PREV_FREE 0x2
-#define BLOCK_SIZE_MASK (~(size_t) (BLOCK_STATE_FREE | BLOCK_STATE_PREV_FREE))
+#define BLOCK_SIZE_MASK (~(size_t)(BLOCK_STATE_FREE | BLOCK_STATE_PREV_FREE))
 
 /* Header prepended to every user payload */
 
@@ -204,13 +204,15 @@ typedef atomic_size_t cmem_atomic_size_t;
  * @param cb Error recovery callback function pointer
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_error_recovery_callback(memory_pool_t* pool, mp_watermark_callback_t cb,
-                                    void* user_data)
+void mp_set_error_recovery_callback(memory_pool_t          *pool,
+                                    mp_watermark_callback_t cb,
+                                    void                   *user_data)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     pool_lock(pool);
-    pool->error_recovery_cb = cb;
+    pool->error_recovery_cb        = cb;
     pool->error_recovery_user_data = user_data;
     pool_unlock(pool);
 }
@@ -274,28 +276,30 @@ void mp_set_error_recovery_callback(memory_pool_t* pool, mp_watermark_callback_t
  * @param arena_name Human-readable name for the child arena
  * @return Pointer to the new child memory pool, or NULL on failure
  */
-memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, mp_flags_t flags,
-                               const char* arena_name)
+memory_pool_t *mp_create_child(memory_pool_t *parent,
+                               size_t         initial_capacity,
+                               mp_flags_t     flags,
+                               const char    *arena_name)
 {
-    memory_pool_t* child =
+    memory_pool_t *child =
         mp_create_custom(initial_capacity, flags, parent ? &parent->sys_allocator : NULL);
-    if (!child)
+    if (!child) {
         return NULL;
+    }
 
-    if (parent && parent->has_custom_sys_alloc)
-    {
+    if (parent && parent->has_custom_sys_alloc) {
         child->has_custom_sys_alloc = true;
-        child->sys_allocator = parent->sys_allocator;
+        child->sys_allocator        = parent->sys_allocator;
     }
 
     child->parent = parent;
-    if (arena_name)
+    if (arena_name) {
         snprintf(child->arena_name, sizeof(child->arena_name), "%s", arena_name);
-    else
+    } else {
         snprintf(child->arena_name, sizeof(child->arena_name), "ChildArena");
+    }
 
-    if (parent)
-    {
+    if (parent) {
         pool_lock(parent);
         child->next_sibling = parent->first_child;
         parent->first_child = child;
@@ -311,42 +315,38 @@ memory_pool_t* mp_create_child(memory_pool_t* parent, size_t initial_capacity, m
  * @param sys_allocator Custom system allocator function table, or NULL for default
  * @return Pointer to the new memory pool, or NULL on failure
  */
-memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags,
-                                const mp_sys_allocator_t* sys_allocator)
+memory_pool_t *
+mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t *sys_allocator)
 {
     flags = mp_parse_env_flags(flags);
 
-    memory_pool_t* pool = (memory_pool_t*) calloc(1, sizeof(memory_pool_t));
-    if (!pool)
+    memory_pool_t *pool = (memory_pool_t *)calloc(1, sizeof(memory_pool_t));
+    if (!pool) {
         return NULL;
+    }
 
     pool->flags = flags;
     snprintf(pool->arena_name, sizeof(pool->arena_name), "RootArena");
     clock_gettime(CLOCK_MONOTONIC, &pool->window_start_time);
-    if (sys_allocator)
-    {
+    if (sys_allocator) {
         pool->has_custom_sys_alloc = true;
-        pool->sys_allocator = *sys_allocator;
+        pool->sys_allocator        = *sys_allocator;
     }
 
-    if (flags & MP_FLAG_THREAD_SAFE)
-    {
+    if (flags & MP_FLAG_THREAD_SAFE) {
         pthread_rwlock_init(&pool->rwlock, NULL);
         pthread_mutex_init(&pool->lock, NULL);
     }
 
     slab_init(pool);
 
-    if (flags & MP_FLAG_PERCPU_FREELIST)
-    {
+    if (flags & MP_FLAG_PERCPU_FREELIST) {
         percpu_init(pool);
     }
 
-    if (initial_capacity > 0)
-    {
+    if (initial_capacity > 0) {
         pool->tlsf_root = tlsf_create_pool_custom(pool, initial_capacity, NULL);
-        if (pool->tlsf_root)
-        {
+        if (pool->tlsf_root) {
             pool->stats.total_pool_size += initial_capacity + sizeof(tlsf_pool_t);
         }
     }
@@ -368,14 +368,17 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags,
  * @param pressure_threshold Pressure ratio (0.0-1.0) above which compaction is triggered
  * @param fragmentation_threshold Fragmentation ratio (0.0-1.0) above which compaction is triggered
  */
-void mp_set_auto_compact(memory_pool_t* pool, bool enable, double pressure_threshold,
-                         double fragmentation_threshold)
+void mp_set_auto_compact(memory_pool_t *pool,
+                         bool           enable,
+                         double         pressure_threshold,
+                         double         fragmentation_threshold)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     pool_lock(pool);
-    pool->auto_compact_enabled = enable;
-    pool->auto_compact_pressure_threshold = pressure_threshold;
+    pool->auto_compact_enabled                 = enable;
+    pool->auto_compact_pressure_threshold      = pressure_threshold;
     pool->auto_compact_fragmentation_threshold = fragmentation_threshold;
     pool_unlock(pool);
 }
@@ -390,14 +393,17 @@ void mp_set_auto_compact(memory_pool_t* pool, bool enable, double pressure_thres
  * @param cb Callback invoked when quota is exceeded
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_arena_quota(memory_pool_t* pool, size_t quota_bytes, mp_watermark_callback_t cb,
-                        void* user_data)
+void mp_set_arena_quota(memory_pool_t          *pool,
+                        size_t                  quota_bytes,
+                        mp_watermark_callback_t cb,
+                        void                   *user_data)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     pool_lock(pool);
-    pool->arena_quota_limit = quota_bytes;
-    pool->arena_quota_cb = cb;
+    pool->arena_quota_limit     = quota_bytes;
+    pool->arena_quota_cb        = cb;
     pool->arena_quota_user_data = user_data;
     pool_unlock(pool);
 }
@@ -414,16 +420,20 @@ void mp_set_arena_quota(memory_pool_t* pool, size_t quota_bytes, mp_watermark_ca
  * @param cb Watermark callback function pointer
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_watermark_callback(memory_pool_t* pool, double high_ratio, double low_ratio,
-                               mp_watermark_callback_t cb, void* user_data)
+void mp_set_watermark_callback(memory_pool_t          *pool,
+                               double                  high_ratio,
+                               double                  low_ratio,
+                               mp_watermark_callback_t cb,
+                               void                   *user_data)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     pool_lock(pool);
-    pool->high_watermark_ratio = high_ratio;
-    pool->low_watermark_ratio = low_ratio;
-    pool->watermark_cb = cb;
-    pool->watermark_user_data = user_data;
+    pool->high_watermark_ratio    = high_ratio;
+    pool->low_watermark_ratio     = low_ratio;
+    pool->watermark_cb            = cb;
+    pool->watermark_user_data     = user_data;
     pool->in_high_watermark_state = false;
     pool_unlock(pool);
 }
@@ -438,19 +448,17 @@ void mp_set_watermark_callback(memory_pool_t* pool, double high_ratio, double lo
  * @param func Source function name
  * @return Pointer to the allocated payload, or NULL on failure
  */
-void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* file, int line,
-                    const char* func)
+void *mp_calloc_loc(
+    memory_pool_t *pool, size_t num, size_t size, const char *file, int line, const char *func)
 {
-    void* ptr = mp_calloc(pool, num, size);
-    if (ptr)
-    {
-        mp_block_header_t* header =
-            (mp_block_header_t*) ((uint8_t*) ptr - sizeof(mp_block_header_t));
+    void *ptr = mp_calloc(pool, num, size);
+    if (ptr) {
+        mp_block_header_t *header =
+            (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
         header->alloc_file = file;
         header->alloc_line = line;
         header->alloc_func = func;
-        if (pool->flags & MP_FLAG_TRACK_LOCATIONS)
-        {
+        if (pool->flags & MP_FLAG_TRACK_LOCATIONS) {
 #ifdef CMEM_HAS_EXECINFO
             header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
 #else
@@ -471,19 +479,17 @@ void* mp_calloc_loc(memory_pool_t* pool, size_t num, size_t size, const char* fi
  * @param func Source function name
  * @return Pointer to the reallocated payload, or NULL on failure
  */
-void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char* file, int line,
-                     const char* func)
+void *mp_realloc_loc(
+    memory_pool_t *pool, void *ptr, size_t new_size, const char *file, int line, const char *func)
 {
-    void* new_ptr = mp_realloc(pool, ptr, new_size);
-    if (new_ptr)
-    {
-        mp_block_header_t* header =
-            (mp_block_header_t*) ((uint8_t*) new_ptr - sizeof(mp_block_header_t));
+    void *new_ptr = mp_realloc(pool, ptr, new_size);
+    if (new_ptr) {
+        mp_block_header_t *header =
+            (mp_block_header_t *)((uint8_t *)new_ptr - sizeof(mp_block_header_t));
         header->alloc_file = file;
         header->alloc_line = line;
         header->alloc_func = func;
-        if (pool->flags & MP_FLAG_TRACK_LOCATIONS)
-        {
+        if (pool->flags & MP_FLAG_TRACK_LOCATIONS) {
 #ifdef CMEM_HAS_EXECINFO
             header->backtrace_depth = backtrace(header->backtrace_addrs, MAX_BACKTRACE_FRAMES);
 #else
@@ -502,11 +508,15 @@ void* mp_realloc_loc(memory_pool_t* pool, void* ptr, size_t new_size, const char
  * @param size Size of each element in bytes
  * @return Pointer to the reallocated payload, or NULL on overflow/failure
  */
-void* mp_reallocarray_loc(memory_pool_t* pool, void* ptr, size_t nmemb, size_t size,
-                          const char* file, int line, const char* func)
+void *mp_reallocarray_loc(memory_pool_t *pool,
+                          void          *ptr,
+                          size_t         nmemb,
+                          size_t         size,
+                          const char    *file,
+                          int            line,
+                          const char    *func)
 {
-    if (nmemb != 0 && size > SIZE_MAX / nmemb)
-    {
+    if (nmemb != 0 && size > SIZE_MAX / nmemb) {
         return NULL;
     }
     return mp_realloc_loc(pool, ptr, nmemb * size, file, line, func);
@@ -521,15 +531,15 @@ void* mp_reallocarray_loc(memory_pool_t* pool, void* ptr, size_t nmemb, size_t s
  * @param func Source function name
  * @return Pointer to the duplicated string, or NULL on failure
  */
-char* mp_strdup_loc(memory_pool_t* pool, const char* str, const char* file, int line,
-                    const char* func)
+char *
+mp_strdup_loc(memory_pool_t *pool, const char *str, const char *file, int line, const char *func)
 {
-    if (!str)
+    if (!str) {
         return NULL;
+    }
     size_t len = strlen(str);
-    char* dup = (char*) mp_alloc_loc(pool, len + 1, file, line, func);
-    if (dup)
-    {
+    char  *dup = (char *)mp_alloc_loc(pool, len + 1, file, line, func);
+    if (dup) {
         memcpy(dup, str, len + 1);
     }
     return dup;
@@ -545,14 +555,14 @@ char* mp_strdup_loc(memory_pool_t* pool, const char* str, const char* file, int 
  * @param func Source function name
  * @return Pointer to the duplicated memory, or NULL on failure
  */
-void* mp_memdup_loc(memory_pool_t* pool, const void* src, size_t n, const char* file, int line,
-                    const char* func)
+void *mp_memdup_loc(
+    memory_pool_t *pool, const void *src, size_t n, const char *file, int line, const char *func)
 {
-    if (!src || n == 0)
+    if (!src || n == 0) {
         return NULL;
-    void* dup = mp_alloc_loc(pool, n, file, line, func);
-    if (dup)
-    {
+    }
+    void *dup = mp_alloc_loc(pool, n, file, line, func);
+    if (dup) {
         memcpy(dup, src, n);
     }
     return dup;
@@ -567,11 +577,12 @@ void* mp_memdup_loc(memory_pool_t* pool, const void* src, size_t n, const char* 
  * @param fmt Printf-style format string
  * @return Pointer to the formatted string, or NULL on failure
  */
-char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const char* func,
-                      const char* fmt, ...)
+char *mp_asprintf_loc(
+    memory_pool_t *pool, const char *file, int line, const char *func, const char *fmt, ...)
 {
-    if (!fmt)
+    if (!fmt) {
         return NULL;
+    }
     va_list args;
     va_start(args, fmt);
     va_list args_copy;
@@ -579,16 +590,14 @@ char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const cha
     int len = vsnprintf(NULL, 0, fmt, args);
     va_end(args);
 
-    if (len < 0)
-    {
+    if (len < 0) {
         va_end(args_copy);
         return NULL;
     }
 
-    char* buf = (char*) mp_alloc_loc(pool, (size_t) len + 1, file, line, func);
-    if (buf)
-    {
-        vsnprintf(buf, (size_t) len + 1, fmt, args_copy);
+    char *buf = (char *)mp_alloc_loc(pool, (size_t)len + 1, file, line, func);
+    if (buf) {
+        vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
     }
     va_end(args_copy);
     return buf;
@@ -604,109 +613,113 @@ char* mp_asprintf_loc(memory_pool_t* pool, const char* file, int line, const cha
  * @param max_len Maximum length of the output buffer
  * @return true on success
  */
-bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path, char* out_report,
-                       size_t max_len)
+bool mp_diff_snapshots(const char *snapshot_a_path,
+                       const char *snapshot_b_path,
+                       char       *out_report,
+                       size_t      max_len)
 {
-    if (!snapshot_a_path || !snapshot_b_path || !out_report || max_len == 0)
+    if (!snapshot_a_path || !snapshot_b_path || !out_report || max_len == 0) {
         return false;
+    }
 
-    FILE* fa = fopen(snapshot_a_path, "rb");
-    FILE* fb = fopen(snapshot_b_path, "rb");
-    if (!fa || !fb)
-    {
-        if (fa)
+    FILE *fa = fopen(snapshot_a_path, "rb");
+    FILE *fb = fopen(snapshot_b_path, "rb");
+    if (!fa || !fb) {
+        if (fa) {
             fclose(fa);
-        if (fb)
+        }
+        if (fb) {
             fclose(fb);
+        }
         return false;
     }
 
     cmem_snapshot_header_t hdra, hdrb;
     if (fread(&hdra, sizeof(hdra), 1, fa) != 1 || hdra.magic != 0x434D454D ||
-        fread(&hdrb, sizeof(hdrb), 1, fb) != 1 || hdrb.magic != 0x434D454D)
-    {
+        fread(&hdrb, sizeof(hdrb), 1, fb) != 1 || hdrb.magic != 0x434D454D) {
         fclose(fa);
         fclose(fb);
         return false;
     }
 
-    size_t count_a = (size_t) hdra.active_allocations;
-    cmem_snapshot_record_t* recs_a = NULL;
-    if (count_a > 0)
-    {
-        recs_a = (cmem_snapshot_record_t*) calloc(count_a, sizeof(cmem_snapshot_record_t));
-        if (recs_a)
-        {
-            if (fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa) != count_a)
-            {
+    size_t                  count_a = (size_t)hdra.active_allocations;
+    cmem_snapshot_record_t *recs_a  = NULL;
+    if (count_a > 0) {
+        recs_a = (cmem_snapshot_record_t *)calloc(count_a, sizeof(cmem_snapshot_record_t));
+        if (recs_a) {
+            if (fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa) != count_a) {
                 free(recs_a);
-                recs_a = NULL;
+                recs_a  = NULL;
                 count_a = 0;
             }
         }
     }
     fclose(fa);
 
-    size_t offset = 0;
+    size_t offset     = 0;
     size_t diff_count = 0;
     size_t diff_bytes = 0;
 
     offset +=
-        snprintf(out_report + offset, max_len - offset,
+        snprintf(out_report + offset,
+                 max_len - offset,
                  "=================== CMEM INCREMENTAL SNAPSHOT DIFF REPORT ===================\n"
                  "  Baseline Snapshot A : %s (%u blocks)\n"
                  "  Target Snapshot B   : %s (%u blocks)\n"
                  "=============================================================================\n",
-                 snapshot_a_path, (unsigned) hdra.active_allocations, snapshot_b_path,
-                 (unsigned) hdrb.active_allocations);
+                 snapshot_a_path,
+                 (unsigned)hdra.active_allocations,
+                 snapshot_b_path,
+                 (unsigned)hdrb.active_allocations);
 
     cmem_snapshot_record_t recb;
-    while (fread(&recb, sizeof(recb), 1, fb) == 1)
-    {
+    while (fread(&recb, sizeof(recb), 1, fb) == 1) {
         bool found_in_a = false;
-        for (size_t i = 0; i < count_a; i++)
-        {
+        for (size_t i = 0; i < count_a; i++) {
             if (recs_a && recs_a[i].address == recb.address &&
-                recs_a[i].requested_size == recb.requested_size)
-            {
+                recs_a[i].requested_size == recb.requested_size) {
                 found_in_a = true;
                 break;
             }
         }
-        if (!found_in_a)
-        {
+        if (!found_in_a) {
             diff_count++;
-            diff_bytes += (size_t) recb.requested_size;
-            if (offset < max_len)
-            {
-                const char* tier_str =
+            diff_bytes += (size_t)recb.requested_size;
+            if (offset < max_len) {
+                const char *tier_str =
                     (recb.alloc_type == ALLOC_TYPE_SLAB)
                         ? "SLAB"
                         : ((recb.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
-                offset +=
-                    snprintf(out_report + offset, max_len - offset,
-                             "[Incremental Leak #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64
-                             " B | Tier: %s | Location: %s:%u (%s)\n",
-                             diff_count, recb.address, recb.requested_size, tier_str,
-                             recb.alloc_file[0] ? recb.alloc_file : "unknown", recb.alloc_line,
-                             recb.alloc_func[0] ? recb.alloc_func : "unknown");
+                offset += snprintf(out_report + offset,
+                                   max_len - offset,
+                                   "[Incremental Leak #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64
+                                   " B | Tier: %s | Location: %s:%u (%s)\n",
+                                   diff_count,
+                                   recb.address,
+                                   recb.requested_size,
+                                   tier_str,
+                                   recb.alloc_file[0] ? recb.alloc_file : "unknown",
+                                   recb.alloc_line,
+                                   recb.alloc_func[0] ? recb.alloc_func : "unknown");
             }
         }
     }
 
     fclose(fb);
-    if (recs_a)
+    if (recs_a) {
         free(recs_a);
+    }
 
-    if (offset < max_len)
-    {
+    if (offset < max_len) {
         offset += snprintf(
-            out_report + offset, max_len - offset,
+            out_report + offset,
+            max_len - offset,
             "-----------------------------------------------------------------------------\n"
             "  Net Incremental Leaked Allocations : %zu blocks\n"
             "  Net Incremental Leaked Bytes       : %zu bytes\n"
             "=============================================================================\n",
-            diff_count, diff_bytes);
+            diff_count,
+            diff_bytes);
     }
 
     return true;

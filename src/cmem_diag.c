@@ -6,38 +6,39 @@
 #include "cmem.h"
 #include "cmem_internal.h"
 #include <inttypes.h>
-bool mp_audit_heap(memory_pool_t* pool)
+bool mp_audit_heap(memory_pool_t *pool)
 {
-    if (!pool)
+    if (!pool) {
         return true;
+    }
     pool_lock(pool);
 
-    bool healthy = true;
-    mp_block_header_t* curr = pool->active_head;
+    bool               healthy = true;
+    mp_block_header_t *curr    = pool->active_head;
 
-    while (curr)
-    {
-        void* payload = (void*) ((uint8_t*) curr + sizeof(mp_block_header_t));
+    while (curr) {
+        void *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
 
-        if (curr->magic != MP_MAGIC_HEAD)
-        {
+        if (curr->magic != MP_MAGIC_HEAD) {
             fprintf(
                 stderr,
                 "[HEAP AUDIT ERROR] Corrupted header magic at %p! (Found: 0x%X, Expected: 0x%X)\n",
-                payload, curr->magic, MP_MAGIC_HEAD);
+                payload,
+                curr->magic,
+                MP_MAGIC_HEAD);
             healthy = false;
         }
 
-        if (pool->flags & MP_FLAG_DEBUG_CANARY)
-        {
-            uint8_t* canary = (uint8_t*) payload + curr->requested_size;
-            if (*canary != MP_CANARY_BYTE)
-            {
+        if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+            uint8_t *canary = (uint8_t *)payload + curr->requested_size;
+            if (*canary != MP_CANARY_BYTE) {
                 fprintf(stderr,
                         "[HEAP AUDIT ERROR] Redzone canary corruption at %p! (Size: %zu, Source: "
                         "%s:%d in %s)\n",
-                        payload, curr->requested_size,
-                        curr->alloc_file ? curr->alloc_file : "unknown", curr->alloc_line,
+                        payload,
+                        curr->requested_size,
+                        curr->alloc_file ? curr->alloc_file : "unknown",
+                        curr->alloc_line,
                         curr->alloc_func ? curr->alloc_func : "unknown");
                 healthy = false;
             }
@@ -45,8 +46,7 @@ bool mp_audit_heap(memory_pool_t* pool)
         curr = curr->next;
     }
 
-    if (healthy)
-    {
+    if (healthy) {
         printf(
             "[HEAP AUDIT HEALTH] Heap integrity check passed cleanly! All active blocks valid.\n");
     }
@@ -55,74 +55,84 @@ bool mp_audit_heap(memory_pool_t* pool)
     return healthy;
 }
 
-size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len)
+size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
 {
-    if (!pool || !report_buf || max_len == 0)
+    if (!pool || !report_buf || max_len == 0) {
         return 0;
+    }
     pool_lock(pool);
 
     size_t offset = 0;
     offset +=
-        snprintf(report_buf + offset, max_len - offset,
+        snprintf(report_buf + offset,
+                 max_len - offset,
                  "=================== DETAILED MEMORY LEAK ANALYSIS REPORT ===================\n"
                  "  Total Managed System Memory: %zu bytes (%.2f KB)\n"
                  "  Active Leaked Allocations  : %zu blocks\n"
                  "  Total Leaked Payload Bytes : %zu bytes (%.2f KB)\n"
                  "============================================================================\n",
-                 pool->stats.total_pool_size, pool->stats.total_pool_size / 1024.0,
-                 pool->stats.active_allocations, pool->stats.active_bytes,
+                 pool->stats.total_pool_size,
+                 pool->stats.total_pool_size / 1024.0,
+                 pool->stats.active_allocations,
+                 pool->stats.active_bytes,
                  pool->stats.active_bytes / 1024.0);
 
-    if (pool->stats.active_allocations == 0)
-    {
-        offset += snprintf(report_buf + offset, max_len - offset,
+    if (pool->stats.active_allocations == 0) {
+        offset += snprintf(report_buf + offset,
+                           max_len - offset,
                            "  No memory leaks detected! Clean execution.\n");
         pool_unlock(pool);
         return offset;
     }
 
-    mp_block_header_t* curr = pool->active_head;
-    size_t idx = 1;
+    mp_block_header_t *curr = pool->active_head;
+    size_t             idx  = 1;
 
-    while (curr && offset < max_len)
-    {
-        void* payload = (void*) ((uint8_t*) curr + sizeof(mp_block_header_t));
-        const char* tier_str = (curr->alloc_type == ALLOC_TYPE_SLAB)
-                                 ? "SLAB"
-                                 : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
+    while (curr && offset < max_len) {
+        void       *payload  = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
+        const char *tier_str = (curr->alloc_type == ALLOC_TYPE_SLAB)
+                                   ? "SLAB"
+                                   : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
 
-        offset += snprintf(report_buf + offset, max_len - offset,
+        offset += snprintf(report_buf + offset,
+                           max_len - offset,
                            "\n[Leak #%zu] Address: %p | Payload Size: %zu bytes | Tier: %s\n",
-                           idx++, payload, curr->requested_size, tier_str);
+                           idx++,
+                           payload,
+                           curr->requested_size,
+                           tier_str);
 
-        if (curr->alloc_file)
-        {
-            offset += snprintf(report_buf + offset, max_len - offset,
-                               "  Source Location : %s:%d (function '%s')\n", curr->alloc_file,
-                               curr->alloc_line, curr->alloc_func ? curr->alloc_func : "unknown");
-        }
-        else
-        {
-            offset += snprintf(report_buf + offset, max_len - offset,
+        if (curr->alloc_file) {
+            offset += snprintf(report_buf + offset,
+                               max_len - offset,
+                               "  Source Location : %s:%d (function '%s')\n",
+                               curr->alloc_file,
+                               curr->alloc_line,
+                               curr->alloc_func ? curr->alloc_func : "unknown");
+        } else {
+            offset += snprintf(report_buf + offset,
+                               max_len - offset,
                                "  Source Location : (Location tracking disabled, enable "
                                "MP_FLAG_TRACK_LOCATIONS)\n");
         }
 
-        if (curr->backtrace_depth > 0)
-        {
+        if (curr->backtrace_depth > 0) {
 #ifdef CMEM_HAS_EXECINFO
-            char** symbols = backtrace_symbols(curr->backtrace_addrs, curr->backtrace_depth);
+            char **symbols = backtrace_symbols(curr->backtrace_addrs, curr->backtrace_depth);
 #else
-            char** symbols = NULL;
+            char **symbols = NULL;
 #endif
             offset += snprintf(report_buf + offset, max_len - offset, "  Callstack Frames:\n");
-            for (int f = 0; f < curr->backtrace_depth && offset < max_len; f++)
-            {
-                offset += snprintf(report_buf + offset, max_len - offset, "    #%d %s\n", f,
+            for (int f = 0; f < curr->backtrace_depth && offset < max_len; f++) {
+                offset += snprintf(report_buf + offset,
+                                   max_len - offset,
+                                   "    #%d %s\n",
+                                   f,
                                    symbols ? symbols[f] : "unknown");
             }
-            if (symbols)
+            if (symbols) {
                 free(symbols);
+            }
         }
 
         curr = curr->next;
@@ -132,16 +142,18 @@ size_t mp_analyze_leaks(memory_pool_t* pool, char* report_buf, size_t max_len)
     return offset;
 }
 
-bool mp_export_leak_report(memory_pool_t* pool, const char* filepath)
+bool mp_export_leak_report(memory_pool_t *pool, const char *filepath)
 {
-    if (!pool || !filepath)
+    if (!pool || !filepath) {
         return false;
-    char buffer[16384];
+    }
+    char   buffer[16384];
     size_t report_len = mp_analyze_leaks(pool, buffer, sizeof(buffer));
 
-    FILE* f = fopen(filepath, "w");
-    if (!f)
+    FILE *f = fopen(filepath, "w");
+    if (!f) {
         return false;
+    }
 
     fwrite(buffer, 1, report_len, f);
     fclose(f);
@@ -149,13 +161,15 @@ bool mp_export_leak_report(memory_pool_t* pool, const char* filepath)
     return true;
 }
 
-bool mp_export_html_report(memory_pool_t* pool, const char* filepath)
+bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
 {
-    if (!pool || !filepath)
+    if (!pool || !filepath) {
         return false;
-    FILE* f = fopen(filepath, "w");
-    if (!f)
+    }
+    FILE *f = fopen(filepath, "w");
+    if (!f) {
         return false;
+    }
 
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
@@ -205,15 +219,17 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath)
         "    <div class=\"card\"><h3>Active Blocks</h3><div class=\"val\">%zu</div></div>\n"
         "    <div class=\"card\"><h3>Fragmentation</h3><div class=\"val\">%.1f%%</div></div>\n"
         "  </div>\n",
-        stats.total_pool_size / 1024.0, stats.active_bytes / 1024.0, stats.active_allocations,
+        stats.total_pool_size / 1024.0,
+        stats.active_bytes / 1024.0,
+        stats.active_allocations,
         stats.fragmentation_ratio * 100.0);
 
     size_t total_alloc =
         stats.slab_allocated_bytes + stats.tlsf_allocated_bytes + stats.os_allocated_bytes;
-    size_t tot = (total_alloc > 0) ? total_alloc : 1;
+    size_t tot    = (total_alloc > 0) ? total_alloc : 1;
     double p_slab = (stats.slab_allocated_bytes * 100.0) / tot;
     double p_tlsf = (stats.tlsf_allocated_bytes * 100.0) / tot;
-    double p_os = (stats.os_allocated_bytes * 100.0) / tot;
+    double p_os   = (stats.os_allocated_bytes * 100.0) / tot;
 
     fprintf(f,
             "  <h2>Allocation Tier Distribution</h2>\n"
@@ -222,7 +238,12 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath)
             "    <div class=\"bar-tlsf\" style=\"width: %.1f%%;\">TLSF (%.1f%%)</div>\n"
             "    <div class=\"bar-os\" style=\"width: %.1f%%;\">OS (%.1f%%)</div>\n"
             "  </div>\n",
-            p_slab, p_slab, p_tlsf, p_tlsf, p_os, p_os);
+            p_slab,
+            p_slab,
+            p_tlsf,
+            p_tlsf,
+            p_os,
+            p_os);
 
     fprintf(f,
             "  <h2>Active Memory Allocations & Leak Inventory (%zu Blocks)</h2>\n"
@@ -233,26 +254,30 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath)
             stats.active_allocations);
 
     pool_lock(pool);
-    mp_block_header_t* curr = pool->active_head;
-    size_t idx = 1;
+    mp_block_header_t *curr = pool->active_head;
+    size_t             idx  = 1;
 
-    while (curr)
-    {
-        void* payload = (void*) ((uint8_t*) curr + sizeof(mp_block_header_t));
-        const char* badge_cls =
+    while (curr) {
+        void       *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
+        const char *badge_cls =
             (curr->alloc_type == ALLOC_TYPE_SLAB)
                 ? "badge-slab"
                 : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "badge-tlsf" : "badge-os");
-        const char* tier_name = (curr->alloc_type == ALLOC_TYPE_SLAB)
-                                  ? "SLAB"
-                                  : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "OS");
+        const char *tier_name = (curr->alloc_type == ALLOC_TYPE_SLAB)
+                                    ? "SLAB"
+                                    : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "OS");
 
         fprintf(f,
                 "      <tr><td>%zu</td><td><code>%p</code></td><td>%zu B</td>"
                 "<td><span class=\"badge "
                 "%s\">%s</span></td><td>%s:%d</td><td><code>%s</code></td></tr>\n",
-                idx++, payload, curr->requested_size, badge_cls, tier_name,
-                curr->alloc_file ? curr->alloc_file : "-", curr->alloc_line,
+                idx++,
+                payload,
+                curr->requested_size,
+                badge_cls,
+                tier_name,
+                curr->alloc_file ? curr->alloc_file : "-",
+                curr->alloc_line,
                 curr->alloc_func ? curr->alloc_func : "-");
         curr = curr->next;
     }
@@ -265,38 +290,41 @@ bool mp_export_html_report(memory_pool_t* pool, const char* filepath)
     return true;
 }
 
-bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath)
+bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
 {
-    if (!pool || !filepath)
+    if (!pool || !filepath) {
         return false;
-    FILE* f = fopen(filepath, "wb");
-    if (!f)
+    }
+    FILE *f = fopen(filepath, "wb");
+    if (!f) {
         return false;
+    }
 
     pool_lock(pool);
 
     cmem_snapshot_header_t hdr;
-    hdr.magic = 0x434D454D;
-    hdr.version = 1;
-    hdr.total_pool_size = (uint64_t) pool->stats.total_pool_size;
-    hdr.active_bytes = (uint64_t) pool->stats.active_bytes;
-    hdr.active_allocations = (uint64_t) pool->stats.active_allocations;
+    hdr.magic              = 0x434D454D;
+    hdr.version            = 1;
+    hdr.total_pool_size    = (uint64_t)pool->stats.total_pool_size;
+    hdr.active_bytes       = (uint64_t)pool->stats.active_bytes;
+    hdr.active_allocations = (uint64_t)pool->stats.active_allocations;
 
     fwrite(&hdr, sizeof(hdr), 1, f);
 
-    mp_block_header_t* curr = pool->active_head;
-    while (curr)
-    {
+    mp_block_header_t *curr = pool->active_head;
+    while (curr) {
         cmem_snapshot_record_t rec;
         memset(&rec, 0, sizeof(rec));
-        rec.address = (uint64_t) (uintptr_t) ((uint8_t*) curr + sizeof(mp_block_header_t));
-        rec.requested_size = (uint64_t) curr->requested_size;
-        rec.alloc_type = curr->alloc_type;
-        rec.alloc_line = (uint32_t) curr->alloc_line;
-        if (curr->alloc_file)
+        rec.address        = (uint64_t)(uintptr_t)((uint8_t *)curr + sizeof(mp_block_header_t));
+        rec.requested_size = (uint64_t)curr->requested_size;
+        rec.alloc_type     = curr->alloc_type;
+        rec.alloc_line     = (uint32_t)curr->alloc_line;
+        if (curr->alloc_file) {
             snprintf(rec.alloc_file, sizeof(rec.alloc_file), "%s", curr->alloc_file);
-        if (curr->alloc_func)
+        }
+        if (curr->alloc_func) {
             snprintf(rec.alloc_func, sizeof(rec.alloc_func), "%s", curr->alloc_func);
+        }
 
         fwrite(&rec, sizeof(rec), 1, f);
         curr = curr->next;
@@ -309,44 +337,53 @@ bool mp_export_binary_snapshot(memory_pool_t* pool, const char* filepath)
     return true;
 }
 
-bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max_len)
+bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max_len)
 {
-    if (!filepath || !out_report || max_len == 0)
+    if (!filepath || !out_report || max_len == 0) {
         return false;
-    FILE* f = fopen(filepath, "rb");
-    if (!f)
+    }
+    FILE *f = fopen(filepath, "rb");
+    if (!f) {
         return false;
+    }
 
     cmem_snapshot_header_t hdr;
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1 || hdr.magic != 0x434D454D)
-    {
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1 || hdr.magic != 0x434D454D) {
         fclose(f);
         return false;
     }
 
     size_t offset = 0;
-    offset += snprintf(out_report + offset, max_len - offset,
+    offset += snprintf(out_report + offset,
+                       max_len - offset,
                        "=================== CMEM BINARY SNAPSHOT DUMP PARSER ===================\n"
                        "  Format Version     : %u\n"
                        "  Total Pool Size    : %" PRIu64 " bytes\n"
                        "  Active Payload B   : %" PRIu64 " bytes\n"
                        "  Active Allocations : %" PRIu64 " blocks\n"
                        "========================================================================\n",
-                       hdr.version, hdr.total_pool_size, hdr.active_bytes, hdr.active_allocations);
+                       hdr.version,
+                       hdr.total_pool_size,
+                       hdr.active_bytes,
+                       hdr.active_allocations);
 
     cmem_snapshot_record_t rec;
-    size_t idx = 1;
+    size_t                 idx = 1;
 
-    while (fread(&rec, sizeof(rec), 1, f) == 1 && offset < max_len)
-    {
-        const char* tier_str = (rec.alloc_type == ALLOC_TYPE_SLAB)
-                                 ? "SLAB"
-                                 : ((rec.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
-        offset += snprintf(out_report + offset, max_len - offset,
+    while (fread(&rec, sizeof(rec), 1, f) == 1 && offset < max_len) {
+        const char *tier_str = (rec.alloc_type == ALLOC_TYPE_SLAB)
+                                   ? "SLAB"
+                                   : ((rec.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
+        offset += snprintf(out_report + offset,
+                           max_len - offset,
                            "[Record #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64
                            " B | Tier: %s | Location: %s:%u (%s)\n",
-                           idx++, rec.address, rec.requested_size, tier_str,
-                           rec.alloc_file[0] ? rec.alloc_file : "unknown", rec.alloc_line,
+                           idx++,
+                           rec.address,
+                           rec.requested_size,
+                           tier_str,
+                           rec.alloc_file[0] ? rec.alloc_file : "unknown",
+                           rec.alloc_line,
                            rec.alloc_func[0] ? rec.alloc_func : "unknown");
     }
 
@@ -354,58 +391,62 @@ bool mp_parse_binary_snapshot(const char* filepath, char* out_report, size_t max
     return true;
 }
 
-void mp_get_stats(memory_pool_t* pool, mp_stats_t* stats)
+void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
 {
-    if (!pool || !stats)
+    if (!pool || !stats) {
         return;
+    }
     pool_rdlock(pool);
-    *stats = pool->stats;
-    size_t total_sys = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
-    stats->fragmentation_ratio = 1.0 - ((double) pool->stats.active_bytes / (double) total_sys);
+    *stats                     = pool->stats;
+    size_t total_sys           = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
+    stats->fragmentation_ratio = 1.0 - ((double)pool->stats.active_bytes / (double)total_sys);
 
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    if (pool->window_start_time.tv_sec == 0)
-    {
+    if (pool->window_start_time.tv_sec == 0) {
         pool->window_start_time = now;
     }
     double elapsed = (now.tv_sec - pool->window_start_time.tv_sec) +
                      (now.tv_nsec - pool->window_start_time.tv_nsec) / 1e9;
-    size_t ops = pool->stats.total_alloc_ops;
-    size_t active = pool->stats.active_bytes;
-    if (elapsed > 0.000001 && ops > 0)
-    {
-        stats->alloc_qps = (double) ops / elapsed;
-        stats->bandwidth_mbps = ((double) active / (1024.0 * 1024.0)) / elapsed;
-    }
-    else
-    {
-        stats->alloc_qps = (double) ops;
-        stats->bandwidth_mbps = (double) active / (1024.0 * 1024.0);
+    size_t ops     = pool->stats.total_alloc_ops;
+    size_t active  = pool->stats.active_bytes;
+    if (elapsed > 0.000001 && ops > 0) {
+        stats->alloc_qps      = (double)ops / elapsed;
+        stats->bandwidth_mbps = ((double)active / (1024.0 * 1024.0)) / elapsed;
+    } else {
+        stats->alloc_qps      = (double)ops;
+        stats->bandwidth_mbps = (double)active / (1024.0 * 1024.0);
     }
     pool_rdunlock(pool);
 }
 
-void mp_dump_info(memory_pool_t* pool)
+void mp_dump_info(memory_pool_t *pool)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
     printf("\n================ CMEM DIAGNOSTICS DUMP [%s] ================\n", pool->arena_name);
-    printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n", stats.total_pool_size,
+    printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n",
+           stats.total_pool_size,
            stats.total_pool_size / 1024.0);
     printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n",
-           stats.active_allocations, stats.active_bytes, stats.active_bytes / 1024.0);
-    printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n", stats.peak_bytes,
+           stats.active_allocations,
+           stats.active_bytes,
+           stats.active_bytes / 1024.0);
+    printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n",
+           stats.peak_bytes,
            stats.peak_bytes / 1024.0);
-    printf("  Max Memory Budget Limit     : %zu bytes (%s)\n", stats.max_memory_limit,
+    printf("  Max Memory Budget Limit     : %zu bytes (%s)\n",
+           stats.max_memory_limit,
            stats.max_memory_limit > 0 ? "Enforced" : "Unlimited");
     printf("  Estimated Fragmentation     : %.2f%%\n", stats.fragmentation_ratio * 100.0);
     printf("  Real-time Alloc Rate (QPS)  : %.2f ops/sec\n", stats.alloc_qps);
     printf("  Real-time Bandwidth         : %.2f MB/sec\n", stats.bandwidth_mbps);
-    printf("  Cumulative Stats            : %zu Allocations, %zu Frees\n", stats.total_alloc_ops,
+    printf("  Cumulative Stats            : %zu Allocations, %zu Frees\n",
+           stats.total_alloc_ops,
            stats.total_free_ops);
     printf("  Allocation Tier Breakdown   :\n");
     printf("    - Slab Pool (Small <=512B): %zu bytes\n", stats.slab_allocated_bytes);
@@ -414,64 +455,80 @@ void mp_dump_info(memory_pool_t* pool)
     printf("==============================================================\n\n");
 }
 
-void mp_dump_histogram(memory_pool_t* pool)
+void mp_dump_histogram(memory_pool_t *pool)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
-    static const char* labels[CMEM_HISTOGRAM_BUCKETS] = {
-        "<= 16 B       ",  "17 B - 32 B    ", "33 B - 64 B    ", "65 B - 128 B   ",
-        "129 B - 256 B  ", "257 B - 512 B  ", "513 B - 1 KB   ", "1 KB - 2 KB    ",
-        "2 KB - 4 KB    ", "4 KB - 8 KB    ", "8 KB - 16 KB   ", "16 KB - 32 KB  ",
-        "32 KB - 64 KB  ", "64 KB - 512 KB ", "512 KB - 4 MB  ", "> 4 MB         "};
+    static const char *labels[CMEM_HISTOGRAM_BUCKETS] = {"<= 16 B       ",
+                                                         "17 B - 32 B    ",
+                                                         "33 B - 64 B    ",
+                                                         "65 B - 128 B   ",
+                                                         "129 B - 256 B  ",
+                                                         "257 B - 512 B  ",
+                                                         "513 B - 1 KB   ",
+                                                         "1 KB - 2 KB    ",
+                                                         "2 KB - 4 KB    ",
+                                                         "4 KB - 8 KB    ",
+                                                         "8 KB - 16 KB   ",
+                                                         "16 KB - 32 KB  ",
+                                                         "32 KB - 64 KB  ",
+                                                         "64 KB - 512 KB ",
+                                                         "512 KB - 4 MB  ",
+                                                         "> 4 MB         "};
 
     size_t max_count = 0;
-    for (int i = 0; i < CMEM_HISTOGRAM_BUCKETS; i++)
-    {
-        if (stats.size_histogram[i] > max_count)
+    for (int i = 0; i < CMEM_HISTOGRAM_BUCKETS; i++) {
+        if (stats.size_histogram[i] > max_count) {
             max_count = stats.size_histogram[i];
+        }
     }
 
     printf("\n================ ALLOCATION SIZE HISTOGRAM [%s] ================\n",
            pool->arena_name);
-    for (int i = 0; i < CMEM_HISTOGRAM_BUCKETS; i++)
-    {
-        if (stats.size_histogram[i] == 0)
+    for (int i = 0; i < CMEM_HISTOGRAM_BUCKETS; i++) {
+        if (stats.size_histogram[i] == 0) {
             continue;
-        int bar_len = (max_count > 0) ? (int) ((stats.size_histogram[i] * 20) / max_count) : 0;
+        }
+        int  bar_len = (max_count > 0) ? (int)((stats.size_histogram[i] * 20) / max_count) : 0;
         char bar_str[21];
         memset(bar_str, '*', bar_len);
         bar_str[bar_len] = '\0';
 
-        printf("  Bucket %-2d [%s] : %-8zu [%-20s]\n", i, labels[i], stats.size_histogram[i],
-               bar_str);
+        printf(
+            "  Bucket %-2d [%s] : %-8zu [%-20s]\n", i, labels[i], stats.size_histogram[i], bar_str);
     }
     printf("=========================================================================\n\n");
 }
 
-void print_arena_node(memory_pool_t* pool, int indent)
+void print_arena_node(memory_pool_t *pool, int indent)
 {
-    if (!pool)
+    if (!pool) {
         return;
-    for (int i = 0; i < indent; i++)
+    }
+    for (int i = 0; i < indent; i++) {
         printf("  ");
-    printf("|- [Arena: %s] Active Bytes: %zu B, Active Allocations: %zu\n", pool->arena_name,
-           pool->stats.active_bytes, pool->stats.active_allocations);
+    }
+    printf("|- [Arena: %s] Active Bytes: %zu B, Active Allocations: %zu\n",
+           pool->arena_name,
+           pool->stats.active_bytes,
+           pool->stats.active_allocations);
 
-    memory_pool_t* child = pool->first_child;
-    while (child)
-    {
+    memory_pool_t *child = pool->first_child;
+    while (child) {
         print_arena_node(child, indent + 1);
         child = child->next_sibling;
     }
 }
 
-void mp_dump_tree_info(memory_pool_t* pool)
+void mp_dump_tree_info(memory_pool_t *pool)
 {
-    if (!pool)
+    if (!pool) {
         return;
+    }
     pool_lock(pool);
     printf("\n================ CMEM ARENA TREE DUMP ================\n");
     print_arena_node(pool, 0);
@@ -479,46 +536,57 @@ void mp_dump_tree_info(memory_pool_t* pool)
     pool_unlock(pool);
 }
 
-size_t mp_dump_json_stats(memory_pool_t* pool, char* buf, size_t max_len)
+size_t mp_dump_json_stats(memory_pool_t *pool, char *buf, size_t max_len)
 {
-    if (!pool || !buf || max_len == 0)
+    if (!pool || !buf || max_len == 0) {
         return 0;
+    }
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
-    int len =
-        snprintf(buf, max_len,
-                 "{\n"
-                 "  \"arena_name\": \"%s\",\n"
-                 "  \"total_pool_size\": %zu,\n"
-                 "  \"active_bytes\": %zu,\n"
-                 "  \"peak_bytes\": %zu,\n"
-                 "  \"max_memory_limit\": %zu,\n"
-                 "  \"active_allocations\": %zu,\n"
-                 "  \"total_alloc_ops\": %zu,\n"
-                 "  \"total_free_ops\": %zu,\n"
-                 "  \"slab_allocated_bytes\": %zu,\n"
-                 "  \"tlsf_allocated_bytes\": %zu,\n"
-                 "  \"os_allocated_bytes\": %zu,\n"
-                 "  \"fragmentation_ratio\": %.4f\n"
-                 "}",
-                 pool->arena_name, stats.total_pool_size, stats.active_bytes, stats.peak_bytes,
-                 stats.max_memory_limit, stats.active_allocations, stats.total_alloc_ops,
-                 stats.total_free_ops, stats.slab_allocated_bytes, stats.tlsf_allocated_bytes,
-                 stats.os_allocated_bytes, stats.fragmentation_ratio);
+    int len = snprintf(buf,
+                       max_len,
+                       "{\n"
+                       "  \"arena_name\": \"%s\",\n"
+                       "  \"total_pool_size\": %zu,\n"
+                       "  \"active_bytes\": %zu,\n"
+                       "  \"peak_bytes\": %zu,\n"
+                       "  \"max_memory_limit\": %zu,\n"
+                       "  \"active_allocations\": %zu,\n"
+                       "  \"total_alloc_ops\": %zu,\n"
+                       "  \"total_free_ops\": %zu,\n"
+                       "  \"slab_allocated_bytes\": %zu,\n"
+                       "  \"tlsf_allocated_bytes\": %zu,\n"
+                       "  \"os_allocated_bytes\": %zu,\n"
+                       "  \"fragmentation_ratio\": %.4f\n"
+                       "}",
+                       pool->arena_name,
+                       stats.total_pool_size,
+                       stats.active_bytes,
+                       stats.peak_bytes,
+                       stats.max_memory_limit,
+                       stats.active_allocations,
+                       stats.total_alloc_ops,
+                       stats.total_free_ops,
+                       stats.slab_allocated_bytes,
+                       stats.tlsf_allocated_bytes,
+                       stats.os_allocated_bytes,
+                       stats.fragmentation_ratio);
 
-    return (len > 0 && (size_t) len < max_len) ? (size_t) len : max_len - 1;
+    return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
-size_t mp_export_prometheus_metrics(memory_pool_t* pool, char* out_buf, size_t max_len)
+size_t mp_export_prometheus_metrics(memory_pool_t *pool, char *out_buf, size_t max_len)
 {
-    if (!pool || !out_buf || max_len == 0)
+    if (!pool || !out_buf || max_len == 0) {
         return 0;
+    }
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
     int len =
-        snprintf(out_buf, max_len,
+        snprintf(out_buf,
+                 max_len,
                  "# HELP cmem_total_pool_bytes Total reserved bytes from OS.\n"
                  "# TYPE cmem_total_pool_bytes gauge\n"
                  "cmem_total_pool_bytes{arena=\"%s\"} %zu\n\n"
@@ -540,23 +608,33 @@ size_t mp_export_prometheus_metrics(memory_pool_t* pool, char* out_buf, size_t m
                  "# HELP cmem_fragmentation_ratio Memory fragmentation ratio (0.0 to 1.0).\n"
                  "# TYPE cmem_fragmentation_ratio gauge\n"
                  "cmem_fragmentation_ratio{arena=\"%s\"} %.4f\n",
-                 pool->arena_name, stats.total_pool_size, pool->arena_name, stats.active_bytes,
-                 pool->arena_name, stats.active_allocations, pool->arena_name,
-                 stats.total_alloc_ops, pool->arena_name, stats.alloc_qps, pool->arena_name,
-                 stats.bandwidth_mbps, pool->arena_name, stats.fragmentation_ratio);
+                 pool->arena_name,
+                 stats.total_pool_size,
+                 pool->arena_name,
+                 stats.active_bytes,
+                 pool->arena_name,
+                 stats.active_allocations,
+                 pool->arena_name,
+                 stats.total_alloc_ops,
+                 pool->arena_name,
+                 stats.alloc_qps,
+                 pool->arena_name,
+                 stats.bandwidth_mbps,
+                 pool->arena_name,
+                 stats.fragmentation_ratio);
 
-    return (len > 0 && (size_t) len < max_len) ? (size_t) len : max_len - 1;
+    return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
-bool mp_check_leaks(memory_pool_t* pool)
+bool mp_check_leaks(memory_pool_t *pool)
 {
-    if (!pool)
+    if (!pool) {
         return true;
+    }
     pool_lock(pool);
 
     bool clean = (pool->stats.active_allocations == 0);
-    if (!clean)
-    {
+    if (!clean) {
         char report[4096];
         pool_unlock(pool);
         mp_analyze_leaks(pool, report, sizeof(report));

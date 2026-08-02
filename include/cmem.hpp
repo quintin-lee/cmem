@@ -14,9 +14,9 @@
 
 #include "cmem.h"
 #include <memory>
-#include <utility>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cmem
@@ -50,8 +50,7 @@ class MemoryPool
     explicit MemoryPool(size_t initial_capacity = 0, mp_flags_t flags = MP_FLAG_DEFAULT)
         : pool_(mp_create(initial_capacity, flags)), shm_name_("")
     {
-        if (!pool_)
-        {
+        if (!pool_) {
             throw std::runtime_error("Failed to create memory pool instance.");
         }
     }
@@ -64,11 +63,10 @@ class MemoryPool
      * @param flags Configuration flags
      * @throw std::runtime_error if shared pool creation fails
      */
-    MemoryPool(const std::string& shm_name, size_t capacity, mp_flags_t flags)
+    MemoryPool(const std::string &shm_name, size_t capacity, mp_flags_t flags)
         : pool_(mp_create_shared(shm_name.c_str(), capacity, flags)), shm_name_(shm_name)
     {
-        if (!pool_)
-        {
+        if (!pool_) {
             throw std::runtime_error("Failed to create POSIX shared memory pool instance.");
         }
     }
@@ -85,13 +83,14 @@ class MemoryPool
      * @param name Human-readable name for the child arena
      * @throw std::runtime_error if child pool creation fails
      */
-    MemoryPool(MemoryPool& parent, size_t initial_capacity, mp_flags_t flags,
-               const std::string& name)
+    MemoryPool(MemoryPool        &parent,
+               size_t             initial_capacity,
+               mp_flags_t         flags,
+               const std::string &name)
         : pool_(mp_create_child(parent.get_raw_pool(), initial_capacity, flags, name.c_str())),
           shm_name_("")
     {
-        if (!pool_)
-        {
+        if (!pool_) {
             throw std::runtime_error("Failed to create child memory pool instance.");
         }
     }
@@ -104,21 +103,17 @@ class MemoryPool
      */
     ~MemoryPool()
     {
-        if (pool_)
-        {
-            if (!shm_name_.empty())
-            {
+        if (pool_) {
+            if (!shm_name_.empty()) {
                 mp_destroy_shared(pool_, shm_name_.c_str());
-            }
-            else
-            {
+            } else {
                 mp_destroy(pool_);
             }
         }
     }
 
-    MemoryPool(const MemoryPool&) = delete;
-    MemoryPool& operator=(const MemoryPool&) = delete;
+    MemoryPool(const MemoryPool &)            = delete;
+    MemoryPool &operator=(const MemoryPool &) = delete;
 
     /**
      * @brief Move constructor.
@@ -128,7 +123,7 @@ class MemoryPool
      *
      * @param other Source MemoryPool to move from
      */
-    MemoryPool(MemoryPool&& other) noexcept
+    MemoryPool(MemoryPool &&other) noexcept
         : pool_(other.pool_), shm_name_(std::move(other.shm_name_))
     {
         other.pool_ = nullptr;
@@ -143,19 +138,18 @@ class MemoryPool
      * @param other Source MemoryPool to move from
      * @return Reference to this MemoryPool
      */
-    MemoryPool& operator=(MemoryPool&& other) noexcept
+    MemoryPool &operator=(MemoryPool &&other) noexcept
     {
-        if (this != &other)
-        {
-            if (pool_)
-            {
-                if (!shm_name_.empty())
+        if (this != &other) {
+            if (pool_) {
+                if (!shm_name_.empty()) {
                     mp_destroy_shared(pool_, shm_name_.c_str());
-                else
+                } else {
                     mp_destroy(pool_);
+                }
             }
-            pool_ = other.pool_;
-            shm_name_ = std::move(other.shm_name_);
+            pool_       = other.pool_;
+            shm_name_   = std::move(other.shm_name_);
             other.pool_ = nullptr;
         }
         return *this;
@@ -169,7 +163,7 @@ class MemoryPool
      * @param size Requested size in bytes
      * @return Pointer to the allocated memory, or nullptr on failure
      */
-    void* alloc(size_t size)
+    void *alloc(size_t size)
     {
         return mp_alloc(pool_, size);
     }
@@ -183,7 +177,7 @@ class MemoryPool
      * @param func Source function name (usually __func__)
      * @return Pointer to the allocated memory, or nullptr on failure
      */
-    void* alloc_loc(size_t size, const char* file, int line, const char* func)
+    void *alloc_loc(size_t size, const char *file, int line, const char *func)
     {
         return mp_alloc_loc(pool_, size, file, line, func);
     }
@@ -195,7 +189,7 @@ class MemoryPool
      * @param size Size of each element in bytes
      * @return Pointer to the allocated memory, or nullptr on failure
      */
-    void* calloc(size_t num, size_t size)
+    void *calloc(size_t num, size_t size)
     {
         return mp_calloc(pool_, num, size);
     }
@@ -209,7 +203,7 @@ class MemoryPool
      * @param new_size New requested size in bytes
      * @return Pointer to the reallocated memory, or nullptr on failure
      */
-    void* realloc(void* ptr, size_t new_size)
+    void *realloc(void *ptr, size_t new_size)
     {
         return mp_realloc(pool_, ptr, new_size);
     }
@@ -221,7 +215,7 @@ class MemoryPool
      * @param size Requested payload size in bytes
      * @return Pointer to the aligned memory, or nullptr on failure
      */
-    void* aligned_alloc(size_t alignment, size_t size)
+    void *aligned_alloc(size_t alignment, size_t size)
     {
         return mp_aligned_alloc(pool_, alignment, size);
     }
@@ -233,7 +227,7 @@ class MemoryPool
      *
      * @param ptr Pointer to the memory to free
      */
-    void free(void* ptr)
+    void free(void *ptr)
     {
         mp_free(pool_, ptr);
     }
@@ -246,7 +240,7 @@ class MemoryPool
      * @param count Maximum number of blocks to allocate
      * @return Number of blocks successfully allocated
      */
-    size_t alloc_batch(size_t size, void** out_ptrs, size_t count)
+    size_t alloc_batch(size_t size, void **out_ptrs, size_t count)
     {
         return mp_alloc_batch(pool_, size, out_ptrs, count);
     }
@@ -257,7 +251,7 @@ class MemoryPool
      * @param ptrs Array of pointers to free
      * @param count Number of pointers in the array
      */
-    void free_batch(void** ptrs, size_t count)
+    void free_batch(void **ptrs, size_t count)
     {
         mp_free_batch(pool_, ptrs, count);
     }
@@ -313,7 +307,7 @@ class MemoryPool
      */
     std::string analyze_leaks() const
     {
-        char buffer[16384];
+        char   buffer[16384];
         size_t len = mp_analyze_leaks(pool_, buffer, sizeof(buffer));
         return std::string(buffer, len);
     }
@@ -324,7 +318,7 @@ class MemoryPool
      * @param filepath Path to the output text file
      * @return true on success
      */
-    bool export_leak_report(const std::string& filepath) const
+    bool export_leak_report(const std::string &filepath) const
     {
         return mp_export_leak_report(pool_, filepath.c_str());
     }
@@ -335,7 +329,7 @@ class MemoryPool
      * @param filepath Path to the output HTML file
      * @return true on success
      */
-    bool export_html_report(const std::string& filepath) const
+    bool export_html_report(const std::string &filepath) const
     {
         return mp_export_html_report(pool_, filepath.c_str());
     }
@@ -346,7 +340,7 @@ class MemoryPool
      * @param filepath Path to the output binary snapshot file
      * @return true on success
      */
-    bool export_binary_snapshot(const std::string& filepath) const
+    bool export_binary_snapshot(const std::string &filepath) const
     {
         return mp_export_binary_snapshot(pool_, filepath.c_str());
     }
@@ -357,11 +351,10 @@ class MemoryPool
      * @param filepath Path to the binary snapshot file
      * @return String containing the parsed snapshot report, or empty string on failure
      */
-    static std::string parse_binary_snapshot(const std::string& filepath)
+    static std::string parse_binary_snapshot(const std::string &filepath)
     {
         char buffer[16384];
-        if (mp_parse_binary_snapshot(filepath.c_str(), buffer, sizeof(buffer)))
-        {
+        if (mp_parse_binary_snapshot(filepath.c_str(), buffer, sizeof(buffer))) {
             return std::string(buffer);
         }
         return "";
@@ -420,7 +413,7 @@ class MemoryPool
      * @param info Output structure filled with allocation metadata
      * @return true if ptr is valid and info was filled, false otherwise
      */
-    bool get_allocation_info(void* ptr, mp_allocation_info_t* info) const
+    bool get_allocation_info(void *ptr, mp_allocation_info_t *info) const
     {
         return mp_get_allocation_info(pool_, ptr, info);
     }
@@ -432,7 +425,7 @@ class MemoryPool
      * @param max_regions Maximum number of entries the array can hold
      * @return Number of regions written to the array
      */
-    size_t enumerate_regions(mp_region_info_t* regions, size_t max_regions) const
+    size_t enumerate_regions(mp_region_info_t *regions, size_t max_regions) const
     {
         return mp_enumerate_regions(pool_, regions, max_regions);
     }
@@ -444,7 +437,7 @@ class MemoryPool
      *
      * @return Pointer to the underlying memory_pool_t
      */
-    memory_pool_t* get_raw_pool() const
+    memory_pool_t *get_raw_pool() const
     {
         return pool_;
     }
@@ -454,14 +447,14 @@ class MemoryPool
      *
      * @return Pointer to the underlying memory_pool_t
      */
-    memory_pool_t* get() const
+    memory_pool_t *get() const
     {
         return pool_;
     }
 
   private:
-    memory_pool_t* pool_;  /**< Underlying C memory pool */
-    std::string shm_name_; /**< Shared memory name (empty if not shared) */
+    memory_pool_t *pool_;     /**< Underlying C memory pool */
+    std::string    shm_name_; /**< Shared memory name (empty if not shared) */
 };
 
 /**
@@ -483,12 +476,12 @@ class MemoryPool
 template <typename T> class allocator
 {
   public:
-    using value_type = T;                   /**< Element type */
-    using pointer = T*;                     /**< Pointer to element */
-    using const_pointer = const T*;         /**< Pointer to const element */
-    using reference = T&;                   /**< Reference to element */
-    using const_reference = const T&;       /**< Reference to const element */
-    using size_type = std::size_t;          /**< Unsigned size type */
+    using value_type      = T;              /**< Element type */
+    using pointer         = T *;            /**< Pointer to element */
+    using const_pointer   = const T *;      /**< Pointer to const element */
+    using reference       = T &;            /**< Reference to element */
+    using const_reference = const T &;      /**< Reference to const element */
+    using size_type       = std::size_t;    /**< Unsigned size type */
     using difference_type = std::ptrdiff_t; /**< Signed difference type */
 
     /**
@@ -496,8 +489,7 @@ template <typename T> class allocator
      *
      * Required by the C++ Allocator concept.
      */
-    template <typename U> struct rebind
-    {
+    template <typename U> struct rebind {
         using other = allocator<U>;
     };
 
@@ -506,7 +498,7 @@ template <typename T> class allocator
      *
      * @param pool Reference to the MemoryPool to use for allocations
      */
-    explicit allocator(MemoryPool& pool) noexcept : pool_(pool.get_raw_pool())
+    explicit allocator(MemoryPool &pool) noexcept : pool_(pool.get_raw_pool())
     {
     }
 
@@ -515,7 +507,7 @@ template <typename T> class allocator
      *
      * @param raw_pool Pointer to the underlying C memory pool
      */
-    explicit allocator(memory_pool_t* raw_pool) noexcept : pool_(raw_pool)
+    explicit allocator(memory_pool_t *raw_pool) noexcept : pool_(raw_pool)
     {
     }
 
@@ -527,7 +519,7 @@ template <typename T> class allocator
      * @tparam U Other element type
      * @param other Source allocator
      */
-    template <typename U> allocator(const allocator<U>& other) noexcept : pool_(other.pool_)
+    template <typename U> allocator(const allocator<U> &other) noexcept : pool_(other.pool_)
     {
     }
 
@@ -538,12 +530,13 @@ template <typename T> class allocator
      * @return Pointer to the allocated memory
      * @throw std::bad_alloc if allocation fails
      */
-    T* allocate(size_t n)
+    T *allocate(size_t n)
     {
-        void* ptr = mp_alloc(pool_, n * sizeof(T));
-        if (!ptr)
+        void *ptr = mp_alloc(pool_, n * sizeof(T));
+        if (!ptr) {
             throw std::bad_alloc();
-        return static_cast<T*>(ptr);
+        }
+        return static_cast<T *>(ptr);
     }
 
     /**
@@ -552,7 +545,7 @@ template <typename T> class allocator
      * @param p Pointer to the memory to deallocate
      * @param n Number of objects (unused, kept for interface compatibility)
      */
-    void deallocate(T* p, size_t) noexcept
+    void deallocate(T *p, size_t) noexcept
     {
         mp_free(pool_, p);
     }
@@ -564,9 +557,9 @@ template <typename T> class allocator
      * @param p Pointer to the memory where the object will be constructed
      * @param args Constructor arguments
      */
-    template <typename U, typename... Args> void construct(U* p, Args&&... args)
+    template <typename U, typename... Args> void construct(U *p, Args &&...args)
     {
-        ::new (static_cast<void*>(p)) U(std::forward<Args>(args)...);
+        ::new (static_cast<void *>(p)) U(std::forward<Args>(args)...);
     }
 
     /**
@@ -575,12 +568,12 @@ template <typename T> class allocator
      * @tparam U Type of object to destroy
      * @param p Pointer to the object to destroy
      */
-    template <typename U> void destroy(U* p)
+    template <typename U> void destroy(U *p)
     {
         p->~U();
     }
 
-    memory_pool_t* pool_; /**< Underlying C memory pool */
+    memory_pool_t *pool_; /**< Underlying C memory pool */
 };
 
 /**
@@ -595,7 +588,7 @@ template <typename T> class allocator
  * @return true if both allocators wrap the same pool
  */
 template <typename T, typename U>
-bool operator==(const allocator<T>& a, const allocator<U>& b) noexcept
+bool operator==(const allocator<T> &a, const allocator<U> &b) noexcept
 {
     return a.pool_ == b.pool_;
 }
@@ -610,7 +603,7 @@ bool operator==(const allocator<T>& a, const allocator<U>& b) noexcept
  * @return true if allocators wrap different pools
  */
 template <typename T, typename U>
-bool operator!=(const allocator<T>& a, const allocator<U>& b) noexcept
+bool operator!=(const allocator<T> &a, const allocator<U> &b) noexcept
 {
     return !(a == b);
 }

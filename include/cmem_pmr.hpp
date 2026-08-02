@@ -42,7 +42,7 @@ class pmr_resource : public std::pmr::memory_resource
      * @brief Constructs a PMR resource wrapping the given cmem pool.
      * @param pool Pointer to an existing cmem memory pool (must outlive this resource)
      */
-    explicit pmr_resource(memory_pool_t* pool) noexcept : m_pool(pool)
+    explicit pmr_resource(memory_pool_t *pool) noexcept : m_pool(pool)
     {
     }
 
@@ -58,7 +58,7 @@ class pmr_resource : public std::pmr::memory_resource
      * @brief Returns the underlying cmem memory pool pointer.
      * @return Pointer to the memory pool
      */
-    memory_pool_t* pool() const noexcept
+    memory_pool_t *pool() const noexcept
     {
         return m_pool;
     }
@@ -74,12 +74,12 @@ class pmr_resource : public std::pmr::memory_resource
      * @param alignment Alignment requirement in bytes
      * @return Pointer to the allocated memory, or nullptr on failure
      */
-    void* do_allocate(std::size_t bytes, std::size_t alignment) override
+    void *do_allocate(std::size_t bytes, std::size_t alignment) override
     {
-        if (!m_pool)
+        if (!m_pool) {
             return nullptr;
-        if (alignment > sizeof(void*))
-        {
+        }
+        if (alignment > sizeof(void *)) {
             return mp_aligned_alloc(m_pool, alignment, bytes);
         }
         return mp_alloc(m_pool, bytes);
@@ -92,12 +92,11 @@ class pmr_resource : public std::pmr::memory_resource
      * @param bytes Size of the allocation (unused, kept for interface compatibility)
      * @param alignment Alignment of the allocation (unused, kept for interface compatibility)
      */
-    void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) noexcept override
+    void do_deallocate(void *p, std::size_t bytes, std::size_t alignment) noexcept override
     {
-        (void) bytes;
-        (void) alignment;
-        if (m_pool && p)
-        {
+        (void)bytes;
+        (void)alignment;
+        if (m_pool && p) {
             mp_free(m_pool, p);
         }
     }
@@ -110,14 +109,14 @@ class pmr_resource : public std::pmr::memory_resource
      * @param other Another memory_resource to compare with
      * @return true if both resources wrap the same cmem pool
      */
-    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override
+    bool do_is_equal(const std::pmr::memory_resource &other) const noexcept override
     {
-        const auto* other_cmem = dynamic_cast<const pmr_resource*>(&other);
+        const auto *other_cmem = dynamic_cast<const pmr_resource *>(&other);
         return other_cmem && (other_cmem->m_pool == this->m_pool);
     }
 
   private:
-    memory_pool_t* m_pool; /**< Underlying cmem memory pool pointer */
+    memory_pool_t *m_pool; /**< Underlying cmem memory pool pointer */
 };
 
 } // namespace cmem

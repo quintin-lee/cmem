@@ -8,10 +8,10 @@
 #endif
 
 #include "../include/cmem.hpp"
-#include <iostream>
-#include <vector>
-#include <unordered_map>
 #include <cassert>
+#include <iostream>
+#include <unordered_map>
+#include <vector>
 
 /**
  * @brief Tests cmem C++ STL-compatible allocator with std::vector and std::unordered_map.
@@ -25,11 +25,10 @@ void test_cpp_stl_allocator()
 
     {
         // Scope for STL Containers to ensure destructors release all nodes/buckets
-        cmem::allocator<int> vec_alloc(pool);
+        cmem::allocator<int>                   vec_alloc(pool);
         std::vector<int, cmem::allocator<int>> vec(vec_alloc);
 
-        for (int i = 0; i < 100; i++)
-        {
+        for (int i = 0; i < 100; i++) {
             vec.push_back(i * 10);
         }
         assert(vec.size() == 100);
@@ -67,7 +66,7 @@ void test_cpp_pmr_allocator()
     cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
 
     {
-        cmem::pmr_resource res(pool.get());
+        cmem::pmr_resource                 res(pool.get());
         std::pmr::vector<std::pmr::string> vec(&res);
 
         vec.push_back(std::pmr::string("Polymorphic", &res));

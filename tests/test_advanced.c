@@ -10,11 +10,11 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "../include/cmem.h"
+#include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-#include <pthread.h>
 
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
@@ -25,17 +25,16 @@
 static void test_calloc_loc()
 {
     printf("\n--- Test: mp_calloc_loc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p = mp_calloc_loc(pool, 32, 1, __FILE__, __LINE__, __func__);
+    void *p = mp_calloc_loc(pool, 32, 1, __FILE__, __LINE__, __func__);
     assert(p != NULL);
     assert(mp_ptr_valid(pool, p));
     assert(mp_alloc_size(pool, p) == 32);
 
-    unsigned char* bytes = (unsigned char*) p;
-    for (int i = 0; i < 32; i++)
-    {
+    unsigned char *bytes = (unsigned char *)p;
+    for (int i = 0; i < 32; i++) {
         assert(bytes[i] == 0);
     }
 
@@ -48,10 +47,10 @@ static void test_calloc_loc()
 static void test_realloc_loc()
 {
     printf("\n--- Test: mp_realloc_loc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p = mp_alloc_loc(pool, 32, __FILE__, __LINE__, __func__);
+    void *p = mp_alloc_loc(pool, 32, __FILE__, __LINE__, __func__);
     assert(p != NULL);
     memset(p, 0xAB, 32);
 
@@ -59,9 +58,8 @@ static void test_realloc_loc()
     assert(p != NULL);
     assert(mp_alloc_size(pool, p) == 64);
 
-    unsigned char* bytes = (unsigned char*) p;
-    for (int i = 0; i < 32; i++)
-    {
+    unsigned char *bytes = (unsigned char *)p;
+    for (int i = 0; i < 32; i++) {
         assert(bytes[i] == 0xAB);
     }
 
@@ -74,13 +72,13 @@ static void test_realloc_loc()
 static void test_reallocarray_loc()
 {
     printf("\n--- Test: mp_reallocarray_loc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    int* arr = (int*) mp_alloc_loc(pool, 4 * sizeof(int), __FILE__, __LINE__, __func__);
+    int *arr = (int *)mp_alloc_loc(pool, 4 * sizeof(int), __FILE__, __LINE__, __func__);
     assert(arr != NULL);
 
-    arr = (int*) mp_reallocarray_loc(pool, arr, 8, sizeof(int), __FILE__, __LINE__, __func__);
+    arr = (int *)mp_reallocarray_loc(pool, arr, 8, sizeof(int), __FILE__, __LINE__, __func__);
     assert(arr != NULL);
     assert(mp_alloc_size(pool, arr) == 8 * sizeof(int));
 
@@ -93,11 +91,11 @@ static void test_reallocarray_loc()
 static void test_memdup_loc()
 {
     printf("\n--- Test: mp_memdup_loc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    int src[5] = {1, 2, 3, 4, 5};
-    int* dup = (int*) mp_memdup_loc(pool, src, sizeof(src), __FILE__, __LINE__, __func__);
+    int  src[5] = {1, 2, 3, 4, 5};
+    int *dup    = (int *)mp_memdup_loc(pool, src, sizeof(src), __FILE__, __LINE__, __func__);
     assert(dup != NULL);
     assert(memcmp(dup, src, sizeof(src)) == 0);
 
@@ -110,10 +108,10 @@ static void test_memdup_loc()
 static void test_strdup_loc()
 {
     printf("\n--- Test: mp_strdup_loc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    char* dup = mp_strdup_loc(pool, "hello cmem", __FILE__, __LINE__, __func__);
+    char *dup = mp_strdup_loc(pool, "hello cmem", __FILE__, __LINE__, __func__);
     assert(dup != NULL);
     assert(strcmp(dup, "hello cmem") == 0);
 
@@ -126,10 +124,10 @@ static void test_strdup_loc()
 static void test_asprintf_loc()
 {
     printf("\n--- Test: mp_asprintf_loc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    char* fmt = mp_asprintf_loc(pool, __FILE__, __LINE__, __func__, "val=%d", 42);
+    char *fmt = mp_asprintf_loc(pool, __FILE__, __LINE__, __func__, "val=%d", 42);
     assert(fmt != NULL);
     assert(strstr(fmt, "val=42") != NULL);
 
@@ -145,26 +143,26 @@ static void test_asprintf_loc()
 
 static bool g_error_recovery_called = false;
 
-static void error_recovery_cb(memory_pool_t* pool, bool is_high, size_t current, size_t limit,
-                              void* udata)
+static void
+error_recovery_cb(memory_pool_t *pool, bool is_high, size_t current, size_t limit, void *udata)
 {
-    (void) pool;
-    (void) is_high;
-    (void) current;
-    (void) limit;
-    (void) udata;
+    (void)pool;
+    (void)is_high;
+    (void)current;
+    (void)limit;
+    (void)udata;
     g_error_recovery_called = true;
 }
 
 static void test_callbacks()
 {
     printf("\n--- Test: Callbacks (error recovery) ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_set_error_recovery_callback(pool, error_recovery_cb, NULL);
 
-    void* p = mp_alloc(pool, 128);
+    void *p = mp_alloc(pool, 128);
     assert(p != NULL);
 
     mp_free(pool, p);
@@ -180,7 +178,7 @@ static void test_callbacks()
 static void test_dirty_pool_and_bad_block()
 {
     printf("\n--- Test: Dirty pool state ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
     assert(mp_is_pool_dirty(pool) == false);
@@ -198,10 +196,10 @@ static void test_dirty_pool_and_bad_block()
 static void test_isolate_bad_block()
 {
     printf("\n--- Test: Bad block isolation ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
-    void* p = mp_alloc(pool, 64);
+    void *p = mp_alloc(pool, 64);
     assert(p != NULL);
 
     assert(mp_isolate_bad_block(pool, p) == true);
@@ -213,7 +211,7 @@ static void test_isolate_bad_block()
 static void test_null_param_guards()
 {
     printf("\n--- Test: NULL parameter guards ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     assert(mp_isolate_bad_block(NULL, NULL) == false);
@@ -236,7 +234,7 @@ static void test_null_param_guards()
 static void test_quota_and_circuit_breaker()
 {
     printf("\n--- Test: Arena quota and circuit breaker ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
     assert(pool != NULL);
 
     mp_set_arena_quota(pool, 1024, NULL, NULL);
@@ -246,7 +244,7 @@ static void test_quota_and_circuit_breaker()
     mp_set_circuit_breaker(pool, true);
     assert(mp_is_circuit_breaker_tripped(pool) == false);
 
-    void* p = mp_alloc(pool, 1024);
+    void *p = mp_alloc(pool, 1024);
     assert(p != NULL);
     assert(mp_get_thread_allocated_bytes(pool) >= 1024);
 
@@ -266,7 +264,7 @@ static void test_quota_and_circuit_breaker()
 static void test_latency_stats()
 {
     printf("\n--- Test: Latency recording and stats ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_record_latency(pool, 1000);
@@ -277,7 +275,7 @@ static void test_latency_stats()
     assert(avg == 2000);
 
     uint64_t p99 = mp_get_latency_p99(pool);
-    (void) p99;
+    (void)p99;
 
     mp_reset_latency_stats(pool);
     assert(mp_get_latency_avg(pool) == 0);
@@ -293,7 +291,7 @@ static void test_latency_stats()
 static void test_slab_class_config()
 {
     printf("\n--- Test: Custom slab classes ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     size_t custom_sizes[] = {16, 32, 64, 128};
@@ -321,7 +319,7 @@ static void test_slab_class_config()
 static void test_percpu_freelist()
 {
     printf("\n--- Test: Per-CPU freelist ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_PERCPU_FREELIST | MP_FLAG_THREAD_LOCAL_CACHE);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_PERCPU_FREELIST | MP_FLAG_THREAD_LOCAL_CACHE);
     assert(pool != NULL);
 
     mp_set_percpu_freelist(pool, true);
@@ -330,16 +328,13 @@ static void test_percpu_freelist()
     int cpus = mp_get_percpu_cpu_count(pool);
     assert(cpus > 0);
 
-    void* slots[128];
-    for (int round = 0; round < 4; round++)
-    {
-        for (int i = 0; i < 128; i++)
-        {
+    void *slots[128];
+    for (int round = 0; round < 4; round++) {
+        for (int i = 0; i < 128; i++) {
             slots[i] = mp_alloc(pool, 32 + (i % 64));
             assert(slots[i] != NULL);
         }
-        for (int i = 0; i < 128; i++)
-        {
+        for (int i = 0; i < 128; i++) {
             mp_free(pool, slots[i]);
             slots[i] = NULL;
         }
@@ -357,12 +352,12 @@ static void test_percpu_freelist()
 static void test_auto_compact()
 {
     printf("\n--- Test: Auto-compact trigger ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_set_memory_limit(pool, 1024);
     mp_set_auto_compact(pool, true, 0.001, 0.001);
-    void* p = mp_alloc(pool, 512);
+    void *p = mp_alloc(pool, 512);
     assert(p != NULL);
     assert(mp_auto_compact_check(pool) == true);
 
@@ -378,12 +373,12 @@ static void test_auto_compact()
 static void test_encrypted_memory()
 {
     printf("\n--- Test: Encrypted memory API ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_ENCRYPTED_MEMORY);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_ENCRYPTED_MEMORY);
     assert(pool != NULL);
 
     mp_set_encrypted_memory(pool, true);
 
-    void* p = mp_alloc(pool, 256);
+    void *p = mp_alloc(pool, 256);
     assert(p != NULL);
 
     mp_lock_memory(pool, p, 256);
@@ -404,14 +399,14 @@ static void test_encrypted_memory()
 static void test_asan_integration()
 {
     printf("\n--- Test: ASan integration ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_ASAN_INTEGRATION);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_ASAN_INTEGRATION);
     assert(pool != NULL);
 
     mp_set_asan_integration(pool, true);
     assert(mp_asan_is_enabled() == false || true); /* depends on compile flags */
     assert(mp_asan_check_memory(pool, NULL, 0) == false);
 
-    void* p = mp_alloc(pool, 128);
+    void *p = mp_alloc(pool, 128);
     assert(p != NULL);
 #ifndef __SANITIZE_ADDRESS__
     mp_asan_report_error(pool, p, 128, true);
@@ -430,10 +425,10 @@ static void test_asan_integration()
 static void test_hot_cold_pages()
 {
     printf("\n--- Test: Hot/Cold page separation ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_HOT_COLD_SEPARATION);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_HOT_COLD_SEPARATION);
     assert(pool != NULL);
 
-    void* p = mp_alloc(pool, 4096);
+    void *p = mp_alloc(pool, 4096);
     assert(p != NULL);
 
     mp_mark_page_hot(pool, p);
@@ -441,8 +436,8 @@ static void test_hot_cold_pages()
 
     mp_get_hot_page_count(pool);
     mp_get_cold_page_count(pool);
-    (void) mp_get_hot_page_count(pool);
-    (void) mp_get_cold_page_count(pool);
+    (void)mp_get_hot_page_count(pool);
+    (void)mp_get_cold_page_count(pool);
 
     mp_separate_hot_cold_pages(pool);
 
@@ -459,7 +454,7 @@ static void test_hot_cold_pages()
 static void test_online_expansion()
 {
     printf("\n--- Test: Online pool expansion ---\n");
-    memory_pool_t* pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(1024 * 1024, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_set_memory_limit(pool, 4 * 1024 * 1024);
@@ -470,7 +465,7 @@ static void test_online_expansion()
     bool ok = mp_expand_pool(pool, 512 * 1024);
     assert(ok == true);
 
-    void* p = mp_alloc(pool, 256);
+    void *p = mp_alloc(pool, 256);
     assert(p != NULL);
 
     mp_free(pool, p);
@@ -486,10 +481,10 @@ static void test_online_expansion()
 static void test_event_log()
 {
     printf("\n--- Test: Structured event log ---\n");
-    mp_event_log_t* log = mp_event_log_create(16);
+    mp_event_log_t *log = mp_event_log_create(16);
     assert(log != NULL);
 
-    assert(mp_event_log_record(log, MP_EVENT_ALLOC, (void*) 0x1000, 128) == true);
+    assert(mp_event_log_record(log, MP_EVENT_ALLOC, (void *)0x1000, 128) == true);
     assert(mp_event_log_pending(log) == 1);
 
     mp_event_log_clear(log);
@@ -506,15 +501,15 @@ static void test_event_log()
 static void test_exports()
 {
     printf("\n--- Test: Leak report and pprof export ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
-    void* p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    void *p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
     assert(p != NULL);
 
     assert(mp_export_leak_report(pool, "test_advanced_leak.txt") == true);
 
-    char pprof_buf[4096];
+    char   pprof_buf[4096];
     size_t len = mp_export_pprof(pool, pprof_buf, sizeof(pprof_buf));
     assert(len > 0);
 
@@ -540,7 +535,7 @@ static void test_abi_version()
 static void test_cgroup_aware()
 {
     printf("\n--- Test: mp_set_cgroup_aware and mp_get_cgroup_mem_limit ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_set_cgroup_aware(pool, true);
@@ -554,10 +549,10 @@ static void test_cgroup_aware()
 static void test_create_custom()
 {
     printf("\n--- Test: mp_create_custom ---\n");
-    memory_pool_t* pool = mp_create_custom(1024 * 1024, MP_FLAG_DEFAULT, NULL);
+    memory_pool_t *pool = mp_create_custom(1024 * 1024, MP_FLAG_DEFAULT, NULL);
     assert(pool != NULL);
 
-    void* p = mp_alloc(pool, 128);
+    void *p = mp_alloc(pool, 128);
     assert(p != NULL);
 
     mp_free(pool, p);
@@ -569,10 +564,10 @@ static void test_create_custom()
 static void test_calloc()
 {
     printf("\n--- Test: mp_calloc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p = mp_calloc(pool, 1, 64);
+    void *p = mp_calloc(pool, 1, 64);
     assert(p != NULL);
     memset(p, 0xFF, 64);
 
@@ -585,15 +580,15 @@ static void test_calloc()
 static void test_event_log_consume()
 {
     printf("\n--- Test: mp_event_log_consume ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    mp_event_log_t* log = mp_event_log_create(256);
+    mp_event_log_t *log = mp_event_log_create(256);
     assert(log != NULL);
 
     mp_event_log_entry_t entry;
-    bool got = mp_event_log_consume(log, &entry);
-    (void) got;
+    bool                 got = mp_event_log_consume(log, &entry);
+    (void)got;
 
     mp_event_log_destroy(log);
     mp_destroy(pool);
@@ -603,15 +598,15 @@ static void test_event_log_consume()
 static void test_reparse_env_flags()
 {
     printf("\n--- Test: mp_reparse_env_flags ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     setenv("CMEM_CONF", "DEBUG_CANARY=1", 1);
     mp_flags_t flags = mp_reparse_env_flags(pool);
-    (void) flags;
+    (void)flags;
 
     uint64_t gen = mp_get_env_generation(pool);
-    (void) gen;
+    (void)gen;
 
     mp_destroy(pool);
     TEST_PASS("test_reparse_env_flags");
@@ -620,17 +615,15 @@ static void test_reparse_env_flags()
 static void test_tls_cache_refill()
 {
     printf("\n--- Test: TLS cache refill ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_THREAD_LOCAL_CACHE);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_LOCAL_CACHE);
     assert(pool != NULL);
 
-    void* slots[256];
-    for (int i = 0; i < 256; i++)
-    {
+    void *slots[256];
+    for (int i = 0; i < 256; i++) {
         slots[i] = mp_alloc(pool, 32);
         assert(slots[i] != NULL);
     }
-    for (int i = 0; i < 256; i++)
-    {
+    for (int i = 0; i < 256; i++) {
         mp_free(pool, slots[i]);
     }
 
@@ -641,11 +634,11 @@ static void test_tls_cache_refill()
 static void test_static_buffer_pool()
 {
     printf("\n--- Test: Static buffer pool ---\n");
-    uint8_t buffer[64 * 1024];
-    memory_pool_t* pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
+    uint8_t        buffer[64 * 1024];
+    memory_pool_t *pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p = mp_alloc(pool, 256);
+    void *p = mp_alloc(pool, 256);
     assert(p != NULL);
 
     mp_free(pool, p);
@@ -656,14 +649,14 @@ static void test_static_buffer_pool()
 static void test_alloc_error_paths()
 {
     printf("\n--- Test: Allocation error paths ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_set_memory_limit(pool, 64);
     mp_enable_emergency_reserve(pool, 0);
     mp_set_fallback_on_oom(pool, false);
 
-    void* p_big = mp_alloc(pool, 128);
+    void *p_big = mp_alloc(pool, 128);
     assert(p_big == NULL);
 
     mp_set_memory_limit(pool, 0);
@@ -674,12 +667,11 @@ static void test_alloc_error_paths()
 static void test_os_fallback_alloc()
 {
     printf("\n--- Test: OS fallback allocation ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p = mp_alloc(pool, 5 * 1024 * 1024);
-    if (p)
-    {
+    void *p = mp_alloc(pool, 5 * 1024 * 1024);
+    if (p) {
         mp_free(pool, p);
     }
 
@@ -690,17 +682,17 @@ static void test_os_fallback_alloc()
 static void test_debug_canary_and_zero()
 {
     printf("\n--- Test: Debug canary and zero-on-alloc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
     assert(pool != NULL);
 
-    void* p1 = mp_alloc(pool, 256);
+    void *p1 = mp_alloc(pool, 256);
     assert(p1 != NULL);
     memset(p1, 0xFF, 256);
 
-    void* p2 = mp_calloc(pool, 1, 512);
+    void *p2 = mp_calloc(pool, 1, 512);
     assert(p2 != NULL);
 
-    void* p3 = mp_realloc(pool, p1, 512);
+    void *p3 = mp_realloc(pool, p1, 512);
     assert(p3 != NULL);
 
     mp_free(pool, p3);
@@ -713,17 +705,15 @@ static void test_debug_canary_and_zero()
 static void test_percpu_thread_safe_free()
 {
     printf("\n--- Test: Per-CPU freelist with thread-safe free ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_THREAD_SAFE | MP_FLAG_PERCPU_FREELIST);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE | MP_FLAG_PERCPU_FREELIST);
     assert(pool != NULL);
 
-    void* slots[64];
-    for (int i = 0; i < 64; i++)
-    {
+    void *slots[64];
+    for (int i = 0; i < 64; i++) {
         slots[i] = mp_alloc(pool, 32);
         assert(slots[i] != NULL);
     }
-    for (int i = 0; i < 64; i++)
-    {
+    for (int i = 0; i < 64; i++) {
         mp_free(pool, slots[i]);
     }
 
@@ -734,15 +724,15 @@ static void test_percpu_thread_safe_free()
 static void test_error_recovery_callback()
 {
     printf("\n--- Test: Error recovery callback ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     g_error_recovery_called = false;
     mp_set_error_recovery_callback(pool, error_recovery_cb, NULL);
 
     mp_mark_pool_dirty(pool);
-    void* ptr = mp_alloc(pool, 64);
-    (void) ptr;
+    void *ptr = mp_alloc(pool, 64);
+    (void)ptr;
 
     mp_destroy(pool);
     TEST_PASS("test_error_recovery_callback");
@@ -751,13 +741,13 @@ static void test_error_recovery_callback()
 static void test_dirty_pool_rejection()
 {
     printf("\n--- Test: Dirty pool rejection ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_mark_pool_dirty(pool);
     assert(mp_is_pool_dirty(pool) == true);
 
-    void* p = mp_alloc(pool, 64);
+    void *p = mp_alloc(pool, 64);
     assert(p == NULL);
 
     mp_clear_pool_dirty(pool);
@@ -772,17 +762,17 @@ static void test_dirty_pool_rejection()
 static void test_circuit_breaker()
 {
     printf("\n--- Test: Circuit breaker ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     mp_set_circuit_breaker(pool, true);
     mp_set_thread_quota(pool, 32);
     mp_set_fallback_on_oom(pool, false);
 
-    void* p1 = mp_alloc(pool, 32);
+    void *p1 = mp_alloc(pool, 32);
     assert(p1 != NULL);
 
-    void* p2 = mp_alloc(pool, 32);
+    void *p2 = mp_alloc(pool, 32);
     assert(p2 == NULL);
 
     mp_set_circuit_breaker(pool, false);
@@ -794,17 +784,15 @@ static void test_circuit_breaker()
 static void test_tlsf_expansion()
 {
     printf("\n--- Test: TLSF expansion ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* slots[64];
-    for (int i = 0; i < 64; i++)
-    {
+    void *slots[64];
+    for (int i = 0; i < 64; i++) {
         slots[i] = mp_alloc(pool, 1024);
         assert(slots[i] != NULL);
     }
-    for (int i = 0; i < 64; i++)
-    {
+    for (int i = 0; i < 64; i++) {
         mp_free(pool, slots[i]);
     }
 
@@ -815,17 +803,15 @@ static void test_tlsf_expansion()
 static void test_purge_lazy_advanced()
 {
     printf("\n--- Test: Purge lazy with empty pages ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* ptrs[400];
-    for (int i = 0; i < 400; i++)
-    {
+    void *ptrs[400];
+    for (int i = 0; i < 400; i++) {
         ptrs[i] = mp_alloc(pool, 32);
         assert(ptrs[i] != NULL);
     }
-    for (int i = 0; i < 400; i++)
-    {
+    for (int i = 0; i < 400; i++) {
         mp_free(pool, ptrs[i]);
     }
 
@@ -840,14 +826,14 @@ static void test_purge_lazy_advanced()
 static void test_get_allocation_info()
 {
     printf("\n--- Test: Get allocation info ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
-    void* p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    void *p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
     assert(p != NULL);
 
     mp_allocation_info_t info;
-    bool ok = mp_get_allocation_info(pool, p, &info);
+    bool                 ok = mp_get_allocation_info(pool, p, &info);
     assert(ok == true);
     assert(info.ptr == p);
     assert(info.requested_size == 256);
@@ -869,27 +855,28 @@ static void test_get_allocation_info()
 static void test_enumerate_regions()
 {
     printf("\n--- Test: Enumerate regions ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p1 = mp_alloc(pool, 64);
+    void *p1 = mp_alloc(pool, 64);
     assert(p1 != NULL);
-    void* p2 = mp_alloc(pool, 1024);
+    void *p2 = mp_alloc(pool, 1024);
     assert(p2 != NULL);
     mp_free(pool, p2);
 
     mp_region_info_t regions[32];
-    size_t count = mp_enumerate_regions(pool, regions, 32);
+    size_t           count = mp_enumerate_regions(pool, regions, 32);
     assert(count > 0);
 
     bool has_slab = false;
     bool has_tlsf = false;
-    for (size_t i = 0; i < count; i++)
-    {
-        if (regions[i].type == ALLOC_TYPE_SLAB)
+    for (size_t i = 0; i < count; i++) {
+        if (regions[i].type == ALLOC_TYPE_SLAB) {
             has_slab = true;
-        if (regions[i].type == ALLOC_TYPE_TLSF)
+        }
+        if (regions[i].type == ALLOC_TYPE_TLSF) {
             has_tlsf = true;
+        }
         assert(regions[i].base != NULL);
         assert(regions[i].size > 0);
     }
@@ -904,10 +891,10 @@ static void test_enumerate_regions()
 static void test_report_leaks_on_destroy()
 {
     printf("\n--- Test: Report leaks on destroy ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_REPORT_LEAKS_ON_DESTROY);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_REPORT_LEAKS_ON_DESTROY);
     assert(pool != NULL);
 
-    void* p = mp_alloc(pool, 128);
+    void *p = mp_alloc(pool, 128);
     assert(p != NULL);
 
     mp_destroy(pool);
@@ -917,12 +904,12 @@ static void test_report_leaks_on_destroy()
 static void test_snapshot_diff()
 {
     printf("\n--- Test: Snapshot diff ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
     char report[4096];
     bool ok = mp_diff_snapshots(NULL, NULL, report, sizeof(report));
-    (void) ok;
+    (void)ok;
 
     mp_destroy(pool);
     TEST_PASS("test_snapshot_diff");
@@ -931,16 +918,16 @@ static void test_snapshot_diff()
 static void test_tlsf_inplace_realloc()
 {
     printf("\n--- Test: TLSF in-place realloc ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* p1 = mp_alloc(pool, 1024);
+    void *p1 = mp_alloc(pool, 1024);
     assert(p1 != NULL);
-    void* p2 = mp_alloc(pool, 2048);
+    void *p2 = mp_alloc(pool, 2048);
     assert(p2 != NULL);
     mp_free(pool, p2);
 
-    void* p3 = mp_realloc(pool, p1, 2048);
+    void *p3 = mp_realloc(pool, p1, 2048);
     assert(p3 != NULL);
     mp_free(pool, p3);
 
@@ -951,17 +938,15 @@ static void test_tlsf_inplace_realloc()
 static void test_slab_full_page_transition()
 {
     printf("\n--- Test: Slab full page transition ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* slots[400];
-    for (int i = 0; i < 400; i++)
-    {
+    void *slots[400];
+    for (int i = 0; i < 400; i++) {
         slots[i] = mp_alloc(pool, 32);
         assert(slots[i] != NULL);
     }
-    for (int i = 0; i < 400; i++)
-    {
+    for (int i = 0; i < 400; i++) {
         mp_free(pool, slots[i]);
     }
 
@@ -972,12 +957,11 @@ static void test_slab_full_page_transition()
 static void test_reset_with_full_pages()
 {
     printf("\n--- Test: Reset with full pages ---\n");
-    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void* slots[400];
-    for (int i = 0; i < 400; i++)
-    {
+    void *slots[400];
+    for (int i = 0; i < 400; i++) {
         slots[i] = mp_alloc(pool, 32);
         assert(slots[i] != NULL);
     }
