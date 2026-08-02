@@ -283,6 +283,34 @@ Closes #123
 | `build` | 构建系统 |
 | `ci` | CI/CD |
 
+### 5.4 版本管理与 Tag
+
+使用 `scripts/tag.sh` 来递增版本号并创建 git tag：
+
+```bash
+# 递增 patch 版本并创建 tag
+./scripts/tag.sh --bump patch
+
+# 递增 minor/major 版本
+./scripts/tag.sh --bump minor
+./scripts/tag.sh --bump major
+
+# 设置显式版本
+./scripts/tag.sh 1.2.3
+
+# 预演模式
+./scripts/tag.sh --dry-run --bump patch
+```
+
+该脚本会自动更新 `CMakeLists.txt` 中的版本变量，使用 `chore(version): 🧹 bump version to x.y.z` 提交，并创建 `v<x.y.z>` git tag。
+
+或通过 Makefile：
+
+```bash
+make tag --bump=patch
+make tag 1.2.3
+```
+
 ---
 
 ## 6. 分支策略

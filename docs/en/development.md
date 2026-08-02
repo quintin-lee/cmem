@@ -249,6 +249,7 @@ Gitmoji is used as the commit message prefix:
 | 🚀 `:rocket:` | `expansion` | Expansion/scaling |
 | 🚨 `:rotating_light:` | `recovery` | Error recovery |
 | 📊 `:bar_chart:` | `observability` | Observability |
+| 🧹 `:broom:` | `chore` | Chore/tooling/config |
 
 ### 5.2 Commit Format
 
@@ -282,6 +283,34 @@ Closes #123
 | `docs` | Documentation |
 | `build` | Build system |
 | `ci` | CI/CD |
+
+### 5.4 Versioning & Tagging
+
+Use `scripts/tag.sh` to bump versions and create git tags:
+
+```bash
+# Bump patch version and tag
+./scripts/tag.sh --bump patch
+
+# Bump minor/major version
+./scripts/tag.sh --bump minor
+./scripts/tag.sh --bump major
+
+# Set explicit version
+./scripts/tag.sh 1.2.3
+
+# Dry run
+./scripts/tag.sh --dry-run --bump patch
+```
+
+The script updates `CMakeLists.txt` version variables, commits with `chore(version): 🧹 bump version to x.y.z`, and creates a `v<x.y.z>` git tag.
+
+Or via Make:
+
+```bash
+make tag --bump=patch
+make tag 1.2.3
+```
 
 ---
 

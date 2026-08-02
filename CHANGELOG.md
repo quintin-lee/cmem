@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `scripts/tag.sh` for automated version bumping and git tagging
+- `compile_commands.json` auto-generation via `set(CMAKE_EXPORT_COMPILE_COMMANDS ON)` for clangd/clang-tidy/ccls integration
 - Standalone `main()` for `fuzz_alloc` via `STANDALONE_FUZZ` compile definition
 - GitHub Release workflow with auto-generated release notes and multi-platform artifacts
 - `CONTRIBUTING.md` with development workflow and gitmoji commit conventions

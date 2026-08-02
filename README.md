@@ -664,6 +664,27 @@ CC=clang CFLAGS="-fsanitize=thread -g -O1" make test
 make docker-build
 ```
 
+### Versioning & Tagging
+
+```bash
+# Bump patch version and create tag (e.g. 1.0.0 -> 1.0.1)
+make tag --bump=patch
+
+# Bump minor version (e.g. 1.0.0 -> 1.1.0)
+make tag --bump=minor
+
+# Bump major version (e.g. 1.0.0 -> 2.0.0)
+make tag --bump=major
+
+# Set explicit version
+make tag 1.2.3
+
+# Dry run to preview changes
+make tag --dry-run --bump patch
+```
+
+The `tag.sh` script automatically updates version numbers in `CMakeLists.txt`, commits the change, and creates a git tag.
+
 ### Docker
 
 The project includes a `Dockerfile` for reproducible builds:
@@ -724,6 +745,8 @@ cmem/
 │   ├── index.md            # Documentation index
 │   ├── en/                 # English documentation
 │   └── zh/                 # Chinese documentation
+├── scripts/
+│   └── tag.sh            # Shell script for version bumping and git tagging
 ├── CMakeLists.txt
 ├── Makefile
 ├── LICENSE

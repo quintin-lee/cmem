@@ -651,7 +651,35 @@ make examples
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
+
+# ThreadSanitizer 构建（检测数据竞争）
+make clean
+CC=clang CFLAGS="-fsanitize=thread -g -O1" make test
+
+# Docker 可复现构建（Ubuntu 22.04）
+make docker-build
 ```
+
+### 版本管理与 Tag
+
+```bash
+# 递增 patch 版本并创建 tag（例如 1.0.0 -> 1.0.1）
+make tag --bump=patch
+
+# 递增 minor 版本（例如 1.0.0 -> 1.1.0）
+make tag --bump=minor
+
+# 递增 major 版本（例如 1.0.0 -> 2.0.0）
+make tag --bump=major
+
+# 设置显式版本
+make tag 1.2.3
+
+# 预演模式（不实际修改）
+make tag --dry-run --bump patch
+```
+
+`tag.sh` 脚本会自动更新 `CMakeLists.txt` 中的版本号、提交更改并创建 git tag。
 
 ---
 
@@ -691,6 +719,8 @@ cmem/
 │   ├── index.md            # 文档索引
 │   ├── en/                 # 英文文档
 │   └── zh/                 # 中文文档
+├── scripts/
+│   └── tag.sh            # Shell 版本管理与 git tag 脚本
 ├── CMakeLists.txt
 ├── Makefile
 ├── LICENSE
