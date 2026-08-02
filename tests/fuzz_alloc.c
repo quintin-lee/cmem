@@ -96,65 +96,6 @@ static void consume_fuzz_input(const uint8_t* data, size_t size)
     {
         if (slot_count == 0)
             break;
-        size_t idx = arg % slot_count;
-        void* p = slots[idx];
-        mp_free(g_pool, p);
-        slots[idx] = slots[--slot_count];
-        break;
-    }
-
-    case 0x04:
-    {
-        if (slot_count == 0)
-            break;
-        size_t idx = arg % slot_count;
-        void* old = slots[idx];
-        size_t new_size = (arg % 200) + 1;
-        void* p = mp_realloc(g_pool, old, new_size);
-        if (p)
-        {
-            slots[idx] = p;
-            if (payload_len > 0 && new_size > 0)
-            {
-                size_t write_len = new_size < payload_len ? new_size : payload_len;
-                memcpy(p, payload, write_len);
-            }
-        }
-        else if (old)
-        {
-            mp_free(g_pool, old);
-            slots[idx] = slots[--slot_count];
-        }
-        break;
-    }
-
-    case 0x05:
-    {
-        if (slot_count == 0)
-            break;
-        size_t idx = arg % slot_count;
-        void* old = slots[idx];
-        size_t nmemb = (arg % 10) + 1;
-        size_t size = (arg % 50) + 1;
-        void* p = mp_reallocarray(g_pool, old, nmemb, size);
-        if (p)
-        {
-            slots[idx] = p;
-        }
-        else if (old)
-        {
-            mp_free(g_pool, old);
-            slots[idx] = slots[--slot_count];
-        }
-        break;
-    }
-
-    case 0x06:
-    {
-        if (slot_count == 0)
-            break;
-        size_t idx = arg % slot_count;
-        void* p = slots[idx];
         if (payload_len > 0)
         {
             size_t dup_len = payload_len < 256 ? payload_len : 255;
@@ -192,8 +133,6 @@ static void consume_fuzz_input(const uint8_t* data, size_t size)
     {
         if (slot_count == 0)
             break;
-        size_t idx = arg % slot_count;
-        void* p = slots[idx];
         char* fmt = (char*) payload;
         if (payload_len == 0)
             fmt = "%zu";

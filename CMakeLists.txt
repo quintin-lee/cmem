@@ -32,6 +32,11 @@ if(CLANG_FORMAT)
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_pmr.hpp
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_override.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_slab.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_tlsf.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_sys.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_diag.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_event.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_advanced.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpp.cpp
@@ -84,7 +89,7 @@ else()
 endif()
 
 # 静态库目标
-add_library(cmem STATIC src/cmem.c)
+add_library(cmem STATIC src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c)
 target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
 add_dependencies(cmem format-check)
 set_target_properties(cmem PROPERTIES
