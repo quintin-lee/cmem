@@ -305,7 +305,7 @@ Use `scripts/tag.sh` to bump versions and create git tags:
 ./scripts/tag.sh --dry-run --bump patch
 ```
 
-The script updates the `VERSION` file, commits with `chore(version): 🧹 bump version to x.y.z`, and creates a `v<x.y.z>` git tag.
+The script updates the `VERSION` file, refreshes `CHANGELOG.md` by promoting `[Unreleased]` to `[x.y.z] - <date>` and inserting a fresh `[Unreleased]` section, commits with `chore(version): 🧹 bump version to x.y.z`, and creates a `v<x.y.z>` git tag.
 
 Both `CMakeLists.txt` and `Makefile` read the version from the `VERSION` file at build time.
 

@@ -662,6 +662,8 @@ make docker-build
 
 ### 版本管理与 Tag
 
+`VERSION` 文件是仓库根目录下版本号的唯一真实来源。
+
 ```bash
 # 递增 patch 版本并创建 tag（例如 1.0.0 -> 1.0.1）
 make tag --bump=patch
@@ -679,7 +681,11 @@ make tag 1.2.3
 make tag --dry-run --bump patch
 ```
 
-`tag.sh` 脚本会自动更新 `CMakeLists.txt` 中的版本号、提交更改并创建 git tag。
+`tag.sh` 脚本会自动执行以下操作：
+1. 更新 `VERSION` 文件
+2. 更新 `CHANGELOG.md`（将 `[Unreleased]` 升级为 `[x.y.z] - <日期>` 并插入新的 `[Unreleased]` 区块）
+3. 使用 `chore(version): 🧹 bump version to x.y.z` 提交更改
+4. 创建 git tag `v<x.y.z>`
 
 ---
 

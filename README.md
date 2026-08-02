@@ -666,6 +666,8 @@ make docker-build
 
 ### Versioning & Tagging
 
+The `VERSION` file at the repository root is the single source of truth for the version number.
+
 ```bash
 # Bump patch version and create tag (e.g. 1.0.0 -> 1.0.1)
 make tag --bump=patch
@@ -683,7 +685,11 @@ make tag 1.2.3
 make tag --dry-run --bump patch
 ```
 
-The `tag.sh` script automatically updates version numbers in `CMakeLists.txt`, commits the change, and creates a git tag.
+The `tag.sh` script automatically:
+1. Updates the `VERSION` file
+2. Updates `CHANGELOG.md` (promotes `[Unreleased]` to `[x.y.z] - <date>` and inserts a fresh `[Unreleased]` section)
+3. Commits the change with `chore(version): 🧹 bump version to x.y.z`
+4. Creates a git tag `v<x.y.z>`
 
 ### Docker
 
