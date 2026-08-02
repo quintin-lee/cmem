@@ -28,6 +28,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 FILES_TO_UPDATE=(
     "$REPO_ROOT/VERSION"
+    "$REPO_ROOT/CHANGELOG.md"
 )
 
 usage() {
@@ -91,6 +92,37 @@ update_file() {
             sed -i "s/$old_str/$new_str/g" "$file"
         fi
     fi
+}
+
+update_changelog() {
+    local new_version="$1"
+    local date
+    date="$(date +%Y-%m-%d)"
+    local changelog="$REPO_ROOT/CHANGELOG.md"
+    if [[ ! -f "$changelog" ]]; then
+        echo "  [WARN] CHANGELOG.md not found"
+        return
+    fi
+    local tmpfile
+    tmpfile="$(mktemp)"
+    local replaced=false
+    while IFS= read -r line; do
+        if [[ "$replaced" == false ]] && [[ "$line" == "## [Unreleased]" ]]; then
+            echo "## [$new_version] - $date" >> "$tmpfile"
+            echo "" >> "$tmpfile"
+            echo "## [Unreleased]" >> "$tmpfile"
+            replaced=true
+            continue
+        fi
+        echo "$line" >> "$tmpfile"
+    done < "$changelog"
+    if [[ "$replaced" == false ]]; then
+        echo "" >> "$tmpfile"
+        echo "## [$new_version] - $date" >> "$tmpfile"
+        echo "" >> "$tmpfile"
+        echo "## [Unreleased]" >> "$tmpfile"
+    fi
+    mv "$tmpfile" "$changelog"
 }
 
 git() {
@@ -172,7 +204,11 @@ echo ""
 echo "Updating version in files..."
 for f in "${FILES_TO_UPDATE[@]}"; do
     if [[ -f "$f" ]]; then
-        update_file "$f" "${CURRENT_VERSION}" "${NEW_VERSION}"
+        if [[ "$(basename "$f")" == "CHANGELOG.md" ]]; then
+            update_changelog "${NEW_VERSION}"
+        else
+            update_file "$f" "${CURRENT_VERSION}" "${NEW_VERSION}"
+        fi
         echo "  Updated: $f"
     else
         echo "  [WARN] not found: $f"
