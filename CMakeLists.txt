@@ -1,15 +1,22 @@
 cmake_minimum_required(VERSION 3.10)
-project(cmem VERSION 1.0.0 LANGUAGES C CXX
+
+# Read version from unified VERSION file
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" _version_str)
+string(STRIP "${_version_str}" _version_str)
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _version_match "${_version_str}")
+if(NOT _version_match)
+    message(FATAL_ERROR "Invalid VERSION file format: '${_version_str}'. Expected MAJOR.MINOR.PATCH")
+endif()
+set(CMEM_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(CMEM_VERSION_MINOR ${CMAKE_MATCH_2})
+set(CMEM_VERSION_PATCH ${CMAKE_MATCH_3})
+set(CMEM_VERSION "${CMEM_VERSION_MAJOR}.${CMEM_VERSION_MINOR}.${CMEM_VERSION_PATCH}")
+
+project(cmem VERSION ${CMEM_VERSION} LANGUAGES C CXX
         DESCRIPTION "Universal High-Performance Tiered Memory Manager"
         HOMEPAGE_URL "https://github.com/your-repo/cmem")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# 版本配置
-set(CMEM_VERSION_MAJOR 1)
-set(CMEM_VERSION_MINOR 0)
-set(CMEM_VERSION_PATCH 0)
-set(CMEM_VERSION ${CMEM_VERSION_MAJOR}.${CMEM_VERSION_MINOR}.${CMEM_VERSION_PATCH})
 
 # C/C++ 标准
 set(CMAKE_C_STANDARD 11)

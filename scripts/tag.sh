@@ -10,11 +10,12 @@
 #   ./scripts/tag.sh --dry-run 1.2.3
 #
 # Updates:
-#   - CMakeLists.txt
-#   - cmake/cmemConfig.cmake.in
-#   - cmake/cmem.pc.in
+#   - VERSION (single source of truth)
 #
 # Creates a git tag: v<MAJOR>.<MINOR>.<PATCH>
+#
+# Note:
+#   CMakeLists.txt and Makefile both read from VERSION, so only VERSION needs updating.
 #
 # Commit behavior:
 #   - By default, version file changes are committed before tagging.
@@ -26,7 +27,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 FILES_TO_UPDATE=(
-    "$REPO_ROOT/CMakeLists.txt"
+    "$REPO_ROOT/VERSION"
 )
 
 usage() {
@@ -48,11 +49,13 @@ EOF
 
 get_current_version() {
     local text
-    text="$(cat "$REPO_ROOT/CMakeLists.txt")"
-    MAJOR="$(echo "$text" | grep -oP 'set\(CMEM_VERSION_MAJOR\s+\K\d+')"
-    MINOR="$(echo "$text" | grep -oP 'set\(CMEM_VERSION_MINOR\s+\K\d+')"
-    PATCH="$(echo "$text" | grep -oP 'set\(CMEM_VERSION_PATCH\s+\K\d+')"
-    echo "${MAJOR:-0} ${MINOR:-0} ${PATCH:-0}"
+    text="$(cat "$REPO_ROOT/VERSION")"
+    text="$(echo "$text" | tr -d '[:space:]')"
+    local major minor patch
+    major="$(echo "$text" | cut -d. -f1)"
+    minor="$(echo "$text" | cut -d. -f2)"
+    patch="$(echo "$text" | cut -d. -f3)"
+    echo "${major:-0} ${minor:-0} ${patch:-0}"
 }
 
 bump_version() {
@@ -79,10 +82,14 @@ update_file() {
     local old_str new_str
     old_str="$(echo "$old_version" | tr ' ' '.')"
     new_str="$(echo "$new_version" | tr ' ' '.')"
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/$old_str/$new_str/g" "$file"
+    if [[ "$(basename "$file")" == "VERSION" ]]; then
+        echo "$new_str" > "$file"
     else
-        sed -i "s/$old_str/$new_str/g" "$file"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s/$old_str/$new_str/g" "$file"
+        else
+            sed -i "s/$old_str/$new_str/g" "$file"
+        fi
     fi
 }
 

@@ -9,8 +9,8 @@ CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include
 CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -I./include
 CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include
 
-# 版本信息
-VERSION = 1.0.0
+# 版本信息（从 VERSION 文件读取）
+VERSION := $(shell cat VERSION | tr -d '[:space:]')
 LIBNAME = libcmem.a
 SONAME = libcmem.so.$(VERSION)
 

@@ -285,6 +285,8 @@ Closes #123
 
 ### 5.4 版本管理与 Tag
 
+版本号的唯一真实来源是仓库根目录下的 `VERSION` 文件。
+
 使用 `scripts/tag.sh` 来递增版本号并创建 git tag：
 
 ```bash
@@ -302,7 +304,9 @@ Closes #123
 ./scripts/tag.sh --dry-run --bump patch
 ```
 
-该脚本会自动更新 `CMakeLists.txt` 中的版本变量，使用 `chore(version): 🧹 bump version to x.y.z` 提交，并创建 `v<x.y.z>` git tag。
+该脚本会更新 `VERSION` 文件，使用 `chore(version): 🧹 bump version to x.y.z` 提交，并创建 `v<x.y.z>` git tag。
+
+`CMakeLists.txt` 和 `Makefile` 都会在构建时从 `VERSION` 文件读取版本号。
 
 或通过 Makefile：
 
