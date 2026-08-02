@@ -549,4 +549,4 @@ void* p = mp_alloc(pool, size);
 4. Ensure `make test` passes
 5. Submit a Pull Request
 
-See [Contributing Guide](https://github.com/your-repo/cmem/blob/main/CONTRIBUTING.md) for details.
+See [Contributing Guide](https://github.com/quintin-lee/cmem/blob/main/CONTRIBUTING.md) for details.

@@ -548,4 +548,4 @@ void* p = mp_alloc(pool, size);
 4. 确保 `make test` 通过
 5. 提交 Pull Request
 
-详见 [贡献指南](https://github.com/your-repo/cmem/blob/main/CONTRIBUTING.md)。
+详见 [贡献指南](https://github.com/quintin-lee/cmem/blob/main/CONTRIBUTING.md)。

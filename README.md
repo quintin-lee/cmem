@@ -809,7 +809,7 @@ cmem follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 | :--- | :--- | :--- | :--- |
 | GCC | 7.0 | 13.0+ | ASan, UBSan, TSan |
 | Clang | 6.0 | 17.0+ | ASan, UBSan, TSan |
-| MSVC | 2017 | 2022+ | ASan (VS 2019+) |
+| MSVC | 2017 | 2019+ | ASan, UBSan |
 
 ### Runtime Analysis
 

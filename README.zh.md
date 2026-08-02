@@ -712,7 +712,7 @@ cmem/
 ├── src/
 │   └── cmem.c              # 核心实现
 ├── tests/
-│   ├── test_main.c         # C 单元测试 (35+ 测试用例)
+│   ├── test_main.c         # C 单元测试 (44+ 测试用例)
 │   └── test_cpp.cpp        # C++ PMR + STL 分配器测试
 ├── benchmarks/
 │   └── bench_main.c        # 性能基准测试
@@ -777,7 +777,7 @@ cmem/
 | :--- | :--- | :--- |
 | GCC | 7.0 | 13.0+ |
 | Clang | 6.0 | 17.0+ |
-| MSVC | 2017 | 2022+ |
+| MSVC | 2017 | 2019+ | ASan, UBSan |
 
 ---
 

@@ -411,6 +411,42 @@ size_t mp_get_child_count(memory_pool_t* pool);
 
 ---
 
+### mp_get_allocation_info
+
+```c
+bool mp_get_allocation_info(memory_pool_t* pool, void* ptr, mp_allocation_info_t* info);
+```
+
+获取单个分配的详细信息，包括 tier、尺寸、源码位置和回溯栈。
+
+**参数：**
+- `pool`: 内存池指针
+- `ptr`: mp_alloc/calloc/realloc 返回的有效指针
+- `info`: 输出结构体，填充分配元数据
+
+**返回值：**
+- 成功返回 `true`，失败返回 `false`
+
+---
+
+### mp_enumerate_regions
+
+```c
+size_t mp_enumerate_regions(memory_pool_t* pool, mp_region_info_t* regions, size_t max_regions);
+```
+
+枚举池的所有底层内存区域（Slab 页、TLSF 池、OS 后备映射）。
+
+**参数：**
+- `pool`: 内存池指针
+- `regions`: 输出 mp_region_info_t 数组
+- `max_regions`: 数组最大容量
+
+**返回值：**
+- 写入数组的区域数量
+
+---
+
 ## 4. 便利辅助函数
 
 ### mp_strdup
@@ -1082,6 +1118,8 @@ public:
     void dump_histogram() const;
 
     bool check_leaks() const;
+    bool get_allocation_info(void *ptr, mp_allocation_info_t *info) const;
+    size_t enumerate_regions(mp_region_info_t *regions, size_t max_regions) const;
     memory_pool_t* get() const;
     memory_pool_t* release();
 };
@@ -1127,17 +1165,15 @@ protected:
 
 ```c
 typedef enum {
-    MP_EVENT_ALLOC = 0,              // 分配事件
-    MP_EVENT_FREE,                   // 释放事件
-    MP_EVENT_REALLOC,                // 重分配事件
-    MP_EVENT_OOM,                    // 内存不足事件
-    MP_EVENT_RESET,                  // 池重置事件
-    MP_EVENT_COMPACT,                // 压缩事件
-    MP_EVENT_CANARY_CORRUPTION,      // Canary 越界检测
-    MP_EVENT_DOUBLE_FREE,            // 双 Free 检测
-    MP_EVENT_WATERMARK_HIGH,         // 高水位触发
-    MP_EVENT_WATERMARK_LOW,          // 低水位恢复
-    MP_EVENT_CUSTOM                  // 用户自定义事件
+    MP_EVENT_ALLOC = 1,              // 内存块分配
+    MP_EVENT_FREE,                   // 内存块释放
+    MP_EVENT_REALLOC,                // 内存块重分配
+    MP_EVENT_CANARY_CORRUPTION,      // 通过 canary 检测到的缓冲区越界
+    MP_EVENT_DOUBLE_FREE,            // 检测到双 Free 或无效释放
+    MP_EVENT_RESET,                  // 内存池重置
+    MP_EVENT_COMPACT,                // 内存池压缩
+    MP_EVENT_OOM,                    // 达到内存不足条件
+    MP_EVENT_DIRTY                   // 因内存损坏而标记池为脏
 } mp_event_type_t;
 ```
 

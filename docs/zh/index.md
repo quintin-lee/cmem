@@ -77,7 +77,7 @@
 - 测试结构与目录
 - 运行测试（C/C++/Benchmark）
 - 添加新测试（模板代码）
-- 测试覆盖清单（35+ 测试用例）
+- 测试覆盖清单（44+ 测试用例）
 - Sanitizers 使用（ASan/UBSan）
 - 性能基准测试
 - CI/CD 配置
@@ -158,10 +158,10 @@
 
 ## 🔗 外部资源
 
-- [GitHub Repository](https://github.com/your-repo/cmem)
-- [Issue Tracker](https://github.com/your-repo/cmem/issues)
-- [Discussions](https://github.com/your-repo/cmem/discussions)
-- [Doxygen Documentation](https://your-repo.github.io/cmem/)
+- [GitHub Repository](https://github.com/quintin-lee/cmem)
+- [Issue Tracker](https://github.com/quintin-lee/cmem/issues)
+- [Discussions](https://github.com/quintin-lee/cmem/discussions)
+- [Doxygen Documentation](https://quintin-lee.github.io/cmem/)
 
 ---
 

@@ -30,7 +30,7 @@ cmem uses a **self-developed lightweight test framework** with no external depen
 
 ```
 tests/
-├── test_main.c         # C comprehensive unit tests (35+ test cases)
+├── test_main.c         # C comprehensive unit tests (44+ test cases)
 └── test_cpp.cpp        # C++ PMR + STL Allocator tests
 
 benchmarks/

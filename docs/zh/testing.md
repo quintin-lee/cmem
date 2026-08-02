@@ -30,7 +30,7 @@ cmem 使用 **自研轻量级测试框架**，无需外部依赖。
 
 ```
 tests/
-├── test_main.c         # C 综合单元测试（35+ 测试用例）
+├── test_main.c         # C 综合单元测试（44+ 测试用例）
 └── test_cpp.cpp        # C++ PMR + STL Allocator 测试
 
 benchmarks/

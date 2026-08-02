@@ -521,6 +521,35 @@ Automatically reads cgroup memory limits:
 - `/sys/fs/cgroup/memory/memory.limit_in_bytes` (cgroup v1)
 - `/sys/fs/cgroup/memory.max` (cgroup v2)
 
+**Related APIs:**
+- `mp_set_cgroup_aware(pool, enable)`: Enable or disable cgroup awareness
+- `mp_get_cgroup_mem_limit(pool)`: Get detected cgroup memory limit
+
+### 11.4 Memory Error Recovery
+
+cmem provides a mechanism to handle memory corruption (e.g., Canary overflow or double free):
+- **Dirty Pool Marking**: Once corruption is detected, the pool is marked as "dirty" and subsequent allocations are rejected to prevent further damage.
+- **Bad Block Isolation**: Damaged blocks can be removed from active tracking for logical isolation.
+
+**Related APIs:**
+- `mp_mark_pool_dirty(pool)` / `mp_clear_pool_dirty(pool)`
+- `mp_is_pool_dirty(pool)`
+- `mp_set_error_recovery_callback(pool, cb, udata)`
+- `mp_isolate_bad_block(pool, ptr)`
+
+### 11.5 Thread Quota & Circuit Breaker
+
+To prevent a single thread from exhausting the entire pool, cmem introduces thread-level quota management:
+- **Thread Quota**: Limits the maximum bytes a single thread can allocate.
+- **Circuit Breaker**: When a thread exceeds its quota, the circuit breaker trips and rejects further allocations from that thread.
+
+**Related APIs:**
+- `mp_set_thread_quota(pool, quota_bytes)`
+- `mp_set_circuit_breaker(pool, enable)`
+- `mp_is_circuit_breaker_tripped(pool)`
+- `mp_get_thread_allocated_bytes(pool)`
+- `mp_reset_thread_quota(pool)`
+
 ---
 
 ## 12. Future Evolution Directions

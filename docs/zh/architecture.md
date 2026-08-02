@@ -521,6 +521,35 @@ uint32_t mp_abi_version(void);  // 当前返回 1
 - `/sys/fs/cgroup/memory/memory.limit_in_bytes` (cgroup v1)
 - `/sys/fs/cgroup/memory.max` (cgroup v2)
 
+**相关 API：**
+- `mp_set_cgroup_aware(pool, enable)`：启用或禁用 cgroup 感知
+- `mp_get_cgroup_mem_limit(pool)`：获取检测到的 cgroup 内存限制
+
+### 11.4 内存错误恢复
+
+cmem 提供了一套机制来应对内存损坏（如 Canary 越界或双重释放）：
+- **脏池标记**：一旦检测到损坏，内存池会被标记为"脏"，后续分配请求将被拒绝以防止进一步损坏
+- **坏块隔离**：支持将检测到的损坏块从活跃追踪链表中移除，实现逻辑隔离
+
+**相关 API：**
+- `mp_mark_pool_dirty(pool)` / `mp_clear_pool_dirty(pool)`
+- `mp_is_pool_dirty(pool)`
+- `mp_set_error_recovery_callback(pool, cb, udata)`
+- `mp_isolate_bad_block(pool, ptr)`
+
+### 11.5 线程配额与熔断器
+
+为了防止单个线程耗尽整个内存池，cmem 引入了线程级配额管理：
+- **线程配额**：限制每个线程可分配的最大字节数
+- **熔断器**：当线程超过配额时，熔断器触发并拒绝该线程的后续分配请求
+
+**相关 API：**
+- `mp_set_thread_quota(pool, quota_bytes)`
+- `mp_set_circuit_breaker(pool, enable)`
+- `mp_is_circuit_breaker_tripped(pool)`
+- `mp_get_thread_allocated_bytes(pool)`
+- `mp_reset_thread_quota(pool)`
+
 ---
 
 ## 12. 未来演进方向

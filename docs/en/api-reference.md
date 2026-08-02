@@ -411,6 +411,42 @@ Gets the parent Arena pointer and the number of child Arenas.
 
 ---
 
+### mp_get_allocation_info
+
+```c
+bool mp_get_allocation_info(memory_pool_t* pool, void* ptr, mp_allocation_info_t* info);
+```
+
+Retrieves detailed metadata for a single allocation including tier, size, source location, and backtrace.
+
+**Parameters:**
+- `pool`: Memory pool pointer
+- `ptr`: Payload pointer returned by mp_alloc/calloc/realloc
+- `info`: Output structure filled with allocation metadata
+
+**Return Value:**
+- `true` if ptr is valid and info was filled, `false` otherwise
+
+---
+
+### mp_enumerate_regions
+
+```c
+size_t mp_enumerate_regions(memory_pool_t* pool, mp_region_info_t* regions, size_t max_regions);
+```
+
+Enumerates all memory regions backing the pool (Slab pages, TLSF pools, OS fallback mappings).
+
+**Parameters:**
+- `pool`: Memory pool pointer
+- `regions`: Output array of mp_region_info_t
+- `max_regions`: Maximum number of entries the array can hold
+
+**Return Value:**
+- Number of regions written to the array
+
+---
+
 ## 4. Convenience Helper Functions
 
 ### mp_strdup
@@ -1082,6 +1118,8 @@ public:
     void dump_histogram() const;
 
     bool check_leaks() const;
+    bool get_allocation_info(void *ptr, mp_allocation_info_t *info) const;
+    size_t enumerate_regions(mp_region_info_t *regions, size_t max_regions) const;
     memory_pool_t* get() const;
     memory_pool_t* release();
 };
@@ -1127,17 +1165,15 @@ protected:
 
 ```c
 typedef enum {
-    MP_EVENT_ALLOC = 0,              // Allocation event
-    MP_EVENT_FREE,                   // Free event
-    MP_EVENT_REALLOC,                // Reallocation event
-    MP_EVENT_OOM,                    // Out of memory event
-    MP_EVENT_RESET,                  // Pool reset event
-    MP_EVENT_COMPACT,                // Compaction event
-    MP_EVENT_CANARY_CORRUPTION,      // Canary out-of-bounds detection
-    MP_EVENT_DOUBLE_FREE,            // Double free detection
-    MP_EVENT_WATERMARK_HIGH,         // High watermark triggered
-    MP_EVENT_WATERMARK_LOW,          // Low watermark recovered
-    MP_EVENT_CUSTOM                  // User-defined event
+    MP_EVENT_ALLOC = 1,              // Memory block allocated
+    MP_EVENT_FREE,                   // Memory block freed
+    MP_EVENT_REALLOC,                // Memory block reallocated
+    MP_EVENT_CANARY_CORRUPTION,      // Buffer overflow detected via canary check
+    MP_EVENT_DOUBLE_FREE,            // Double-free or invalid free detected
+    MP_EVENT_RESET,                  // Memory pool reset
+    MP_EVENT_COMPACT,               // Memory pool compaction
+    MP_EVENT_OOM,                    // Out-of-memory condition reached
+    MP_EVENT_DIRTY                   // Pool marked dirty due to memory corruption
 } mp_event_type_t;
 ```
 

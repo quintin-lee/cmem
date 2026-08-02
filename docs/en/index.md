@@ -158,10 +158,10 @@ The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
 
 ## 🔗 External Resources
 
-- [GitHub Repository](https://github.com/your-repo/cmem)
-- [Issue Tracker](https://github.com/your-repo/cmem/issues)
-- [Discussions](https://github.com/your-repo/cmem/discussions)
-- [Doxygen Documentation](https://your-repo.github.io/cmem/)
+- [GitHub Repository](https://github.com/quintin-lee/cmem)
+- [Issue Tracker](https://github.com/quintin-lee/cmem/issues)
+- [Discussions](https://github.com/quintin-lee/cmem/discussions)
+- [Doxygen Documentation](https://quintin-lee.github.io/cmem/)
 
 ---
 
