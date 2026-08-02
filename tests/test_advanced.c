@@ -710,6 +710,44 @@ static void test_debug_canary_and_zero()
     TEST_PASS("test_debug_canary_and_zero");
 }
 
+static void test_percpu_thread_safe_free()
+{
+    printf("\n--- Test: Per-CPU freelist with thread-safe free ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_THREAD_SAFE | MP_FLAG_PERCPU_FREELIST);
+    assert(pool != NULL);
+
+    void* slots[64];
+    for (int i = 0; i < 64; i++)
+    {
+        slots[i] = mp_alloc(pool, 32);
+        assert(slots[i] != NULL);
+    }
+    for (int i = 0; i < 64; i++)
+    {
+        mp_free(pool, slots[i]);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_percpu_thread_safe_free");
+}
+
+static void test_error_recovery_callback()
+{
+    printf("\n--- Test: Error recovery callback ---\n");
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    g_error_recovery_called = false;
+    mp_set_error_recovery_callback(pool, error_recovery_cb, NULL);
+
+    mp_mark_pool_dirty(pool);
+    void* ptr = mp_alloc(pool, 64);
+    (void) ptr;
+
+    mp_destroy(pool);
+    TEST_PASS("test_error_recovery_callback");
+}
+
 static void test_dirty_pool_rejection()
 {
     printf("\n--- Test: Dirty pool rejection ---\n");
@@ -913,6 +951,8 @@ int main()
     test_alloc_error_paths();
     test_os_fallback_alloc();
     test_debug_canary_and_zero();
+    test_percpu_thread_safe_free();
+    test_error_recovery_callback();
     test_dirty_pool_rejection();
     test_circuit_breaker();
     test_tlsf_expansion();
