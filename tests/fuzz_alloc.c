@@ -163,7 +163,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         mp_reset(g_pool);
         if (payload_len > 0) {
             size_t zero_len = payload_len < 64 ? payload_len : 64;
-            char stack_buf[64];
+            char   stack_buf[64];
             memcpy(stack_buf, payload, zero_len);
             mp_secure_zero(g_pool, stack_buf, zero_len);
         }

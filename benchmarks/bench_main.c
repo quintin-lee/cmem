@@ -8,10 +8,10 @@
 
 #include "cmem.h"
 #include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <pthread.h>
 
 #define SMALL_ALLOC_COUNT 1000000
 #define MEDIUM_ALLOC_COUNT 100000
