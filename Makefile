@@ -4,7 +4,7 @@
 CC = gcc
 CXX = g++
 LDFLAGS = -pthread -lrt
-CFLAGS = -Wall -Wextra -O3 -std=c11 -I./include
+CFLAGS = -Wall -Wextra -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -I./include
 CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include
 CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -I./include
 CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include
@@ -27,7 +27,7 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean
 
 all: format-check lib test test_advanced test_cpp bench examples
 
@@ -117,6 +117,31 @@ examples: format-check $(SRC) | $(BUILD_DIR)
 	./$(BUILD_DIR)/example_embedded
 	./$(BUILD_DIR)/example_leak_analysis
 	./$(BUILD_DIR)/example_arena_tree
+
+# Fuzzing targets (requires clang; falls back to ASan-only on gcc)
+FUZZ_SRCS = tests/fuzz_alloc.c src/*.c
+FUZZ_CC ?= clang
+FUZZ_CFLAGS = -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -O1 -g -D_POSIX_C_SOURCE=200809L -I./include
+FUZZ_LDFLAGS = -fsanitize=fuzzer,address,undefined -pthread -lrt
+FUZZ_ARGS = -max_len=4096 -jobs=4
+
+fuzz-build: format-check | $(BUILD_DIR)
+	@$(FUZZ_CC) --version >/dev/null 2>&1 || { echo "Fuzzing requires clang. Install clang or set FUZZ_CC=gcc (ASan-only mode)."; exit 1; }
+	$(FUZZ_CC) $(FUZZ_CFLAGS) $(FUZZ_SRCS) -o $(BUILD_DIR)/fuzz_alloc $(FUZZ_LDFLAGS)
+	@echo "Built fuzz target: build/fuzz_alloc"
+
+fuzz-run: fuzz-build
+	@echo "Running fuzzing (Ctrl+C to stop)..."
+	@mkdir -p corpus
+	./build/fuzz_alloc corpus $(FUZZ_ARGS)
+
+fuzz-ci: fuzz-build
+	@mkdir -p corpus
+	@echo "Running CI fuzzing (10 seconds)..."
+	./build/fuzz_alloc corpus -max_len=4096 -timeout=10 -runs=1000
+
+fuzz-clean:
+	rm -f build/fuzz_alloc
 
 # 安装
 install: lib | $(BUILD_DIR)

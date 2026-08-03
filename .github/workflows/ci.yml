@@ -83,6 +83,32 @@ jobs:
         run: |
           cmake --build build_cmake
 
+  fuzzing:
+    name: Fuzzing (libFuzzer)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Build fuzz target
+        run: make fuzz-build
+
+      - name: Run CI fuzzing (short)
+        run: make fuzz-ci
+        timeout-minutes: 5
+
+      - name: Upload corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus
+          path: corpus/
+          retention-days: 30
+
   code-quality:
     name: Code Quality Checks
     runs-on: ubuntu-latest

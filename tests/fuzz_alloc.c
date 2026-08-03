@@ -42,7 +42,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
 
     static void  *slots[256];
     static size_t slot_count = 0;
-    static char   event_log_buf[256];
+    static char   event_log_buf[4096];
 
     switch (op) {
     case 0x00: {
@@ -162,7 +162,10 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         mp_purge_lazy(g_pool);
         mp_reset(g_pool);
         if (payload_len > 0) {
-            mp_secure_zero(g_pool, (void *)payload, payload_len < 64 ? payload_len : 64);
+            size_t zero_len = payload_len < 64 ? payload_len : 64;
+            char stack_buf[64];
+            memcpy(stack_buf, payload, zero_len);
+            mp_secure_zero(g_pool, stack_buf, zero_len);
         }
         mp_madvise(g_pool, g_pool, 4096, 0);
         break;
