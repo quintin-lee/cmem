@@ -38,6 +38,8 @@ int cmem_sched_getcpu(void)
 {
 #ifdef __APPLE__
     return 0;
+#elif defined(_WIN32)
+    return 0;
 #else
     return sched_getcpu();
 #endif

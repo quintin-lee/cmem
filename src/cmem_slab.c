@@ -280,7 +280,7 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
  * @param pool      Pool to draw slots from.
  * @param class_idx Size class whose thread cache needs topping up.
  */
-inline void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
+void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
 {
     for (int i = 0; i < 32; i++) {
         void *ptr = slab_alloc(pool, class_idx, pool->slab_classes[class_idx].slot_size);
@@ -354,7 +354,7 @@ void percpu_destroy(memory_pool_t *pool)
  *
  * @return A non-negative CPU identifier for freelist indexing.
  */
-inline int percpu_cpu_index(void)
+int percpu_cpu_index(void)
 {
 #ifdef _WIN32
     return 0;
@@ -380,7 +380,7 @@ inline int percpu_cpu_index(void)
  * @param class_idx Size class to pop from.
  * @return A cached slot, or NULL if the list was empty or contended.
  */
-inline mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_idx)
+mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_idx)
 {
     if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) {
         return NULL;
@@ -415,7 +415,7 @@ inline mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_id
  * @param cpu       Owner CPU whose freelist to refill.
  * @param class_idx Size class to refill.
  */
-inline void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
+void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
 {
     if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) {
         return;
