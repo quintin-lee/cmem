@@ -59,8 +59,10 @@ typedef atomic_size_t cmem_atomic_size_t;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #include <malloc.h>
