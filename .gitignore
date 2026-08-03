@@ -37,3 +37,11 @@ coverage_*.info
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Fuzzing artifacts
+corpus/
+crash-*
+*.crash
+
+# Python utility scripts (development tools, not part of project)
+extract.py
