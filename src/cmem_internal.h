@@ -45,7 +45,7 @@ typedef volatile LONG_PTR cmem_atomic_size_t;
 #define CMEM_ATOMIC_LOAD(obj, order) InterlockedCompareExchange64((LONG64 volatile *)(obj), 0, 0)
 #define CMEM_ATOMIC_STORE(obj, val, order) InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
 #define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
-    InterlockedCompareExchange64((LONG64 volatile *)(obj), (LONG64)(desired), (LONG64)(*expected))
+    (InterlockedCompareExchange64((LONG64 volatile *)(obj), (LONG64)(desired), (LONG64)(*expected)) == (LONG64)(*expected))
 #define CMEM_ATOMIC_INIT(obj, val) (*(volatile LONG_PTR *)(obj) = (LONG_PTR)(val))
 #define CMEM_ORDER_RELAXED 0
 #define CMEM_ORDER_ACQUIRE 0
