@@ -64,6 +64,20 @@ else()
     )
 endif()
 
+# Mermaid 图语法检查
+find_program(PYTHON_EXECUTABLE python3)
+if(PYTHON_EXECUTABLE)
+    add_custom_target(check-mermaid
+        COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_mermaid.py ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Validating Mermaid diagram syntax"
+        VERBATIM
+    )
+else()
+    add_custom_target(check-mermaid
+        COMMAND ${CMAKE_COMMAND} -E echo "python3 not found, skipping Mermaid check"
+    )
+endif()
+
 # Clang-Tidy 静态分析
 find_program(CLANG_TIDY clang-tidy)
 if(CLANG_TIDY AND NOT DEFINED CMAKE_C_CLANG_TIDY)
@@ -100,7 +114,7 @@ endif()
 # 静态库目标
 add_library(cmem STATIC src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c)
 target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
-add_dependencies(cmem format-check)
+add_dependencies(cmem format-check check-mermaid)
 set_target_properties(cmem PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     VERSION ${CMEM_VERSION}
@@ -166,40 +180,40 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmem.pc
 # 测试可执行文件
 add_executable(unit_tests tests/test_main.c)
 target_link_libraries(unit_tests PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(unit_tests format-check)
+add_dependencies(unit_tests format-check check-mermaid)
 
 add_executable(advanced_tests tests/test_advanced.c)
 target_link_libraries(advanced_tests PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(advanced_tests format-check)
+add_dependencies(advanced_tests format-check check-mermaid)
 
 add_executable(cpp_tests tests/test_cpp.cpp)
 target_link_libraries(cpp_tests PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(cpp_tests format-check)
+add_dependencies(cpp_tests format-check check-mermaid)
 
 add_executable(benchmark benchmarks/bench_main.c)
 target_link_libraries(benchmark PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(benchmark format-check)
+add_dependencies(benchmark format-check check-mermaid)
 
 # 示例程序
 add_executable(example_basic examples/example_basic.c)
 target_link_libraries(example_basic PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(example_basic format-check)
+add_dependencies(example_basic format-check check-mermaid)
 
 add_executable(example_embedded examples/example_embedded.c)
 target_link_libraries(example_embedded PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(example_embedded format-check)
+add_dependencies(example_embedded format-check check-mermaid)
 
 add_executable(example_leak_analysis examples/example_leak_analysis.c)
 target_link_libraries(example_leak_analysis PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(example_leak_analysis format-check)
+add_dependencies(example_leak_analysis format-check check-mermaid)
 
 add_executable(example_arena_tree examples/example_arena_tree.c)
 target_link_libraries(example_arena_tree PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(example_arena_tree format-check)
+add_dependencies(example_arena_tree format-check check-mermaid)
 
 add_executable(stress_test tests/stress_test.c)
 target_link_libraries(stress_test PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(stress_test format-check)
+add_dependencies(stress_test format-check check-mermaid)
 
 # Fuzz target (libFuzzer)
 add_executable(fuzz_alloc tests/fuzz_alloc.c)

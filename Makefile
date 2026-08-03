@@ -27,9 +27,9 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean check-mermaid
 
-all: format-check lib test test_advanced test_cpp bench examples
+all: format-check check-mermaid lib test test_advanced test_cpp bench examples
 
 help:
 	@echo "cmem Makefile Targets:"
@@ -50,6 +50,7 @@ help:
 	@echo "  uninstall    - Remove installed files from $(PREFIX)"
 	@echo "  package      - Create source tarball for distribution"
 	@echo "  docker-build - Build and test inside Docker container (Ubuntu 22.04)"
+	@echo "  check-mermaid- Validate Mermaid diagram syntax in documentation"
 	@echo "  clean        - Remove build artifacts"
 	@echo "  distclean    - Remove build artifacts and generated files"
 	@echo ""
@@ -272,3 +273,8 @@ docs:
 	@which doxygen > /dev/null || (echo "doxygen not found"; exit 1)
 	@test -f Doxyfile || (echo "Doxyfile not found, skipping docs generation"; exit 0)
 	doxygen Doxyfile
+
+# 检查 Mermaid 图语法 (需要 python3)
+check-mermaid:
+	@which python3 > /dev/null || (echo "python3 not found"; exit 1)
+	@python3 scripts/check_mermaid.py
