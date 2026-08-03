@@ -147,7 +147,7 @@ jobs:
           echo "C:\ProgramData\mingw64\mingw64\x86_64-w64-mingw32\include" >> $env:INCLUDE
 
       - name: Configure CMake
-        run: cmake -B build -G "MinGW Makefiles" -DCMAKE_C_FLAGS="-I C:\ProgramData\mingw64\mingw64\x86_64-w64-mingw32\include"
+        run: cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
 
       - name: Build
         run: cmake --build build
