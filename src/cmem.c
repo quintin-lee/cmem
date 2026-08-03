@@ -48,35 +48,6 @@
 #endif
 #endif
 
-#ifdef __cplusplus
-#include <atomic>
-typedef std::atomic<size_t> cmem_atomic_size_t;
-#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) std::atomic_fetch_add_explicit(obj, arg, order)
-#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) std::atomic_fetch_sub_explicit(obj, arg, order)
-#define CMEM_ATOMIC_LOAD(obj, order) std::atomic_load_explicit(obj, order)
-#define CMEM_ATOMIC_STORE(obj, val, order) std::atomic_store_explicit(obj, val, order)
-#define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
-    std::atomic_compare_exchange_weak_explicit(obj, expected, desired, succ, fail)
-#define CMEM_ATOMIC_INIT(obj, val) std::atomic_init(obj, val)
-#define CMEM_ORDER_RELAXED std::memory_order_relaxed
-#define CMEM_ORDER_ACQUIRE std::memory_order_acquire
-#define CMEM_ORDER_RELEASE std::memory_order_release
-#else
-#include <errno.h>
-#include <stdatomic.h>
-typedef atomic_size_t cmem_atomic_size_t;
-#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) atomic_fetch_add_explicit(obj, arg, order)
-#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) atomic_fetch_sub_explicit(obj, arg, order)
-#define CMEM_ATOMIC_LOAD(obj, order) atomic_load_explicit(obj, order)
-#define CMEM_ATOMIC_STORE(obj, val, order) atomic_store_explicit(obj, val, order)
-#define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
-    atomic_compare_exchange_weak_explicit(obj, expected, desired, succ, fail)
-#define CMEM_ATOMIC_INIT(obj, val) atomic_init(obj, val)
-#define CMEM_ORDER_RELAXED memory_order_relaxed
-#define CMEM_ORDER_ACQUIRE memory_order_acquire
-#define CMEM_ORDER_RELEASE memory_order_release
-#endif
-
 #define MP_MAGIC_HEAD 0x4D504F4F // "MPOO" in ASCII
 #define MP_CANARY_BYTE 0xDE
 #define MP_POISON_BYTE 0xDD

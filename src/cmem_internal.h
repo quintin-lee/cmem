@@ -37,6 +37,20 @@ typedef std::atomic<size_t> cmem_atomic_size_t; /* Atomic size counter (C++ std:
 #define CMEM_ORDER_ACQUIRE std::memory_order_acquire
 #define CMEM_ORDER_RELEASE std::memory_order_release
 #define MP_THREAD_LOCAL thread_local
+#elif defined(_WIN32)
+#include <windows.h>
+typedef volatile LONG_PTR cmem_atomic_size_t;
+#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) (InterlockedExchangeAdd64((LONG64 volatile *)(obj), (LONG64)(arg)) - (LONG64)(arg))
+#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) (InterlockedExchangeAdd64((LONG64 volatile *)(obj), -(LONG64)(arg)) + (LONG64)(arg))
+#define CMEM_ATOMIC_LOAD(obj, order) (*(volatile LONG_PTR *)(obj))
+#define CMEM_ATOMIC_STORE(obj, val, order) InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
+#define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
+    InterlockedCompareExchange64((LONG64 volatile *)(obj), (LONG64)(desired), (LONG64)(*expected))
+#define CMEM_ATOMIC_INIT(obj, val) (*(volatile LONG_PTR *)(obj) = (LONG_PTR)(val))
+#define CMEM_ORDER_RELAXED 0
+#define CMEM_ORDER_ACQUIRE 0
+#define CMEM_ORDER_RELEASE 0
+#define MP_THREAD_LOCAL __declspec(thread)
 #else
 #include <errno.h>
 #include <stdatomic.h>
