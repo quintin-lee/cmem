@@ -15,9 +15,9 @@
 #include "cmem_internal.h"
 
 /** Fixed slot sizes served by the slab tier, one class per entry. */
-const size_t      kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
-thread_cache_t    tls_cache                    = {{0}, {0}};
-mp_thread_quota_t thread_quota                 = {0, 0};
+const size_t                      kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
+MP_THREAD_LOCAL thread_cache_t    tls_cache                    = {{0}, {0}};
+MP_THREAD_LOCAL mp_thread_quota_t thread_quota                 = {0, 0};
 
 /**
  * @brief Initialise every slab size class for a pool.

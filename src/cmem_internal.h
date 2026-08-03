@@ -226,8 +226,8 @@ typedef struct {
     uint16_t        counts[SLAB_CLASS_COUNT]; /**< Number of cached slots per class      */
 } thread_cache_t;
 
-extern thread_cache_t    tls_cache;    /**< Per-thread slab cache (TLS)            */
-extern mp_thread_quota_t thread_quota; /**< Per-thread quota accounting (TLS)      */
+extern MP_THREAD_LOCAL thread_cache_t    tls_cache; /**< Per-thread slab cache (TLS)            */
+extern MP_THREAD_LOCAL mp_thread_quota_t thread_quota; /**< Per-thread quota accounting (TLS) */
 
 /**
  * @brief TLSF block header (cmem_tlsf.c).
