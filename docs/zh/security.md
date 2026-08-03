@@ -28,18 +28,11 @@
 
 ### 1.2 攻击面
 
-```
-+------------------+
-|   Application    |
-+--------+---------+
-         |
-+--------v---------+
-|   cmem Pool      | <-- 攻击面：恶意输入导致溢出/UAF
-+--------+---------+
-         |
-+--------v---------+
-|   OS Kernel       |
-+------------------+
+```mermaid
+flowchart TD
+    A["Application"] --> B["cmem Pool"]
+    B --> C["OS Kernel"]
+    B --> D["Attack Surface:<br/>malicious input causing<br/>overflow / UAF"]
 ```
 
 ---

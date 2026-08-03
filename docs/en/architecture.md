@@ -14,22 +14,34 @@ cmem is a general-purpose high-performance hierarchical memory manager that adop
 
 ### 1.2 Core Architecture
 
-```text
-                           +-------------------------------+
-                           |   User Request (mp_alloc)    |
-                           +-------------------------------+
-                                           |
-                    +----------------------+----------------------+
-                    | (<= 512 Bytes)       | (512B ~ 4MB)         | (> 4MB)
-                    v                      v                      v
-           +------------------+   +-------------------+   +--------------------+
-           |   Slab Pool      |   |   TLSF Allocator  |   | Direct OS Fallback |
-           | (Fixed Blocks)   |   | (Two-Level Fit)   |   |  (System Malloc)   |
-           +------------------+   +-------------------+   +--------------------+
-           | O(1) Fast Alloc  |   | O(1) Bitmap Search|   | Huge Allocations   |
-           | Zero Extra Frag  |   | Immediate Merge   |   | Dynamic Page Track |
-           +------------------+   +-------------------+   +--------------------+
+```mermaid
+flowchart TD
+    A["User Request<br/>(mp_alloc)"] --> B{"size <= 512B?"}
+    B -->|Yes| C["Slab Pool<br/>Fixed Blocks<br/>O(1) Fast Alloc"]
+    B -->|No| D{"size <= 4MB?"}
+    D -->|Yes| E["TLSF Allocator<br/>Two-Level Fit<br/>O(1) Bitmap Search"]
+    D -->|No| F["Direct OS Fallback<br/>System Malloc<br/>Huge Allocations"]
+    C --> G["Return Pointer"]
+    E --> G
+    F --> G
 ```
+
+```text
+                            +-------------------------------+
+                            |   User Request (mp_alloc)    |
+                            +-------------------------------+
+                                            |
+                     +----------------------+----------------------+
+                     | (<= 512 Bytes)       | (512B ~ 4MB)         | (> 4MB)
+                     v                      v                      v
+            +------------------+   +-------------------+   +--------------------+
+            |   Slab Pool      |   |   TLSF Allocator  |   | Direct OS Fallback |
+            | (Fixed Blocks)   |   | (Two-Level Fit)   |   |  (System Malloc)   |
+            +------------------+   +-------------------+   +--------------------+
+            | O(1) Fast Alloc  |   | O(1) Bitmap Search|   | Huge Allocations   |
+            | Zero Extra Frag  |   | Immediate Merge   |   | Dynamic Page Track |
+            +------------------+   +-------------------+   +--------------------+
+            ```
 
 ---
 
@@ -244,6 +256,21 @@ static MP_THREAD_LOCAL thread_cache_t tls_cache = {{0}, {0}};
 
 cmem adopts a **multi-level lock strategy**, from coarse to fine:
 
+```mermaid
+flowchart TD
+    A["mp_alloc(pool, size)"] --> B{"Lock Level?"}
+    B --> C["1. rwlock<br/>Pool metadata<br/>stats / active_head / tree"]
+    B --> D["2. Class mutex<br/>Slab class lock<br/>8B vs 512B parallel"]
+    B --> E["3. TLS Cache<br/>Lock-free fast path<br/>cache miss -> class lock"]
+    B --> F["4. Per-CPU freelist<br/>CAS lock-free<br/>batch refill/flush"]
+    C --> G["Write: destroy / reset"]
+    C --> H["Read: stats / pressure"]
+    E --> I["Cache Hit: O(1) no lock"]
+    E --> J["Cache Miss: slab_alloc()"]
+    F --> K["pop / push lock-free"]
+    F --> L["refill / flush batch"]
+```
+
 1. **Read-Write Lock (rwlock)**: Protects pool-level metadata (stats, active_head, tree structure)
    - Read lock: Introspection query APIs (mp_get_stats, mp_pressure, etc.)
    - Write lock: Lifecycle operations (mp_destroy, mp_reset)
@@ -263,6 +290,18 @@ cmem adopts a **multi-level lock strategy**, from coarse to fine:
 
 ### 4.2 Lock-Free Path
 
+```mermaid
+flowchart TD
+    A["mp_alloc(pool, size)"] --> B{"Allocation Path?"}
+    B -->|"PERCPU_FREELIST"| C["percpu_pop()<br/>lock-free CAS"]
+    C -->|Miss| D["percpu_refill()<br/>batch refill"]
+    D --> C
+    B -->|"TLS_CACHE"| E["tls_cache.slots[class_idx]<br/>lock-free"]
+    E -->|Miss| F["slab_alloc()<br/>holds class lock"]
+    B -->|"slab_alloc"| G["partial_pages<br/>take slot"]
+    G -->|No free slot| H["slab_create_page()<br/>holds class lock"]
+```
+
 ```
 mp_alloc(pool, size)
   ├─ [PERCPU_FREELIST] -> percpu_pop() [lock-free CAS]
@@ -271,13 +310,25 @@ mp_alloc(pool, size)
   │     └─ Miss -> slab_alloc() [holds class lock]
   └─ [slab_alloc] -> partial_pages takes slot
         └─ No free slot -> slab_create_page() [holds class lock]
-```
+  ```
 
 ---
 
 ## 5. Memory Layout
 
 ### 5.1 Slab Page Layout
+
+```mermaid
+graph LR
+    A["page_raw_mem<br/>(start of Slab Page)"] --> B["mp_slab_page_t<br/>(Header)"]
+    B --> C["Slot 0<br/>[payload + canary]"]
+    C --> D["Slot 1"]
+    D --> E["..."]
+    E --> F["Slot N-1"]
+    F --> G["Slot N"]
+    B --> H["User ptr returned"]
+    H --> C
+```
 
 ```
 +------------------+----------------------------------------------+
@@ -295,11 +346,11 @@ mp_alloc(pool, size)
 
 ### 5.2 TLSF Block Layout
 
-```
-+------------------+-------------------+-------------------+ ...
-| Block Header     | Payload           | Block Header      |
-| (prev/next/size) | (user data)       | (prev/next/size)  |
-+------------------+-------------------+-------------------+ ...
+```mermaid
+graph LR
+    A["Block Header<br/>(prev/next/size)"] --> B["Payload<br/>(user data)"]
+    B --> C["Block Header<br/>(prev/next/size)"]
+    C --> D["..."]
 ```
 
 - Block Header is located before the payload
@@ -313,6 +364,15 @@ mp_alloc(pool, size)
 ### 6.1 Online Expansion
 
 Achieves zero-downtime expansion via TLSF Pool linked list:
+
+```mermaid
+flowchart TD
+    A["mp_expand_pool(pool, additional_bytes)"] --> B["tlsf_create_pool_custom()"]
+    B --> C["new_tlsf->next = pool->tlsf_root"]
+    C --> D["pool->tlsf_root = new_tlsf"]
+    D --> E["Allocation: traverse TLSF list"]
+    E --> F["Deallocation: return to matching TLSF Pool"]
+```
 
 ```c
 struct memory_pool {

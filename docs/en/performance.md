@@ -27,19 +27,18 @@ cmem adopts a three-tier hybrid architecture, each tier having different perform
 
 ### 1.1 Allocation Path
 
-```
-mp_alloc(pool, size)
-  │
-  ├─ size > 4MB ──────────────► Direct OS Fallback
-  │
-  ├─ 512B < size <= 4MB ──────► TLSF Allocator
-  │     ├─ Lookup FL/SL bitmap O(1)
-  │     └─ Split/merge blocks
-  │
-  └─ size <= 512B ────────────► Slab Pool
-        ├─ [PERCPU_FREELIST] lock-free CAS
-        ├─ [TLS_CACHE]       lock-free
-        └─ [SLAB_CLASS_LOCK] fine-grained lock
+```mermaid
+flowchart TD
+    A["mp_alloc(pool, size)"] --> B{"size > 4MB?"}
+    B -->|Yes| C["Direct OS Fallback"]
+    B -->|No| D{"size <= 512B?"}
+    D -->|Yes| E["Slab Pool"]
+    D -->|No| F["TLSF Allocator"]
+    E --> G["[PERCPU_FREELIST] lock-free CAS"]
+    E --> H["[TLS_CACHE] lock-free"]
+    E --> I["[SLAB_CLASS_LOCK] fine-grained lock"]
+    F --> J["Lookup FL/SL bitmap O(1)"]
+    F --> K["Split/merge blocks"]
 ```
 
 ---

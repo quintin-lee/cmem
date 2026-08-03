@@ -74,21 +74,16 @@ int main() {
 
 **cmem** adopts a modern **Tiered Hybrid Architecture** that ensures $O(1)$ allocation time complexity while greatly reducing memory fragmentation and significantly improving L1/L2 Cache locality:
 
-```text
-                          +-------------------------------+
-                          |   User Request (mp_alloc)    |
-                          +-------------------------------+
-                                          |
-                   +----------------------+----------------------+
-                   | (<= 512 Bytes)       | (512B ~ 4MB)         | (> 4MB)
-                   v                      v                      v
-          +------------------+   +-------------------+   +--------------------+
-          |   Slab Pool      |   |   TLSF Allocator  |   | Direct OS Fallback |
-          | (Fixed Blocks)   |   | (Two-Level Fit)   |   |  (System Malloc)   |
-          +------------------+   +-------------------+   +--------------------+
-          | O(1) Fast Alloc  |   | O(1) Bitmap Search|   | Huge Allocations   |
-          | Zero Extra Frag  |   | Immediate Merge   |   | Dynamic Page Track |
-          +------------------+   +-------------------+   +--------------------+
+```mermaid
+flowchart TD
+    A["User Request<br/>(mp_alloc)"] --> B{"size <= 512B?"}
+    B -->|Yes| C["Slab Pool<br/>Fixed Blocks<br/>O(1) Fast Alloc"]
+    B -->|No| D{"size <= 4MB?"}
+    D -->|Yes| E["TLSF Allocator<br/>Two-Level Fit<br/>O(1) Bitmap Search"]
+    D -->|No| F["Direct OS Fallback<br/>System Malloc<br/>Huge Allocations"]
+    C --> G["Return Pointer"]
+    E --> G
+    F --> G
 ```
 
 ---

@@ -28,18 +28,11 @@
 
 ### 1.2 Attack Surface
 
-```
-+------------------+
-|   Application    |
-+--------+---------+
-          |
-+--------v---------+
-|   cmem Pool      | <-- Attack surface: malicious input causing overflow/UAF
-+--------+---------+
-          |
-+--------v---------+
-|   OS Kernel       |
-+------------------+
+```mermaid
+flowchart TD
+    A["Application"] --> B["cmem Pool"]
+    B --> C["OS Kernel"]
+    B --> D["Attack Surface:<br/>malicious input causing<br/>overflow / UAF"]
 ```
 
 ---

@@ -27,19 +27,18 @@ cmem 采用三层混合架构，每层的性能特征不同：
 
 ### 1.1 分配路径
 
-```
-mp_alloc(pool, size)
-  │
-  ├─ size > 4MB ──────────────► Direct OS Fallback
-  │
-  ├─ 512B < size <= 4MB ──────► TLSF Allocator
-  │     ├─ 查找 FL/SL 位图 O(1)
-  │     └─ 分割/合并块
-  │
-  └─ size <= 512B ────────────► Slab Pool
-        ├─ [PERCPU_FREELIST] 无锁 CAS
-        ├─ [TLS_CACHE]       无锁
-        └─ [SLAB_CLASS_LOCK] 细粒度锁
+```mermaid
+flowchart TD
+    A["mp_alloc(pool, size)"] --> B{"size > 4MB?"}
+    B -->|Yes| C["Direct OS Fallback"]
+    B -->|No| D{"size <= 512B?"}
+    D -->|Yes| E["Slab Pool"]
+    D -->|No| F["TLSF Allocator"]
+    E --> G["[PERCPU_FREELIST] 无锁 CAS"]
+    E --> H["[TLS_CACHE] 无锁"]
+    E --> I["[SLAB_CLASS_LOCK] 细粒度锁"]
+    F --> J["查找 FL/SL 位图 O(1)"]
+    F --> K["分割/合并块"]
 ```
 
 ---

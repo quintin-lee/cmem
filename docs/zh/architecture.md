@@ -14,22 +14,34 @@ cmem 是一个通用高性能分层内存管理器，采用 **三层混合架构
 
 ### 1.2 核心架构
 
-```text
-                          +-------------------------------+
-                          |   User Request (mp_alloc)    |
-                          +-------------------------------+
-                                          |
-                   +----------------------+----------------------+
-                   | (<= 512 Bytes)       | (512B ~ 4MB)         | (> 4MB)
-                   v                      v                      v
-          +------------------+   +-------------------+   +--------------------+
-          |   Slab Pool      |   |   TLSF Allocator  |   | Direct OS Fallback |
-          | (Fixed Blocks)   |   | (Two-Level Fit)   |   |  (System Malloc)   |
-          +------------------+   +-------------------+   +--------------------+
-          | O(1) Fast Alloc  |   | O(1) Bitmap Search|   | Huge Allocations   |
-          | Zero Extra Frag  |   | Immediate Merge   |   | Dynamic Page Track |
-          +------------------+   +-------------------+   +--------------------+
+```mermaid
+flowchart TD
+    A["用户请求<br/>(mp_alloc)"] --> B{"size <= 512B?"}
+    B -->|Yes| C["Slab Pool<br/>固定块<br/>O(1) 快速分配"]
+    B -->|No| D{"size <= 4MB?"}
+    D -->|Yes| E["TLSF Allocator<br/>二级位图<br/>O(1) 查找"]
+    D -->|No| F["Direct OS Fallback<br/>System Malloc<br/>超大对象"]
+    C --> G["返回指针"]
+    E --> G
+    F --> G
 ```
+
+```text
+                           +-------------------------------+
+                           |   User Request (mp_alloc)    |
+                           +-------------------------------+
+                                           |
+                    +----------------------+----------------------+
+                    | (<= 512 Bytes)       | (512B ~ 4MB)         | (> 4MB)
+                    v                      v                      v
+           +------------------+   +-------------------+   +--------------------+
+           |   Slab Pool      |   |   TLSF Allocator  |   | Direct OS Fallback |
+           | (Fixed Blocks)   |   | (Two-Level Fit)   |   |  (System Malloc)   |
+           +------------------+   +-------------------+   +--------------------+
+           | O(1) Fast Alloc  |   | O(1) Bitmap Search|   | Huge Allocations   |
+           | Zero Extra Frag  |   | Immediate Merge   |   | Dynamic Page Track |
+           +------------------+   +-------------------+   +--------------------+
+            ```
 
 ---
 
@@ -244,6 +256,21 @@ static MP_THREAD_LOCAL thread_cache_t tls_cache = {{0}, {0}};
 
 cmem 采用 **多层级锁策略**，从粗到细：
 
+```mermaid
+flowchart TD
+    A["mp_alloc(pool, size)"] --> B{"锁层级?"}
+    B --> C["1. rwlock<br/>池级元数据<br/>stats / active_head / tree"]
+    B --> D["2. Class mutex<br/>Slab class lock<br/>8B 与 512B 并行"]
+    B --> E["3. TLS Cache<br/>完全无锁<br/>cache miss -> class lock"]
+    B --> F["4. Per-CPU freelist<br/>CAS 无锁<br/>批量 refill/flush"]
+    C --> G["Write: destroy / reset"]
+    C --> H["Read: stats / pressure"]
+    E --> I["Cache Hit: O(1) 无锁"]
+    E --> J["Cache Miss: slab_alloc()"]
+    F --> K["pop / push 无锁"]
+    F --> L["refill / flush 批量"]
+```
+
 1. **读写锁（rwlock）**：保护池级元数据（stats、active_head、树结构）
    - 读锁：内省查询 API（mp_get_stats、mp_pressure 等）
    - 写锁：生命周期操作（mp_destroy、mp_reset）
@@ -257,11 +284,23 @@ cmem 采用 **多层级锁策略**，从粗到细：
    - 仅在 Cache Miss 时回退到带锁路径
 
 4. **Per-CPU Lock-Free Freelist**（可选）
-   - 基于 CAS 的 per-CPU  freelist
+   - 基于 CAS 的 per-CPU freelist
    - 完全无锁，无伪共享
    - 批量 Refill/Flush 机制保持内存利用率
 
 ### 4.2 无锁路径
+
+```mermaid
+flowchart TD
+    A["mp_alloc(pool, size)"] --> B{"分配路径?"}
+    B -->|"PERCPU_FREELIST"| C["percpu_pop()<br/>无锁 CAS"]
+    C -->|Miss| D["percpu_refill()<br/>批量 refill"]
+    D --> C
+    B -->|"TLS_CACHE"| E["tls_cache.slots[class_idx]<br/>无锁"]
+    E -->|Miss| F["slab_alloc()<br/>持 class lock"]
+    B -->|"slab_alloc"| G["partial_pages<br/>取槽"]
+    G -->|无空闲| H["slab_create_page()<br/>持 class lock"]
+```
 
 ```
 mp_alloc(pool, size)
@@ -271,13 +310,25 @@ mp_alloc(pool, size)
   │     └─ Miss -> slab_alloc() [持 class lock]
   └─ [slab_alloc] -> partial_pages 取槽
         └─ 无空闲 -> slab_create_page() [持 class lock]
-```
+  ```
 
 ---
 
 ## 5. 内存布局
 
 ### 5.1 Slab Page 布局
+
+```mermaid
+graph LR
+    A["page_raw_mem<br/>(Slab Page 起始)"] --> B["mp_slab_page_t<br/>(Header)"]
+    B --> C["Slot 0<br/>[payload + canary]"]
+    C --> D["Slot 1"]
+    D --> E["..."]
+    E --> F["Slot N-1"]
+    F --> G["Slot N"]
+    B --> H["返回给用户的 ptr"]
+    H --> C
+```
 
 ```
 +------------------+----------------------------------------------+
@@ -295,11 +346,11 @@ mp_alloc(pool, size)
 
 ### 5.2 TLSF Block 布局
 
-```
-+------------------+-------------------+-------------------+ ...
-| Block Header     | Payload           | Block Header      |
-| (prev/next/size) | (user data)       | (prev/next/size)  |
-+------------------+-------------------+-------------------+ ...
+```mermaid
+graph LR
+    A["Block Header<br/>(prev/next/size)"] --> B["Payload<br/>(user data)"]
+    B --> C["Block Header<br/>(prev/next/size)"]
+    C --> D["..."]
 ```
 
 - Block Header 位于 payload 前
@@ -313,6 +364,15 @@ mp_alloc(pool, size)
 ### 6.1 在线扩容
 
 通过 TLSF Pool 链表实现无停服扩容：
+
+```mermaid
+flowchart TD
+    A["mp_expand_pool(pool, additional_bytes)"] --> B["tlsf_create_pool_custom()"]
+    B --> C["new_tlsf->next = pool->tlsf_root"]
+    C --> D["pool->tlsf_root = new_tlsf"]
+    D --> E["分配：遍历 TLSF 链表"]
+    E --> F["释放：归还到对应 TLSF Pool"]
+```
 
 ```c
 struct memory_pool {

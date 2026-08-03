@@ -70,21 +70,16 @@ int main() {
 
 **cmem** 采用现代 **分层混合架构**，在保证 $O(1)$ 分配时间复杂度的同时，大幅降低内存碎片率并显著提升 L1/L2 缓存局部性：
 
-```text
-                           +-------------------------------+
-                           |   User Request (mp_alloc)    |
-                           +-------------------------------+
-                                           |
-                    +----------------------+----------------------+
-                    | (<= 512 Bytes)       | (512B ~ 4MB)         | (> 4MB)
-                    v                      v                      v
-           +------------------+   +-------------------+   +--------------------+
-           |   Slab Pool      |   |   TLSF Allocator  |   | Direct OS Fallback |
-           | (Fixed Blocks)   |   | (Two-Level Fit)   |   |  (System Malloc)   |
-           +------------------+   +-------------------+   +--------------------+
-           | O(1) Fast Alloc  |   | O(1) Bitmap Search|   | Huge Allocations   |
-           | Zero Extra Frag  |   | Immediate Merge   |   | Dynamic Page Track |
-           +------------------+   +-------------------+   +--------------------+
+```mermaid
+flowchart TD
+    A["用户请求<br/>(mp_alloc)"] --> B{"size <= 512B?"}
+    B -->|Yes| C["Slab Pool<br/>固定块<br/>O(1) 快速分配"]
+    B -->|No| D{"size <= 4MB?"}
+    D -->|Yes| E["TLSF Allocator<br/>二级位图<br/>O(1) 查找"]
+    D -->|No| F["Direct OS Fallback<br/>System Malloc<br/>超大对象"]
+    C --> G["返回指针"]
+    E --> G
+    F --> G
 ```
 
 ---
