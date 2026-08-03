@@ -68,7 +68,7 @@ static size_t get_rss_kb()
         return 0;
     }
 
-    char   line[256];
+    char line[256];
     size_t rss = 0;
     while (fgets(line, sizeof(line), f)) {
         if (strncmp(line, "VmRSS:", 6) == 0) {
@@ -89,14 +89,14 @@ static size_t get_rss_kb()
 /* ========================================================================== */
 
 typedef struct {
-    int               thread_id;
-    memory_pool_t    *pool;
+    int thread_id;
+    memory_pool_t *pool;
     volatile uint64_t alloc_count;
     volatile uint64_t free_count;
     volatile uint64_t fail_count;
-    void            **slots;
-    int               slot_count;
-    int               slot_capacity;
+    void **slots;
+    int slot_count;
+    int slot_capacity;
 } thread_ctx_t;
 
 /* ========================================================================== */
@@ -113,7 +113,7 @@ static void *stress_worker(void *arg)
 
     while (!g_stop) {
         size_t sz = 32 + (rand_r(&seed) % (STRESS_MAX_ALLOC_SIZE - 32));
-        void  *p  = mp_alloc(ctx->pool, sz);
+        void *p = mp_alloc(ctx->pool, sz);
 
         if (!p) {
             ctx->fail_count++;
@@ -123,7 +123,7 @@ static void *stress_worker(void *arg)
         if (ctx->slot_count < ctx->slot_capacity) {
             ctx->slots[ctx->slot_count++] = p;
         } else {
-            int   idx = rand_r(&seed) % ctx->slot_capacity;
+            int idx = rand_r(&seed) % ctx->slot_capacity;
             void *old = ctx->slots[idx];
             mp_free(ctx->pool, old);
             ctx->slots[idx] = p;
@@ -162,17 +162,17 @@ int main()
 
     mp_set_memory_limit(pool, (size_t)4 * 1024 * 1024 * 1024);
 
-    pthread_t    threads[STRESS_THREADS];
+    pthread_t threads[STRESS_THREADS];
     thread_ctx_t contexts[STRESS_THREADS];
 
     for (int i = 0; i < STRESS_THREADS; i++) {
-        contexts[i].thread_id     = i;
-        contexts[i].pool          = pool;
-        contexts[i].alloc_count   = 0;
-        contexts[i].free_count    = 0;
-        contexts[i].fail_count    = 0;
+        contexts[i].thread_id = i;
+        contexts[i].pool = pool;
+        contexts[i].alloc_count = 0;
+        contexts[i].free_count = 0;
+        contexts[i].fail_count = 0;
         contexts[i].slot_capacity = STRESS_WORKING_SET_PER_THREAD;
-        contexts[i].slot_count    = 0;
+        contexts[i].slot_count = 0;
         contexts[i].slots = (void **)calloc((size_t)contexts[i].slot_capacity, sizeof(void *));
         assert(contexts[i].slots != NULL);
 
@@ -181,7 +181,7 @@ int main()
     }
 
     uint64_t last_total_allocs = 0;
-    time_t   start_time        = time(NULL);
+    time_t start_time = time(NULL);
 
     while (1) {
         sleep(STRESS_REPORT_INTERVAL_SEC);
@@ -194,12 +194,12 @@ int main()
         }
 
         double pressure = mp_pressure(pool);
-        size_t rss_kb   = get_rss_kb();
+        size_t rss_kb = get_rss_kb();
         size_t resident = mp_resident(pool);
 
         uint64_t total_allocs = 0;
-        uint64_t total_frees  = 0;
-        uint64_t total_fails  = 0;
+        uint64_t total_frees = 0;
+        uint64_t total_fails = 0;
         for (int i = 0; i < STRESS_THREADS; i++) {
             total_allocs += contexts[i].alloc_count;
             total_frees += contexts[i].free_count;
@@ -207,7 +207,7 @@ int main()
         }
 
         uint64_t delta_allocs = total_allocs - last_total_allocs;
-        double   qps          = (double)delta_allocs / (double)STRESS_REPORT_INTERVAL_SEC;
+        double qps = (double)delta_allocs / (double)STRESS_REPORT_INTERVAL_SEC;
 
         printf("[STRESS] T=%lds | Pressure=%.2f%% | RSS=%zu MB | Resident=%zu MB | "
                "QPS=%.0f | Allocs=%" PRIu64 " | Frees=%" PRIu64 " | Fails=%" PRIu64 " | "

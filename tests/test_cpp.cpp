@@ -25,7 +25,7 @@ void test_cpp_stl_allocator()
 
     {
         // Scope for STL Containers to ensure destructors release all nodes/buckets
-        cmem::allocator<int>                   vec_alloc(pool);
+        cmem::allocator<int> vec_alloc(pool);
         std::vector<int, cmem::allocator<int>> vec(vec_alloc);
 
         for (int i = 0; i < 100; i++) {
@@ -66,7 +66,7 @@ void test_cpp_pmr_allocator()
     cmem::MemoryPool pool(1024 * 1024, MP_FLAG_THREAD_SAFE);
 
     {
-        cmem::pmr_resource                 res(pool.get());
+        cmem::pmr_resource res(pool.get());
         std::pmr::vector<std::pmr::string> vec(&res);
 
         vec.push_back(std::pmr::string("Polymorphic", &res));

@@ -44,7 +44,7 @@ int main()
 
     printf("1. Allocating memory blocks...\n");
     char *greeting = (char *)mp_alloc(pool, 40);
-    int  *numbers  = (int *)mp_alloc(pool, 64);
+    int *numbers = (int *)mp_alloc(pool, 64);
 
     strcpy(greeting, "Hello cmem Memory Manager!");
     printf("   greeting: %s\n\n", greeting);

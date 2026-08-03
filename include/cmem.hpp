@@ -83,9 +83,9 @@ class MemoryPool
      * @param name Human-readable name for the child arena
      * @throw std::runtime_error if child pool creation fails
      */
-    MemoryPool(MemoryPool        &parent,
-               size_t             initial_capacity,
-               mp_flags_t         flags,
+    MemoryPool(MemoryPool &parent,
+               size_t initial_capacity,
+               mp_flags_t flags,
                const std::string &name)
         : pool_(mp_create_child(parent.get_raw_pool(), initial_capacity, flags, name.c_str())),
           shm_name_("")
@@ -112,7 +112,7 @@ class MemoryPool
         }
     }
 
-    MemoryPool(const MemoryPool &)            = delete;
+    MemoryPool(const MemoryPool &) = delete;
     MemoryPool &operator=(const MemoryPool &) = delete;
 
     /**
@@ -148,8 +148,8 @@ class MemoryPool
                     mp_destroy(pool_);
                 }
             }
-            pool_       = other.pool_;
-            shm_name_   = std::move(other.shm_name_);
+            pool_ = other.pool_;
+            shm_name_ = std::move(other.shm_name_);
             other.pool_ = nullptr;
         }
         return *this;
@@ -307,7 +307,7 @@ class MemoryPool
      */
     std::string analyze_leaks() const
     {
-        char   buffer[16384];
+        char buffer[16384];
         size_t len = mp_analyze_leaks(pool_, buffer, sizeof(buffer));
         return std::string(buffer, len);
     }
@@ -453,8 +453,8 @@ class MemoryPool
     }
 
   private:
-    memory_pool_t *pool_;     /**< Underlying C memory pool */
-    std::string    shm_name_; /**< Shared memory name (empty if not shared) */
+    memory_pool_t *pool_;  /**< Underlying C memory pool */
+    std::string shm_name_; /**< Shared memory name (empty if not shared) */
 };
 
 /**
@@ -476,12 +476,12 @@ class MemoryPool
 template <typename T> class allocator
 {
   public:
-    using value_type      = T;              /**< Element type */
-    using pointer         = T *;            /**< Pointer to element */
-    using const_pointer   = const T *;      /**< Pointer to const element */
-    using reference       = T &;            /**< Reference to element */
+    using value_type = T;                   /**< Element type */
+    using pointer = T *;                    /**< Pointer to element */
+    using const_pointer = const T *;        /**< Pointer to const element */
+    using reference = T &;                  /**< Reference to element */
     using const_reference = const T &;      /**< Reference to const element */
-    using size_type       = std::size_t;    /**< Unsigned size type */
+    using size_type = std::size_t;          /**< Unsigned size type */
     using difference_type = std::ptrdiff_t; /**< Signed difference type */
 
     /**

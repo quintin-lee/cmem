@@ -36,8 +36,8 @@ bool mp_audit_heap(memory_pool_t *pool)
     }
     pool_lock(pool);
 
-    bool               healthy = true;
-    mp_block_header_t *curr    = pool->active_head;
+    bool healthy = true;
+    mp_block_header_t *curr = pool->active_head;
 
     while (curr) {
         void *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
@@ -125,10 +125,10 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
     }
 
     mp_block_header_t *curr = pool->active_head;
-    size_t             idx  = 1;
+    size_t idx = 1;
 
     while (curr && offset < max_len) {
-        void       *payload  = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
+        void *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
         const char *tier_str = (curr->alloc_type == ALLOC_TYPE_SLAB)
                                    ? "SLAB"
                                    : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
@@ -196,7 +196,7 @@ bool mp_export_leak_report(memory_pool_t *pool, const char *filepath)
     if (!pool || !filepath) {
         return false;
     }
-    char   buffer[16384];
+    char buffer[16384];
     size_t report_len = mp_analyze_leaks(pool, buffer, sizeof(buffer));
 
     FILE *f = fopen(filepath, "w");
@@ -285,10 +285,10 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
 
     size_t total_alloc =
         stats.slab_allocated_bytes + stats.tlsf_allocated_bytes + stats.os_allocated_bytes;
-    size_t tot    = (total_alloc > 0) ? total_alloc : 1;
+    size_t tot = (total_alloc > 0) ? total_alloc : 1;
     double p_slab = (stats.slab_allocated_bytes * 100.0) / tot;
     double p_tlsf = (stats.tlsf_allocated_bytes * 100.0) / tot;
-    double p_os   = (stats.os_allocated_bytes * 100.0) / tot;
+    double p_os = (stats.os_allocated_bytes * 100.0) / tot;
 
     fprintf(f,
             "  <h2>Allocation Tier Distribution</h2>\n"
@@ -314,10 +314,10 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
 
     pool_lock(pool);
     mp_block_header_t *curr = pool->active_head;
-    size_t             idx  = 1;
+    size_t idx = 1;
 
     while (curr) {
-        void       *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
+        void *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
         const char *badge_cls =
             (curr->alloc_type == ALLOC_TYPE_SLAB)
                 ? "badge-slab"
@@ -374,10 +374,10 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
     pool_lock(pool);
 
     cmem_snapshot_header_t hdr;
-    hdr.magic              = 0x434D454D;
-    hdr.version            = 1;
-    hdr.total_pool_size    = (uint64_t)pool->stats.total_pool_size;
-    hdr.active_bytes       = (uint64_t)pool->stats.active_bytes;
+    hdr.magic = 0x434D454D;
+    hdr.version = 1;
+    hdr.total_pool_size = (uint64_t)pool->stats.total_pool_size;
+    hdr.active_bytes = (uint64_t)pool->stats.active_bytes;
     hdr.active_allocations = (uint64_t)pool->stats.active_allocations;
 
     fwrite(&hdr, sizeof(hdr), 1, f);
@@ -386,10 +386,10 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
     while (curr) {
         cmem_snapshot_record_t rec;
         memset(&rec, 0, sizeof(rec));
-        rec.address        = (uint64_t)(uintptr_t)((uint8_t *)curr + sizeof(mp_block_header_t));
+        rec.address = (uint64_t)(uintptr_t)((uint8_t *)curr + sizeof(mp_block_header_t));
         rec.requested_size = (uint64_t)curr->requested_size;
-        rec.alloc_type     = curr->alloc_type;
-        rec.alloc_line     = (uint32_t)curr->alloc_line;
+        rec.alloc_type = curr->alloc_type;
+        rec.alloc_line = (uint32_t)curr->alloc_line;
         if (curr->alloc_file) {
             snprintf(rec.alloc_file, sizeof(rec.alloc_file), "%s", curr->alloc_file);
         }
@@ -453,7 +453,7 @@ bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max
                        hdr.active_allocations);
 
     cmem_snapshot_record_t rec;
-    size_t                 idx = 1;
+    size_t idx = 1;
 
     while (fread(&rec, sizeof(rec), 1, f) == 1 && offset < max_len) {
         const char *tier_str = (rec.alloc_type == ALLOC_TYPE_SLAB)
@@ -493,8 +493,8 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
         return;
     }
     pool_rdlock(pool);
-    *stats                     = pool->stats;
-    size_t total_sys           = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
+    *stats = pool->stats;
+    size_t total_sys = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
     stats->fragmentation_ratio = 1.0 - ((double)pool->stats.active_bytes / (double)total_sys);
 
     struct timespec now;
@@ -504,13 +504,13 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
     }
     double elapsed = (now.tv_sec - pool->window_start_time.tv_sec) +
                      (now.tv_nsec - pool->window_start_time.tv_nsec) / 1e9;
-    size_t ops     = pool->stats.total_alloc_ops;
-    size_t active  = pool->stats.active_bytes;
+    size_t ops = pool->stats.total_alloc_ops;
+    size_t active = pool->stats.active_bytes;
     if (elapsed > 0.000001 && ops > 0) {
-        stats->alloc_qps      = (double)ops / elapsed;
+        stats->alloc_qps = (double)ops / elapsed;
         stats->bandwidth_mbps = ((double)active / (1024.0 * 1024.0)) / elapsed;
     } else {
-        stats->alloc_qps      = (double)ops;
+        stats->alloc_qps = (double)ops;
         stats->bandwidth_mbps = (double)active / (1024.0 * 1024.0);
     }
     pool_rdunlock(pool);
@@ -607,7 +607,7 @@ void mp_dump_histogram(memory_pool_t *pool)
         if (stats.size_histogram[i] == 0) {
             continue;
         }
-        int  bar_len = (max_count > 0) ? (int)((stats.size_histogram[i] * 20) / max_count) : 0;
+        int bar_len = (max_count > 0) ? (int)((stats.size_histogram[i] * 20) / max_count) : 0;
         char bar_str[21];
         memset(bar_str, '*', bar_len);
         bar_str[bar_len] = '\0';
@@ -860,38 +860,38 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
 
     if (!info) {
         result.pattern_name = "unknown";
-        result.confidence   = 0;
-        result.suggestion   = "Provide valid allocation info";
+        result.confidence = 0;
+        result.suggestion = "Provide valid allocation info";
         return result;
     }
 
     // Pattern 1: Large single allocation (likely buffer leak)
     if (info->requested_size > 64 * 1024) {
         result.pattern_name = "large_buffer_leak";
-        result.confidence   = 85;
-        result.suggestion   = "Check for missing free() on large allocations";
+        result.confidence = 85;
+        result.suggestion = "Check for missing free() on large allocations";
         return result;
     }
 
     // Pattern 2: Repeated small allocation (likely loop leak)
     if (info->requested_size < 256 && info->slab_class > 0) {
         result.pattern_name = "repeated_small_leak";
-        result.confidence   = 70;
-        result.suggestion   = "Check for allocations in loops without corresponding free()";
+        result.confidence = 70;
+        result.suggestion = "Check for allocations in loops without corresponding free()";
         return result;
     }
 
     // Pattern 3: String allocation (likely strdup leak)
     if (info->alloc_file && info->alloc_func) {
         result.pattern_name = "string_allocation_leak";
-        result.confidence   = 60;
-        result.suggestion   = "Check mp_strdup/mp_memdup calls for missing free()";
+        result.confidence = 60;
+        result.suggestion = "Check mp_strdup/mp_memdup calls for missing free()";
         return result;
     }
 
     // Default: generic leak
     result.pattern_name = "generic_leak";
-    result.confidence   = 50;
-    result.suggestion   = "Review allocation";
+    result.confidence = 50;
+    result.suggestion = "Review allocation";
     return result;
 }

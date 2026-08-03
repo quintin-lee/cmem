@@ -204,15 +204,15 @@ typedef atomic_size_t cmem_atomic_size_t;
  * @param cb Error recovery callback function pointer
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_error_recovery_callback(memory_pool_t          *pool,
+void mp_set_error_recovery_callback(memory_pool_t *pool,
                                     mp_watermark_callback_t cb,
-                                    void                   *user_data)
+                                    void *user_data)
 {
     if (!pool) {
         return;
     }
     pool_lock(pool);
-    pool->error_recovery_cb        = cb;
+    pool->error_recovery_cb = cb;
     pool->error_recovery_user_data = user_data;
     pool_unlock(pool);
 }
@@ -277,9 +277,9 @@ void mp_set_error_recovery_callback(memory_pool_t          *pool,
  * @return Pointer to the new child memory pool, or NULL on failure
  */
 memory_pool_t *mp_create_child(memory_pool_t *parent,
-                               size_t         initial_capacity,
-                               mp_flags_t     flags,
-                               const char    *arena_name)
+                               size_t initial_capacity,
+                               mp_flags_t flags,
+                               const char *arena_name)
 {
     memory_pool_t *child =
         mp_create_custom(initial_capacity, flags, parent ? &parent->sys_allocator : NULL);
@@ -289,7 +289,7 @@ memory_pool_t *mp_create_child(memory_pool_t *parent,
 
     if (parent && parent->has_custom_sys_alloc) {
         child->has_custom_sys_alloc = true;
-        child->sys_allocator        = parent->sys_allocator;
+        child->sys_allocator = parent->sys_allocator;
     }
 
     child->parent = parent;
@@ -330,7 +330,7 @@ mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocat
     clock_gettime(CLOCK_MONOTONIC, &pool->window_start_time);
     if (sys_allocator) {
         pool->has_custom_sys_alloc = true;
-        pool->sys_allocator        = *sys_allocator;
+        pool->sys_allocator = *sys_allocator;
     }
 
     if (flags & MP_FLAG_THREAD_SAFE) {
@@ -369,16 +369,16 @@ mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocat
  * @param fragmentation_threshold Fragmentation ratio (0.0-1.0) above which compaction is triggered
  */
 void mp_set_auto_compact(memory_pool_t *pool,
-                         bool           enable,
-                         double         pressure_threshold,
-                         double         fragmentation_threshold)
+                         bool enable,
+                         double pressure_threshold,
+                         double fragmentation_threshold)
 {
     if (!pool) {
         return;
     }
     pool_lock(pool);
-    pool->auto_compact_enabled                 = enable;
-    pool->auto_compact_pressure_threshold      = pressure_threshold;
+    pool->auto_compact_enabled = enable;
+    pool->auto_compact_pressure_threshold = pressure_threshold;
     pool->auto_compact_fragmentation_threshold = fragmentation_threshold;
     pool_unlock(pool);
 }
@@ -393,17 +393,17 @@ void mp_set_auto_compact(memory_pool_t *pool,
  * @param cb Callback invoked when quota is exceeded
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_arena_quota(memory_pool_t          *pool,
-                        size_t                  quota_bytes,
+void mp_set_arena_quota(memory_pool_t *pool,
+                        size_t quota_bytes,
                         mp_watermark_callback_t cb,
-                        void                   *user_data)
+                        void *user_data)
 {
     if (!pool) {
         return;
     }
     pool_lock(pool);
-    pool->arena_quota_limit     = quota_bytes;
-    pool->arena_quota_cb        = cb;
+    pool->arena_quota_limit = quota_bytes;
+    pool->arena_quota_cb = cb;
     pool->arena_quota_user_data = user_data;
     pool_unlock(pool);
 }
@@ -420,20 +420,20 @@ void mp_set_arena_quota(memory_pool_t          *pool,
  * @param cb Watermark callback function pointer
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_watermark_callback(memory_pool_t          *pool,
-                               double                  high_ratio,
-                               double                  low_ratio,
+void mp_set_watermark_callback(memory_pool_t *pool,
+                               double high_ratio,
+                               double low_ratio,
                                mp_watermark_callback_t cb,
-                               void                   *user_data)
+                               void *user_data)
 {
     if (!pool) {
         return;
     }
     pool_lock(pool);
-    pool->high_watermark_ratio    = high_ratio;
-    pool->low_watermark_ratio     = low_ratio;
-    pool->watermark_cb            = cb;
-    pool->watermark_user_data     = user_data;
+    pool->high_watermark_ratio = high_ratio;
+    pool->low_watermark_ratio = low_ratio;
+    pool->watermark_cb = cb;
+    pool->watermark_user_data = user_data;
     pool->in_high_watermark_state = false;
     pool_unlock(pool);
 }
@@ -509,12 +509,12 @@ void *mp_realloc_loc(
  * @return Pointer to the reallocated payload, or NULL on overflow/failure
  */
 void *mp_reallocarray_loc(memory_pool_t *pool,
-                          void          *ptr,
-                          size_t         nmemb,
-                          size_t         size,
-                          const char    *file,
-                          int            line,
-                          const char    *func)
+                          void *ptr,
+                          size_t nmemb,
+                          size_t size,
+                          const char *file,
+                          int line,
+                          const char *func)
 {
     if (nmemb != 0 && size > SIZE_MAX / nmemb) {
         return NULL;
@@ -538,7 +538,7 @@ mp_strdup_loc(memory_pool_t *pool, const char *str, const char *file, int line, 
         return NULL;
     }
     size_t len = strlen(str);
-    char  *dup = (char *)mp_alloc_loc(pool, len + 1, file, line, func);
+    char *dup = (char *)mp_alloc_loc(pool, len + 1, file, line, func);
     if (dup) {
         memcpy(dup, str, len + 1);
     }
@@ -615,8 +615,8 @@ char *mp_asprintf_loc(
  */
 bool mp_diff_snapshots(const char *snapshot_a_path,
                        const char *snapshot_b_path,
-                       char       *out_report,
-                       size_t      max_len)
+                       char *out_report,
+                       size_t max_len)
 {
     if (!snapshot_a_path || !snapshot_b_path || !out_report || max_len == 0) {
         return false;
@@ -642,21 +642,21 @@ bool mp_diff_snapshots(const char *snapshot_a_path,
         return false;
     }
 
-    size_t                  count_a = (size_t)hdra.active_allocations;
-    cmem_snapshot_record_t *recs_a  = NULL;
+    size_t count_a = (size_t)hdra.active_allocations;
+    cmem_snapshot_record_t *recs_a = NULL;
     if (count_a > 0) {
         recs_a = (cmem_snapshot_record_t *)calloc(count_a, sizeof(cmem_snapshot_record_t));
         if (recs_a) {
             if (fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa) != count_a) {
                 free(recs_a);
-                recs_a  = NULL;
+                recs_a = NULL;
                 count_a = 0;
             }
         }
     }
     fclose(fa);
 
-    size_t offset     = 0;
+    size_t offset = 0;
     size_t diff_count = 0;
     size_t diff_bytes = 0;
 

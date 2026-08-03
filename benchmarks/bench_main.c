@@ -40,7 +40,7 @@ void bench_small_allocs()
     double start_sys = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         size_t sz = 32 + (i % 224);
-        ptrs[i]   = malloc(sz);
+        ptrs[i] = malloc(sz);
     }
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         free(ptrs[i]);
@@ -48,11 +48,11 @@ void bench_small_allocs()
     double time_sys = get_time_sec() - start_sys;
 
     // 2. cmem Benchmark
-    memory_pool_t *pool     = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
-    double         start_mp = get_time_sec();
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
+    double start_mp = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         size_t sz = 32 + (i % 224);
-        ptrs[i]   = mp_alloc(pool, sz);
+        ptrs[i] = mp_alloc(pool, sz);
     }
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         mp_free(pool, ptrs[i]);
@@ -84,18 +84,18 @@ void bench_medium_allocs()
     double start_sys = get_time_sec();
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         size_t sz = 1024 + (i % 63488);
-        ptrs[i]   = malloc(sz);
+        ptrs[i] = malloc(sz);
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         free(ptrs[i]);
     }
     double time_sys = get_time_sec() - start_sys;
 
-    memory_pool_t *pool     = mp_create(64 * 1024 * 1024, MP_FLAG_DEFAULT);
-    double         start_mp = get_time_sec();
+    memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_DEFAULT);
+    double start_mp = get_time_sec();
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         size_t sz = 1024 + (i % 63488);
-        ptrs[i]   = mp_alloc(pool, sz);
+        ptrs[i] = mp_alloc(pool, sz);
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         mp_free(pool, ptrs[i]);
@@ -118,7 +118,7 @@ void bench_arena_reset()
 {
     printf("\n--- Benchmark 3: Fast Arena Reset (mp_reset x 1000 rounds of 500 allocs) ---\n");
     memory_pool_t *pool = mp_create(8 * 1024 * 1024, MP_FLAG_DEFAULT);
-    void          *ptrs[500];
+    void *ptrs[500];
 
     // Standard Free loop
     double start_loop = get_time_sec();
@@ -183,15 +183,15 @@ int main()
  */
 typedef struct {
     memory_pool_t *pool;
-    int            thread_id;
-    int            alloc_count;
-    double         elapsed;
+    int thread_id;
+    int alloc_count;
+    double elapsed;
 } bench_thread_arg_t;
 
 static void *bench_thread_func(void *arg)
 {
-    bench_thread_arg_t *ta   = (bench_thread_arg_t *)arg;
-    void              **ptrs = (void **)malloc(sizeof(void *) * ta->alloc_count);
+    bench_thread_arg_t *ta = (bench_thread_arg_t *)arg;
+    void **ptrs = (void **)malloc(sizeof(void *) * ta->alloc_count);
     if (!ptrs) {
         return NULL;
     }
@@ -201,7 +201,7 @@ static void *bench_thread_func(void *arg)
 
     for (int i = 0; i < ta->alloc_count; i++) {
         size_t sz = 32 + (i % 256);
-        ptrs[i]   = mp_alloc(ta->pool, sz);
+        ptrs[i] = mp_alloc(ta->pool, sz);
     }
     for (int i = 0; i < ta->alloc_count; i++) {
         mp_free(ta->pool, ptrs[i]);
@@ -238,8 +238,8 @@ void bench_multithreaded(int thread_count, int allocs_per_thread)
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < thread_count; i++) {
-        args[i].pool        = pool;
-        args[i].thread_id   = i;
+        args[i].pool = pool;
+        args[i].thread_id = i;
         args[i].alloc_count = allocs_per_thread;
         pthread_create(&threads[i], NULL, bench_thread_func, &args[i]);
     }
@@ -272,7 +272,7 @@ void bench_arena_workload(int rounds, int allocs_per_round)
     printf("\n--- Benchmark 5: Arena Workload (Game/Render style) ---\n");
 
     memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_DEFAULT);
-    void         **ptrs = (void **)malloc(sizeof(void *) * allocs_per_round);
+    void **ptrs = (void **)malloc(sizeof(void *) * allocs_per_round);
     if (!ptrs) {
         fprintf(stderr, "Failed to allocate benchmark resources\n");
         return;

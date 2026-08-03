@@ -118,16 +118,16 @@ void *sys_mem_alloc(memory_pool_t *pool, size_t size, size_t alignment)
     } else if (pool && (pool->flags & MP_FLAG_GUARD_PAGES)) {
         SYSTEM_INFO si;
         GetSystemInfo(&si);
-        size_t page_sz         = si.dwPageSize;
+        size_t page_sz = si.dwPageSize;
         size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
-        size_t total_map       = page_sz + aligned_payload + page_sz;
-        void  *raw_map = VirtualAlloc(NULL, total_map, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        size_t total_map = page_sz + aligned_payload + page_sz;
+        void *raw_map = VirtualAlloc(NULL, total_map, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         if (!raw_map) {
             return NULL;
         }
 
         uint8_t *base = (uint8_t *)raw_map;
-        DWORD    old_prot;
+        DWORD old_prot;
         VirtualProtect(base, page_sz, PAGE_NOACCESS, &old_prot);
         VirtualProtect(base + page_sz + aligned_payload, page_sz, PAGE_NOACCESS, &old_prot);
 
@@ -159,11 +159,11 @@ void *sys_mem_alloc(memory_pool_t *pool, size_t size, size_t alignment)
             return NULL;
         }
     } else if (pool && (pool->flags & MP_FLAG_GUARD_PAGES)) {
-        long   pg              = sysconf(_SC_PAGESIZE);
-        size_t page_sz         = (pg > 0) ? (size_t)pg : 4096;
+        long pg = sysconf(_SC_PAGESIZE);
+        size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
         size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
-        size_t total_map       = page_sz + aligned_payload + page_sz;
-        void  *raw_map =
+        size_t total_map = page_sz + aligned_payload + page_sz;
+        void *raw_map =
             mmap(NULL, total_map, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (raw_map == MAP_FAILED) {
             return NULL;
@@ -220,8 +220,8 @@ void sys_mem_free(memory_pool_t *pool, void *ptr, size_t size)
         if (pool->flags & MP_FLAG_GUARD_PAGES) {
             SYSTEM_INFO si;
             GetSystemInfo(&si);
-            size_t   page_sz = si.dwPageSize;
-            uint8_t *base    = (uint8_t *)ptr - page_sz;
+            size_t page_sz = si.dwPageSize;
+            uint8_t *base = (uint8_t *)ptr - page_sz;
             VirtualFree(base, 0, MEM_RELEASE);
         } else if (pool->flags & MP_FLAG_HUGE_PAGES) {
             cmem_munmap(ptr, size);
@@ -235,11 +235,11 @@ void sys_mem_free(memory_pool_t *pool, void *ptr, size_t size)
         return;
     }
     if (pool->flags & MP_FLAG_GUARD_PAGES) {
-        long     pg              = sysconf(_SC_PAGESIZE);
-        size_t   page_sz         = (pg > 0) ? (size_t)pg : 4096;
-        size_t   aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
-        size_t   total_map       = page_sz + aligned_payload + page_sz;
-        uint8_t *raw_map         = (uint8_t *)ptr - page_sz;
+        long pg = sysconf(_SC_PAGESIZE);
+        size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
+        size_t aligned_payload = (size + page_sz - 1) & ~(page_sz - 1);
+        size_t total_map = page_sz + aligned_payload + page_sz;
+        uint8_t *raw_map = (uint8_t *)ptr - page_sz;
         munmap(raw_map, total_map);
         return;
     }
@@ -274,7 +274,7 @@ bool mp_expand_pool(memory_pool_t *pool, size_t additional_bytes)
         return false;
     }
 
-    new_tlsf->next  = pool->tlsf_root;
+    new_tlsf->next = pool->tlsf_root;
     pool->tlsf_root = new_tlsf;
     pool->stats.total_pool_size += additional_bytes + sizeof(tlsf_pool_t);
     pool_unlock(pool);
@@ -481,8 +481,8 @@ size_t mp_compact(memory_pool_t *pool)
     size_t freed_bytes = 0;
 
     for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[c];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[c];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             mp_slab_page_t *next = curr->next;
@@ -545,14 +545,14 @@ size_t mp_purge_lazy(memory_pool_t *pool)
     }
 
     for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[c];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[c];
+        mp_slab_page_t *curr = sc->partial_pages;
         while (curr) {
             if (curr->free_count == curr->total_slots && curr->page_raw_mem) {
-                uintptr_t start         = (uintptr_t)curr->page_raw_mem + sizeof(mp_slab_page_t);
+                uintptr_t start = (uintptr_t)curr->page_raw_mem + sizeof(mp_slab_page_t);
                 uintptr_t aligned_start = (start + page_sz - 1) & ~((uintptr_t)page_sz - 1);
-                uintptr_t end           = (uintptr_t)curr->page_raw_mem + SLAB_PAGE_SIZE;
-                uintptr_t aligned_end   = end & ~((uintptr_t)page_sz - 1);
+                uintptr_t end = (uintptr_t)curr->page_raw_mem + SLAB_PAGE_SIZE;
+                uintptr_t aligned_end = end & ~((uintptr_t)page_sz - 1);
 
                 if (aligned_end > aligned_start) {
                     size_t purge_sz = aligned_end - aligned_start;
@@ -600,13 +600,13 @@ int mp_madvise(memory_pool_t *pool, void *addr, size_t length, int advice)
     (void)length;
     return 0;
 #else
-    long   pg      = sysconf(_SC_PAGESIZE);
+    long pg = sysconf(_SC_PAGESIZE);
     size_t page_sz = (pg > 0) ? (size_t)pg : 4096;
 
-    uintptr_t start         = (uintptr_t)addr;
+    uintptr_t start = (uintptr_t)addr;
     uintptr_t aligned_start = (start + page_sz - 1) & ~(page_sz - 1);
-    uintptr_t end           = start + length;
-    uintptr_t aligned_end   = end & ~(page_sz - 1);
+    uintptr_t end = start + length;
+    uintptr_t aligned_end = end & ~(page_sz - 1);
 
     if (aligned_end <= aligned_start) {
         return 0;

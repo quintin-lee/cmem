@@ -67,10 +67,10 @@ test_event_cb(memory_pool_t *pool, mp_event_type_t event, void *ptr, size_t size
  * @param user_data Optional user data passed to the callback.
  */
 static void test_watermark_cb(memory_pool_t *pool,
-                              bool           is_high_watermark,
-                              size_t         current_bytes,
-                              size_t         limit_bytes,
-                              void          *user_data)
+                              bool is_high_watermark,
+                              size_t current_bytes,
+                              size_t limit_bytes,
+                              void *user_data)
 {
     (void)pool;
     (void)current_bytes;
@@ -87,8 +87,8 @@ static void test_watermark_cb(memory_pool_t *pool,
  * @brief Test node structure used for typed object pool tests.
  */
 typedef struct {
-    int    id;
-    char   name[32];
+    int id;
+    char name[32];
     double value;
 } test_node_t;
 
@@ -110,7 +110,7 @@ void test_introspection_apis()
     assert(mp_usable_size(pool, p1) >= 120);
 
     uint8_t fake_buf[128] = {0};
-    void   *fake_ptr      = &fake_buf[64];
+    void *fake_ptr = &fake_buf[64];
     assert(mp_ptr_valid(pool, fake_ptr) == false);
     assert(mp_alloc_size(pool, fake_ptr) == 0);
     assert(mp_usable_size(pool, fake_ptr) == 0);
@@ -197,8 +197,8 @@ void test_convenience_apis()
     assert(str_dup != NULL);
     assert(strcmp(str_dup, "cmem Universal Tiered Allocator") == 0);
 
-    int  src_data[5] = {10, 20, 30, 40, 50};
-    int *data_dup    = (int *)mp_memdup(pool, src_data, sizeof(src_data));
+    int src_data[5] = {10, 20, 30, 40, 50};
+    int *data_dup = (int *)mp_memdup(pool, src_data, sizeof(src_data));
     assert(data_dup != NULL);
     assert(memcmp(data_dup, src_data, sizeof(src_data)) == 0);
 
@@ -525,7 +525,7 @@ void test_watermark_callback()
     assert(pool != NULL);
 
     g_high_watermark_hit = false;
-    g_low_watermark_hit  = false;
+    g_low_watermark_hit = false;
 
     mp_set_memory_limit(pool, 10000);
     mp_set_watermark_callback(pool, 0.80, 0.40, test_watermark_cb, NULL);
@@ -586,7 +586,7 @@ void test_prometheus_metrics()
     void *p1 = mp_alloc(pool, 1024);
     assert(p1 != NULL);
 
-    char   prom_buf[2048];
+    char prom_buf[2048];
     size_t len = mp_export_prometheus_metrics(pool, prom_buf, sizeof(prom_buf));
     assert(len > 0);
     assert(strstr(prom_buf, "cmem_active_bytes{arena=\"RootArena\"}") != NULL);
@@ -828,8 +828,8 @@ void test_shared_memory_ipc()
     printf("  SKIPPED on Windows (POSIX shared memory not available)\n");
 #else
     printf("\n--- Test 14: POSIX Shared Memory Pool & Zero-Copy IPC ---\n");
-    const char    *shm_name = "/cmem_test_shm_pool";
-    memory_pool_t *pool     = mp_create_shared(shm_name, 512 * 1024, MP_FLAG_THREAD_SAFE);
+    const char *shm_name = "/cmem_test_shm_pool";
+    memory_pool_t *pool = mp_create_shared(shm_name, 512 * 1024, MP_FLAG_THREAD_SAFE);
     assert(pool != NULL);
 
     void *p1 = mp_alloc(pool, 1024);
@@ -1010,7 +1010,7 @@ void test_batch_alloc_and_compact()
     printf("\n--- Test 9: Batch Allocations & Memory Compaction ---\n");
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
 
-    void  *ptrs[50];
+    void *ptrs[50];
     size_t count = mp_alloc_batch(pool, 64, ptrs, 50);
     assert(count == 50);
     (void)count;
@@ -1053,7 +1053,7 @@ void test_leak_analysis_and_heap_audit()
     assert(poison_test[0] == 0xDD && poison_test[63] == 0xDD);
     (void)poison_test;
 
-    char   report[2048];
+    char report[2048];
     size_t report_len = mp_analyze_leaks(pool, report, sizeof(report));
     assert(report_len > 0);
     assert(strstr(report, "Source Location") != NULL);
@@ -1071,7 +1071,7 @@ void test_leak_analysis_and_heap_audit()
 void test_child_arenas_and_html_export()
 {
     printf("\n--- Test 8: Child Arenas & Visual HTML Report Export ---\n");
-    memory_pool_t *root   = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
+    memory_pool_t *root = mp_create(1024 * 1024, MP_FLAG_TRACK_LOCATIONS);
     memory_pool_t *child1 = mp_create_child(root, 512 * 1024, MP_FLAG_DEFAULT, "TestChildArena1");
 
     void *p1 = mp_alloc_loc(root, 128, __FILE__, __LINE__, __func__);
@@ -1108,7 +1108,7 @@ void test_arena_reset_and_json()
     mp_get_stats(pool, &stats);
     assert(stats.active_allocations == 50);
 
-    char   json_buf[512];
+    char json_buf[512];
     size_t json_len = mp_dump_json_stats(pool, json_buf, sizeof(json_buf));
     assert(json_len > 0);
     assert(strstr(json_buf, "\"active_allocations\": 50") != NULL);
@@ -1144,7 +1144,7 @@ void test_static_buffer_and_callbacks()
     assert(g_event_triggered == true);
 
     uintptr_t buf_start = (uintptr_t)g_static_buf;
-    uintptr_t buf_end   = buf_start + sizeof(g_static_buf);
+    uintptr_t buf_end = buf_start + sizeof(g_static_buf);
     assert((uintptr_t)p1 >= buf_start && (uintptr_t)p1 < buf_end);
     (void)buf_end;
 
@@ -1165,11 +1165,11 @@ void test_static_buffer_and_callbacks()
 void *thread_worker(void *arg)
 {
     memory_pool_t *pool = (memory_pool_t *)arg;
-    void          *ptrs[ALLOCS_PER_THREAD];
+    void *ptrs[ALLOCS_PER_THREAD];
 
     for (int i = 0; i < ALLOCS_PER_THREAD; i++) {
         size_t sz = (i % 2 == 0) ? (8 + i % 128) : (1024 + i % 4096);
-        ptrs[i]   = mp_alloc(pool, sz);
+        ptrs[i] = mp_alloc(pool, sz);
         assert(ptrs[i] != NULL);
     }
 
@@ -1255,7 +1255,7 @@ void test_error_paths()
     char *as = mp_asprintf(pool, NULL);
     assert(as == NULL);
 
-    uint8_t        tiny[65536];
+    uint8_t tiny[65536];
     memory_pool_t *sp = mp_create_from_buffer(tiny, sizeof(tiny), MP_FLAG_DEFAULT);
     assert(sp != NULL);
     void *p = mp_alloc(sp, 8);

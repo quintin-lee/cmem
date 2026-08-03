@@ -94,8 +94,8 @@ static void test_memdup_loc()
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    int  src[5] = {1, 2, 3, 4, 5};
-    int *dup    = (int *)mp_memdup_loc(pool, src, sizeof(src), __FILE__, __LINE__, __func__);
+    int src[5] = {1, 2, 3, 4, 5};
+    int *dup = (int *)mp_memdup_loc(pool, src, sizeof(src), __FILE__, __LINE__, __func__);
     assert(dup != NULL);
     assert(memcmp(dup, src, sizeof(src)) == 0);
 
@@ -509,7 +509,7 @@ static void test_exports()
 
     assert(mp_export_leak_report(pool, "test_advanced_leak.txt") == true);
 
-    char   pprof_buf[4096];
+    char pprof_buf[4096];
     size_t len = mp_export_pprof(pool, pprof_buf, sizeof(pprof_buf));
     assert(len > 0);
 
@@ -587,7 +587,7 @@ static void test_event_log_consume()
     assert(log != NULL);
 
     mp_event_log_entry_t entry;
-    bool                 got = mp_event_log_consume(log, &entry);
+    bool got = mp_event_log_consume(log, &entry);
     (void)got;
 
     mp_event_log_destroy(log);
@@ -634,7 +634,7 @@ static void test_tls_cache_refill()
 static void test_static_buffer_pool()
 {
     printf("\n--- Test: Static buffer pool ---\n");
-    uint8_t        buffer[64 * 1024];
+    uint8_t buffer[64 * 1024];
     memory_pool_t *pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
@@ -833,7 +833,7 @@ static void test_get_allocation_info()
     assert(p != NULL);
 
     mp_allocation_info_t info;
-    bool                 ok = mp_get_allocation_info(pool, p, &info);
+    bool ok = mp_get_allocation_info(pool, p, &info);
     assert(ok == true);
     assert(info.ptr == p);
     assert(info.requested_size == 256);
@@ -865,7 +865,7 @@ static void test_enumerate_regions()
     mp_free(pool, p2);
 
     mp_region_info_t regions[32];
-    size_t           count = mp_enumerate_regions(pool, regions, 32);
+    size_t count = mp_enumerate_regions(pool, regions, 32);
     assert(count > 0);
 
     bool has_slab = false;

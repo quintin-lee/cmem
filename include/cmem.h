@@ -72,13 +72,13 @@ extern "C" {
  * and platform-specific optimizations. Multiple flags can be ORed together.
  */
 typedef enum {
-    MP_FLAG_DEFAULT       = 0,        /**< Default configuration, no special features enabled */
-    MP_FLAG_THREAD_SAFE   = (1 << 0), /**< Enable thread safety via pthread mutex/rwlock */
-    MP_FLAG_DEBUG_CANARY  = (1 << 1), /**< Add magic canary bytes for buffer overflow checks */
+    MP_FLAG_DEFAULT = 0,              /**< Default configuration, no special features enabled */
+    MP_FLAG_THREAD_SAFE = (1 << 0),   /**< Enable thread safety via pthread mutex/rwlock */
+    MP_FLAG_DEBUG_CANARY = (1 << 1),  /**< Add magic canary bytes for buffer overflow checks */
     MP_FLAG_ZERO_ON_ALLOC = (1 << 2), /**< Automatically zero memory upon allocation */
     MP_FLAG_THREAD_LOCAL_CACHE =
         (1 << 3),                       /**< Enable thread-local cache for lock-free small allocs */
-    MP_FLAG_STATIC_BUFFER   = (1 << 4), /**< Static buffer mode (no OS memory allocation/free) */
+    MP_FLAG_STATIC_BUFFER = (1 << 4),   /**< Static buffer mode (no OS memory allocation/free) */
     MP_FLAG_TRACK_LOCATIONS = (1 << 5), /**< Record file, line, function & backtrace for allocs */
     MP_FLAG_POISON_ON_FREE =
         (1 << 6), /**< Poison freed memory with 0xDD byte pattern (UAF protection) */
@@ -122,10 +122,10 @@ typedef enum {
  * @brief Allocation tier types for diagnostic reporting.
  */
 typedef enum {
-    ALLOC_TYPE_SLAB      = 1, /**< Small-object Slab allocator (<= 512B) */
-    ALLOC_TYPE_TLSF      = 2, /**< Medium-object TLSF allocator (512B ~ 4MB) */
-    ALLOC_TYPE_OS        = 3, /**< Direct OS fallback allocator (> 4MB) */
-    ALLOC_TYPE_EMERGENCY = 4  /**< Emergency reserve buffer */
+    ALLOC_TYPE_SLAB = 1,     /**< Small-object Slab allocator (<= 512B) */
+    ALLOC_TYPE_TLSF = 2,     /**< Medium-object TLSF allocator (512B ~ 4MB) */
+    ALLOC_TYPE_OS = 3,       /**< Direct OS fallback allocator (> 4MB) */
+    ALLOC_TYPE_EMERGENCY = 4 /**< Emergency reserve buffer */
 } mp_alloc_type_t;
 
 /**
@@ -172,10 +172,10 @@ typedef void (*mp_event_callback_t)(
  * @param user_data Optional user data passed to the callback
  */
 typedef void (*mp_watermark_callback_t)(memory_pool_t *pool,
-                                        bool           is_high_watermark,
-                                        size_t         current_bytes,
-                                        size_t         limit_bytes,
-                                        void          *user_data);
+                                        bool is_high_watermark,
+                                        size_t current_bytes,
+                                        size_t limit_bytes,
+                                        void *user_data);
 
 /**
  * @brief Custom Backing Allocator function table for system memory injection.
@@ -215,17 +215,17 @@ typedef struct {
  * @brief Per-allocation metadata returned by mp_get_allocation_info().
  */
 typedef struct {
-    void           *ptr;                /**< Payload pointer */
-    size_t          requested_size;     /**< Originally requested payload size */
-    size_t          usable_size;        /**< Actual usable capacity of this block */
-    mp_alloc_type_t alloc_type;         /**< Allocation tier (Slab/TLSF/OS/Emergency) */
-    uint8_t         slab_class;         /**< Slab class index (0 for non-Slab) */
-    void           *raw_base;           /**< Raw base address from system/slab allocation */
-    const char     *alloc_file;         /**< Source file where allocated (NULL if untracked) */
-    int             alloc_line;         /**< Source line number (-1 if untracked) */
-    const char     *alloc_func;         /**< Source function name (NULL if untracked) */
-    void           *backtrace_addrs[8]; /**< Captured backtrace addresses (0 if untracked) */
-    int             backtrace_depth;    /**< Number of backtrace frames captured */
+    void *ptr;                  /**< Payload pointer */
+    size_t requested_size;      /**< Originally requested payload size */
+    size_t usable_size;         /**< Actual usable capacity of this block */
+    mp_alloc_type_t alloc_type; /**< Allocation tier (Slab/TLSF/OS/Emergency) */
+    uint8_t slab_class;         /**< Slab class index (0 for non-Slab) */
+    void *raw_base;             /**< Raw base address from system/slab allocation */
+    const char *alloc_file;     /**< Source file where allocated (NULL if untracked) */
+    int alloc_line;             /**< Source line number (-1 if untracked) */
+    const char *alloc_func;     /**< Source function name (NULL if untracked) */
+    void *backtrace_addrs[8];   /**< Captured backtrace addresses (0 if untracked) */
+    int backtrace_depth;        /**< Number of backtrace frames captured */
 } mp_allocation_info_t;
 
 /**
@@ -242,7 +242,7 @@ typedef enum {
  */
 typedef struct {
     const char *pattern_name; /**< Pattern identifier */
-    int         confidence;   /**< 0-100 confidence score */
+    int confidence;           /**< 0-100 confidence score */
     const char *suggestion;   /**< Fix suggestion */
 } mp_leak_pattern_t;
 
@@ -250,11 +250,11 @@ typedef struct {
  * @brief Memory region descriptor returned by mp_enumerate_regions().
  */
 typedef struct {
-    void           *base;       /**< Base address of the region */
-    size_t          size;       /**< Size of the region in bytes */
-    mp_alloc_type_t type;       /**< Region type */
-    uint8_t         slab_class; /**< Slab class index (0 for non-Slab) */
-    bool            is_hot;     /**< Hot page flag (for Slab pages) */
+    void *base;           /**< Base address of the region */
+    size_t size;          /**< Size of the region in bytes */
+    mp_alloc_type_t type; /**< Region type */
+    uint8_t slab_class;   /**< Slab class index (0 for non-Slab) */
+    bool is_hot;          /**< Hot page flag (for Slab pages) */
 } mp_region_info_t;
 
 /* Platform detection */
@@ -469,9 +469,9 @@ void mp_destroy_shared(memory_pool_t *pool, const char *shm_name);
  * @return Pointer to the new child memory pool, or NULL on failure
  */
 memory_pool_t *mp_create_child(memory_pool_t *parent,
-                               size_t         initial_capacity,
-                               mp_flags_t     flags,
-                               const char    *arena_name);
+                               size_t initial_capacity,
+                               mp_flags_t flags,
+                               const char *arena_name);
 
 /**
  * @brief Sets a human-readable name for the memory pool arena.
@@ -661,8 +661,8 @@ size_t mp_separate_hot_cold_pages(memory_pool_t *pool);
  * @param sys_allocator Custom system allocator function table, or NULL for default
  * @return Pointer to the new memory pool, or NULL on failure
  */
-memory_pool_t *mp_create_custom(size_t                    initial_capacity,
-                                mp_flags_t                flags,
+memory_pool_t *mp_create_custom(size_t initial_capacity,
+                                mp_flags_t flags,
                                 const mp_sys_allocator_t *sys_allocator);
 
 /**
@@ -722,11 +722,11 @@ void mp_set_memory_limit(memory_pool_t *pool, size_t max_bytes);
  * @param cb Watermark callback function pointer
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_watermark_callback(memory_pool_t          *pool,
-                               double                  high_ratio,
-                               double                  low_ratio,
+void mp_set_watermark_callback(memory_pool_t *pool,
+                               double high_ratio,
+                               double low_ratio,
                                mp_watermark_callback_t cb,
-                               void                   *user_data);
+                               void *user_data);
 
 /**
  * @brief Compacts the memory pool by releasing completely free Slab pages back to the OS.
@@ -888,12 +888,12 @@ void *mp_reallocarray(memory_pool_t *pool, void *ptr, size_t nmemb, size_t size)
  * @return Pointer to the reallocated payload, or NULL on overflow/failure
  */
 void *mp_reallocarray_loc(memory_pool_t *pool,
-                          void          *ptr,
-                          size_t         nmemb,
-                          size_t         size,
-                          const char    *file,
-                          int            line,
-                          const char    *func);
+                          void *ptr,
+                          size_t nmemb,
+                          size_t size,
+                          const char *file,
+                          int line,
+                          const char *func);
 
 /**
  * @brief Allocates memory with a specific byte alignment requirement.
@@ -1139,8 +1139,8 @@ bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max
  */
 bool mp_diff_snapshots(const char *snapshot_a_path,
                        const char *snapshot_b_path,
-                       char       *out_report,
-                       size_t      max_len);
+                       char *out_report,
+                       size_t max_len);
 
 /**
  * @brief Prints ASCII allocation size distribution histogram chart to stdout.
@@ -1268,9 +1268,9 @@ uint64_t mp_get_env_generation(memory_pool_t *pool);
  * triggered
  */
 void mp_set_auto_compact(memory_pool_t *pool,
-                         bool           enable,
-                         double         pressure_threshold,
-                         double         fragmentation_threshold);
+                         bool enable,
+                         double pressure_threshold,
+                         double fragmentation_threshold);
 
 /**
  * @brief Checks if auto-compaction is needed and triggers it if so.
@@ -1297,10 +1297,10 @@ bool mp_auto_compact_check(memory_pool_t *pool);
  * @param cb Callback invoked when quota is exceeded
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_arena_quota(memory_pool_t          *pool,
-                        size_t                  quota_bytes,
+void mp_set_arena_quota(memory_pool_t *pool,
+                        size_t quota_bytes,
                         mp_watermark_callback_t cb,
-                        void                   *user_data);
+                        void *user_data);
 
 /**
  * @brief Checks if the arena is within its quota limit.
@@ -1452,9 +1452,9 @@ bool mp_is_pool_dirty(memory_pool_t *pool);
  * @param cb Error recovery callback function pointer
  * @param user_data Optional user data passed to the callback
  */
-void mp_set_error_recovery_callback(memory_pool_t          *pool,
+void mp_set_error_recovery_callback(memory_pool_t *pool,
                                     mp_watermark_callback_t cb,
-                                    void                   *user_data);
+                                    void *user_data);
 
 /**
  * @brief Isolates a bad memory block by marking it as freed and removing it from active
@@ -1685,10 +1685,10 @@ size_t mp_get_expandable_size(memory_pool_t *pool);
  * @brief Structured event log record for lock-free ring buffer tracing.
  */
 typedef struct {
-    uint64_t        timestamp_ns; /**< Monotonic timestamp in nanoseconds */
-    mp_event_type_t event_type;   /**< Event type (alloc, free, realloc, etc.) */
-    size_t          size;         /**< Allocation size in bytes */
-    uintptr_t       ptr;          /**< Pointer involved in the event */
+    uint64_t timestamp_ns;      /**< Monotonic timestamp in nanoseconds */
+    mp_event_type_t event_type; /**< Event type (alloc, free, realloc, etc.) */
+    size_t size;                /**< Allocation size in bytes */
+    uintptr_t ptr;              /**< Pointer involved in the event */
 } mp_event_log_entry_t;
 
 /**

@@ -36,7 +36,7 @@ int main()
     void *block2 = mp_alloc(pool, 4096);
     void *block3 = mp_alloc(pool, 64.5 * 1024);
 
-    uintptr_t base  = (uintptr_t)g_embedded_ram_buffer;
+    uintptr_t base = (uintptr_t)g_embedded_ram_buffer;
     uintptr_t limit = base + sizeof(g_embedded_ram_buffer);
 
     assert((uintptr_t)block1 >= base && (uintptr_t)block1 < limit);

@@ -35,19 +35,19 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         return;
     }
 
-    uint8_t        op          = data[0] & 0x0F;
-    uint8_t        arg         = data[1];
-    const uint8_t *payload     = size > 2 ? data + 2 : data;
-    size_t         payload_len = size > 2 ? size - 2 : 0;
+    uint8_t op = data[0] & 0x0F;
+    uint8_t arg = data[1];
+    const uint8_t *payload = size > 2 ? data + 2 : data;
+    size_t payload_len = size > 2 ? size - 2 : 0;
 
-    static void  *slots[256];
+    static void *slots[256];
     static size_t slot_count = 0;
-    static char   event_log_buf[4096];
+    static char event_log_buf[4096];
 
     switch (op) {
     case 0x00: {
         size_t alloc_size = (arg % 200) + 1;
-        void  *p          = mp_alloc(g_pool, alloc_size);
+        void *p = mp_alloc(g_pool, alloc_size);
         if (p && slot_count < 256) {
             slots[slot_count++] = p;
             if (payload_len > 0 && alloc_size > 0) {
@@ -60,7 +60,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
 
     case 0x01: {
         size_t alloc_size = (arg % 200) + 1;
-        void  *p          = mp_calloc(g_pool, alloc_size, 1);
+        void *p = mp_calloc(g_pool, alloc_size, 1);
         if (p && slot_count < 256) {
             slots[slot_count++] = p;
         }
@@ -69,7 +69,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
 
     case 0x02: {
         size_t alloc_size = (arg % 200) + 1;
-        size_t alignment  = 1u << (arg % 5);
+        size_t alignment = 1u << (arg % 5);
         if (alignment < sizeof(void *)) {
             alignment = sizeof(void *);
         }
@@ -90,10 +90,10 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         }
         if (payload_len > 0) {
             size_t dup_len = payload_len < 256 ? payload_len : 255;
-            char   tmp[256];
+            char tmp[256];
             memcpy(tmp, payload, dup_len);
             tmp[dup_len] = '\0';
-            char *s      = mp_strdup(g_pool, tmp);
+            char *s = mp_strdup(g_pool, tmp);
             if (s && slot_count < 256) {
                 slots[slot_count++] = s;
             }
@@ -106,10 +106,10 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
             break;
         }
         size_t idx = arg % slot_count;
-        void  *p   = slots[idx];
+        void *p = slots[idx];
         if (payload_len > 0) {
             size_t dup_len = payload_len < 256 ? payload_len : 255;
-            void  *m       = mp_memdup(g_pool, p, dup_len);
+            void *m = mp_memdup(g_pool, p, dup_len);
             if (m && slot_count < 256) {
                 slots[slot_count++] = m;
             }
@@ -163,7 +163,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         mp_reset(g_pool);
         if (payload_len > 0) {
             size_t zero_len = payload_len < 64 ? payload_len : 64;
-            char   stack_buf[64];
+            char stack_buf[64];
             memcpy(stack_buf, payload, zero_len);
             mp_secure_zero(g_pool, stack_buf, zero_len);
         }
@@ -175,12 +175,12 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         if (slot_count < 2) {
             break;
         }
-        size_t idx1     = arg % slot_count;
-        size_t idx2     = (arg + 1) % slot_count;
-        void  *a        = slots[idx1];
-        void  *b        = slots[idx2];
+        size_t idx1 = arg % slot_count;
+        size_t idx2 = (arg + 1) % slot_count;
+        void *a = slots[idx1];
+        void *b = slots[idx2];
         size_t usable_a = mp_usable_size(g_pool, a);
-        size_t alloc_a  = mp_alloc_size(g_pool, a);
+        size_t alloc_a = mp_alloc_size(g_pool, a);
         (void)usable_a;
         (void)alloc_a;
         mp_ptr_valid(g_pool, a);
@@ -193,7 +193,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
             break;
         }
         size_t alloc_size = (arg % 200) + 1;
-        void  *p          = mp_alloc(g_pool, alloc_size);
+        void *p = mp_alloc(g_pool, alloc_size);
         if (p) {
             memset(p, 0xCD, alloc_size);
             mp_free(g_pool, p);
@@ -203,7 +203,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
 
     case 0x0E: {
         size_t batch = (arg % 10) + 1;
-        void  *ptrs[10];
+        void *ptrs[10];
         size_t got = mp_alloc_batch(g_pool, 16, ptrs, batch);
         if (got > 0 && slot_count + got <= 256) {
             memcpy(slots + slot_count, ptrs, got * sizeof(void *));
@@ -248,7 +248,7 @@ int main(int argc, char **argv)
     }
 
     const char *path = argv[1];
-    FILE       *f    = fopen(path, "rb");
+    FILE *f = fopen(path, "rb");
     if (!f) {
         fprintf(stderr, "Cannot open %s: %s\n", path, strerror(errno));
         return 1;
@@ -261,8 +261,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    size_t   size = (size_t)st.st_size;
-    uint8_t *buf  = (uint8_t *)malloc(size > 0 ? size : 1);
+    size_t size = (size_t)st.st_size;
+    uint8_t *buf = (uint8_t *)malloc(size > 0 ? size : 1);
     if (!buf) {
         fclose(f);
         return 1;

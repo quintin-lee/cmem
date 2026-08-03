@@ -198,8 +198,8 @@ void mp_set_cgroup_aware(memory_pool_t *pool, bool enable)
         if (f) {
             char buf[64] = {0};
             if (fgets(buf, sizeof(buf), f) != NULL) {
-                char              *endptr = NULL;
-                unsigned long long limit  = strtoull(buf, &endptr, 10);
+                char *endptr = NULL;
+                unsigned long long limit = strtoull(buf, &endptr, 10);
                 if (endptr != buf && limit > 0) {
                     pool->cgroup_mem_limit = (size_t)limit;
                 }
@@ -340,12 +340,12 @@ cmem_ring_buffer_t *mp_ring_create(size_t slot_size, size_t capacity)
     }
 
     ring->slot_size = slot_size;
-    ring->capacity  = real_cap;
-    ring->mask      = real_cap - 1;
+    ring->capacity = real_cap;
+    ring->mask = real_cap - 1;
     CMEM_ATOMIC_INIT(&ring->head, 0);
     CMEM_ATOMIC_INIT(&ring->tail, real_cap);
 
-    ring->slots      = (void **)calloc(real_cap, sizeof(void *));
+    ring->slots = (void **)calloc(real_cap, sizeof(void *));
     size_t total_buf = slot_size * real_cap;
 #ifdef _WIN32
     ring->buffer = cmem_aligned_malloc(total_buf, 64);
@@ -398,7 +398,7 @@ bool mp_ring_free(cmem_ring_buffer_t *ring, void *ptr)
     if (!ring || !ptr) {
         return false;
     }
-    size_t tail                    = CMEM_ATOMIC_FETCH_ADD(&ring->tail, 1, CMEM_ORDER_RELEASE);
+    size_t tail = CMEM_ATOMIC_FETCH_ADD(&ring->tail, 1, CMEM_ORDER_RELEASE);
     ring->slots[tail & ring->mask] = ptr;
     return true;
 }
@@ -485,9 +485,9 @@ bool mp_event_log_record(mp_event_log_t *log, mp_event_type_t event_type, void *
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     entry->timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-    entry->event_type   = event_type;
-    entry->size         = size;
-    entry->ptr          = (uintptr_t)ptr;
+    entry->event_type = event_type;
+    entry->size = size;
+    entry->ptr = (uintptr_t)ptr;
 
     CMEM_ATOMIC_FETCH_ADD(&log->count, 1, CMEM_ORDER_RELAXED);
     return true;
@@ -556,10 +556,10 @@ size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len)
         return 0;
     }
 
-    size_t total_alloc  = pool->stats.total_alloc_ops;
-    size_t active       = pool->stats.active_allocations;
+    size_t total_alloc = pool->stats.total_alloc_ops;
+    size_t active = pool->stats.active_allocations;
     size_t active_bytes = pool->stats.active_bytes;
-    size_t peak_bytes   = pool->stats.peak_bytes;
+    size_t peak_bytes = pool->stats.peak_bytes;
 
     int n = snprintf(out_buf,
                      max_len,
@@ -597,15 +597,15 @@ mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity)
         return NULL;
     }
     size_t real_elem_sz = (elem_size < sizeof(void *)) ? sizeof(void *) : elem_size;
-    real_elem_sz        = (real_elem_sz + 7) & ~((size_t)7);
+    real_elem_sz = (real_elem_sz + 7) & ~((size_t)7);
 
     mp_typed_pool_t *tpool = (mp_typed_pool_t *)calloc(1, sizeof(mp_typed_pool_t));
     if (!tpool) {
         return NULL;
     }
 
-    tpool->elem_size    = real_elem_sz;
-    tpool->capacity     = capacity;
+    tpool->elem_size = real_elem_sz;
+    tpool->capacity = capacity;
     tpool->active_count = 0;
 
     size_t total_sz = real_elem_sz * capacity;
@@ -620,15 +620,15 @@ mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity)
         return NULL;
     }
 
-    uint8_t *base    = (uint8_t *)tpool->raw_buf;
+    uint8_t *base = (uint8_t *)tpool->raw_buf;
     tpool->free_list = base;
 
     for (size_t i = 0; i < capacity - 1; i++) {
         void **curr = (void **)(base + i * real_elem_sz);
-        *curr       = base + (i + 1) * real_elem_sz;
+        *curr = base + (i + 1) * real_elem_sz;
     }
     void **last = (void **)(base + (capacity - 1) * real_elem_sz);
-    *last       = NULL;
+    *last = NULL;
 
     return tpool;
 }
@@ -644,7 +644,7 @@ void *mp_typed_alloc(mp_typed_pool_t *tpool)
         return NULL;
     }
 
-    void *ptr        = tpool->free_list;
+    void *ptr = tpool->free_list;
     tpool->free_list = *(void **)ptr;
     tpool->active_count++;
     return ptr;
@@ -661,7 +661,7 @@ void mp_typed_free(mp_typed_pool_t *tpool, void *ptr)
         return;
     }
 
-    *(void **)ptr    = tpool->free_list;
+    *(void **)ptr = tpool->free_list;
     tpool->free_list = ptr;
     if (tpool->active_count > 0) {
         tpool->active_count--;
@@ -768,8 +768,8 @@ void mp_destroy_shared(memory_pool_t *pool, const char *shm_name)
 #ifdef _WIN32
     (void)shm_name;
 #else
-    size_t sz      = pool->stats.total_pool_size;
-    void  *shm_ptr = (void *)pool;
+    size_t sz = pool->stats.total_pool_size;
+    void *shm_ptr = (void *)pool;
     munmap(shm_ptr, sz);
     if (shm_name) {
         shm_unlink(shm_name);
@@ -839,9 +839,9 @@ memory_pool_t *mp_create_from_buffer(void *buffer, size_t buffer_size, mp_flags_
         return NULL;
     }
 
-    uintptr_t buf_addr     = (uintptr_t)buffer;
+    uintptr_t buf_addr = (uintptr_t)buffer;
     uintptr_t aligned_addr = (buf_addr + 7) & ~7;
-    size_t    align_offset = aligned_addr - buf_addr;
+    size_t align_offset = aligned_addr - buf_addr;
 
     if (buffer_size <=
         align_offset + sizeof(memory_pool_t) + sizeof(tlsf_pool_t) + TLSF_MIN_BLOCK_SIZE) {
@@ -860,7 +860,7 @@ memory_pool_t *mp_create_from_buffer(void *buffer, size_t buffer_size, mp_flags_
     }
 
     uint8_t *remain_mem = (uint8_t *)aligned_addr + sizeof(memory_pool_t);
-    size_t   remain_sz  = buffer_size - align_offset - sizeof(memory_pool_t) - sizeof(tlsf_pool_t);
+    size_t remain_sz = buffer_size - align_offset - sizeof(memory_pool_t) - sizeof(tlsf_pool_t);
 
     pool->tlsf_root = tlsf_create_pool_custom(pool, remain_sz, remain_mem);
     if (!pool->tlsf_root) {
@@ -921,7 +921,7 @@ size_t mp_get_child_count(memory_pool_t *pool)
         return 0;
     }
     pool_rdlock(pool);
-    size_t         count = 0;
+    size_t count = 0;
     memory_pool_t *child = pool->first_child;
     while (child) {
         count++;
@@ -974,8 +974,8 @@ size_t mp_freeable(memory_pool_t *pool)
     size_t freeable_bytes = 0;
 
     for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[c];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[c];
+        mp_slab_page_t *curr = sc->partial_pages;
         while (curr) {
             if (curr->free_count == curr->total_slots) {
                 freeable_bytes += SLAB_PAGE_SIZE;
@@ -1054,7 +1054,7 @@ bool mp_auto_compact_check(memory_pool_t *pool)
     double pressure = (double)pool->stats.active_bytes /
                       (double)(pool->stats.max_memory_limit > 0 ? pool->stats.max_memory_limit
                                                                 : pool->stats.total_pool_size);
-    double frag     = pool->stats.fragmentation_ratio;
+    double frag = pool->stats.fragmentation_ratio;
     pool_unlock(pool);
 
     if (pressure > pool->auto_compact_pressure_threshold ||
@@ -1118,7 +1118,7 @@ void mp_set_gc_callback(memory_pool_t *pool, mp_watermark_callback_t cb, void *u
         return;
     }
     pool_lock(pool);
-    pool->gc_cb        = cb;
+    pool->gc_cb = cb;
     pool->gc_user_data = user_data;
     pool_unlock(pool);
 }
@@ -1135,7 +1135,7 @@ void mp_set_eviction_callback(memory_pool_t *pool, mp_watermark_callback_t cb, v
         return;
     }
     pool_lock(pool);
-    pool->eviction_cb        = cb;
+    pool->eviction_cb = cb;
     pool->eviction_user_data = user_data;
     pool_unlock(pool);
 }
@@ -1154,8 +1154,8 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
     pool->alloc_latency_sum_ns += latency_ns;
     pool->alloc_latency_count++;
 
-    size_t   idx = 0;
-    uint64_t v   = latency_ns;
+    size_t idx = 0;
+    uint64_t v = latency_ns;
     while (v >= 1024 && idx < 31) {
         v >>= 1;
         idx++;
@@ -1175,9 +1175,9 @@ uint64_t mp_get_latency_p99(memory_pool_t *pool)
         return 0;
     }
     pool_rdlock(pool);
-    size_t   total  = pool->alloc_latency_count;
-    size_t   target = (total * 99) / 100;
-    size_t   cum    = 0;
+    size_t total = pool->alloc_latency_count;
+    size_t target = (total * 99) / 100;
+    size_t cum = 0;
     uint64_t p99_ns = 0;
     for (int i = 0; i < 32; i++) {
         cum += pool->alloc_latency_histogram[i];
@@ -1216,7 +1216,7 @@ void mp_reset_latency_stats(memory_pool_t *pool)
     }
     pool_lock(pool);
     memset(pool->alloc_latency_histogram, 0, sizeof(pool->alloc_latency_histogram));
-    pool->alloc_latency_count  = 0;
+    pool->alloc_latency_count = 0;
     pool->alloc_latency_sum_ns = 0;
     pool_unlock(pool);
 }
@@ -1232,16 +1232,16 @@ void mp_reset_stats(memory_pool_t *pool)
         return;
     }
     pool_lock(pool);
-    pool->stats.total_alloc_ops     = 0;
-    pool->stats.total_free_ops      = 0;
-    pool->stats.peak_bytes          = pool->stats.active_bytes;
-    pool->window_alloc_ops          = 0;
-    pool->window_alloc_bytes        = 0;
-    pool->window_start_time.tv_sec  = 0;
+    pool->stats.total_alloc_ops = 0;
+    pool->stats.total_free_ops = 0;
+    pool->stats.peak_bytes = pool->stats.active_bytes;
+    pool->window_alloc_ops = 0;
+    pool->window_alloc_bytes = 0;
+    pool->window_start_time.tv_sec = 0;
     pool->window_start_time.tv_nsec = 0;
     memset(pool->stats.size_histogram, 0, sizeof(pool->stats.size_histogram));
     memset(pool->alloc_latency_histogram, 0, sizeof(pool->alloc_latency_histogram));
-    pool->alloc_latency_count  = 0;
+    pool->alloc_latency_count = 0;
     pool->alloc_latency_sum_ns = 0;
     pool_unlock(pool);
 }
@@ -1460,45 +1460,45 @@ void mp_reset(memory_pool_t *pool)
         child = child->next_sibling;
     }
 
-    pool->stats.active_bytes         = 0;
-    pool->stats.active_allocations   = 0;
+    pool->stats.active_bytes = 0;
+    pool->stats.active_allocations = 0;
     pool->stats.slab_allocated_bytes = 0;
     pool->stats.tlsf_allocated_bytes = 0;
-    pool->stats.os_allocated_bytes   = 0;
-    pool->active_head                = NULL;
+    pool->stats.os_allocated_bytes = 0;
+    pool->active_head = NULL;
 
     for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[c];
-        mp_slab_page_t  *page = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[c];
+        mp_slab_page_t *page = sc->partial_pages;
 
         while (sc->full_pages) {
             mp_slab_page_t *p = sc->full_pages;
-            sc->full_pages    = p->next;
-            p->next           = sc->partial_pages;
+            sc->full_pages = p->next;
+            p->next = sc->partial_pages;
             if (sc->partial_pages) {
                 sc->partial_pages->prev = p;
             }
-            p->prev           = NULL;
+            p->prev = NULL;
             sc->partial_pages = p;
         }
 
-        page                     = sc->partial_pages;
+        page = sc->partial_pages;
         size_t slot_payload_size = pool->slab_classes[c].slot_size;
-        size_t header_overhead   = sizeof(mp_block_header_t);
+        size_t header_overhead = sizeof(mp_block_header_t);
         size_t total_slot_size =
             header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
         total_slot_size = (total_slot_size + 7) & ~7;
 
         while (page) {
             page->free_count = page->total_slots;
-            uint8_t *ptr     = (uint8_t *)page->page_raw_mem + sizeof(mp_slab_page_t);
-            page->free_list  = (mp_slab_slot_t *)ptr;
+            uint8_t *ptr = (uint8_t *)page->page_raw_mem + sizeof(mp_slab_page_t);
+            page->free_list = (mp_slab_slot_t *)ptr;
 
             for (uint16_t i = 0; i < page->total_slots; i++) {
                 mp_slab_slot_t *slot = (mp_slab_slot_t *)(ptr + i * total_slot_size);
-                slot->next           = (i < page->total_slots - 1)
-                                           ? (mp_slab_slot_t *)(ptr + (i + 1) * total_slot_size)
-                                           : NULL;
+                slot->next = (i < page->total_slots - 1)
+                                 ? (mp_slab_slot_t *)(ptr + (i + 1) * total_slot_size)
+                                 : NULL;
             }
             page = page->next;
         }
@@ -1510,16 +1510,16 @@ void mp_reset(memory_pool_t *pool)
         tcurr->fl_bitmap = 0;
         memset(tcurr->blocks, 0, sizeof(tcurr->blocks));
 
-        tlsf_block_t *block   = (tlsf_block_t *)tcurr->raw_area;
+        tlsf_block_t *block = (tlsf_block_t *)tcurr->raw_area;
         block->size_and_flags = (tcurr->raw_size - sizeof(tlsf_block_t)) | BLOCK_STATE_FREE;
-        block->prev_physical  = NULL;
-        block->next_free      = NULL;
-        block->prev_free      = NULL;
+        block->prev_physical = NULL;
+        block->next_free = NULL;
+        block->prev_free = NULL;
 
         tlsf_block_t *sentinel =
             (tlsf_block_t *)((uint8_t *)block + (block->size_and_flags & BLOCK_SIZE_MASK));
         sentinel->size_and_flags = 0;
-        sentinel->prev_physical  = block;
+        sentinel->prev_physical = block;
 
         tlsf_insert_free_block(tcurr, block);
         tcurr = tcurr->next;
@@ -1541,7 +1541,7 @@ void mp_set_event_callback(memory_pool_t *pool, mp_event_callback_t callback, vo
         return;
     }
     pool_lock(pool);
-    pool->event_cb        = callback;
+    pool->event_cb = callback;
     pool->event_user_data = user_data;
     pool_unlock(pool);
 }
@@ -1588,8 +1588,8 @@ bool mp_enable_emergency_reserve(memory_pool_t *pool, size_t reserve_bytes)
         pool_unlock(pool);
         return false;
     }
-    pool->emergency_size     = reserve_bytes;
-    pool->emergency_used     = 0;
+    pool->emergency_size = reserve_bytes;
+    pool->emergency_used = 0;
     pool->in_emergency_state = false;
     pool_unlock(pool);
     printf("[CMEM RELIABILITY] Emergency OOM reserve buffer (%zu bytes) configured for [%s]\n",
@@ -1608,7 +1608,7 @@ inline void check_watermark_after_change(memory_pool_t *pool)
         return;
     }
 
-    size_t limit  = pool->stats.max_memory_limit;
+    size_t limit = pool->stats.max_memory_limit;
     size_t active = pool->stats.active_bytes;
 
     if (!pool->in_high_watermark_state && pool->high_watermark_ratio > 0.0) {
@@ -1709,31 +1709,31 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
     }
 
     if ((pool->flags & MP_FLAG_PERCPU_FREELIST) && size <= SLAB_MAX_SIZE) {
-        uint8_t         class_idx = get_slab_class_index(pool, size);
-        int             cpu       = percpu_cpu_index();
-        mp_slab_slot_t *slot      = percpu_pop(pool, cpu, class_idx);
+        uint8_t class_idx = get_slab_class_index(pool, size);
+        int cpu = percpu_cpu_index();
+        mp_slab_slot_t *slot = percpu_pop(pool, cpu, class_idx);
         if (!slot) {
             percpu_refill(pool, cpu, class_idx);
             slot = percpu_pop(pool, cpu, class_idx);
         }
         if (slot) {
             mp_block_header_t *header = (mp_block_header_t *)slot;
-            header->magic             = MP_MAGIC_HEAD;
-            header->alloc_type        = ALLOC_TYPE_SLAB;
-            header->slab_class        = class_idx;
-            header->flags             = 0;
-            header->requested_size    = size;
-            header->usable_size       = pool->slab_classes[class_idx].slot_size;
-            header->raw_base          = slot;
-            header->alloc_file        = NULL;
-            header->alloc_line        = 0;
-            header->alloc_func        = NULL;
-            header->backtrace_depth   = 0;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_SLAB;
+            header->slab_class = class_idx;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = pool->slab_classes[class_idx].slot_size;
+            header->raw_base = slot;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
 
             void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
             if (pool->flags & MP_FLAG_DEBUG_CANARY) {
                 uint8_t *canary = (uint8_t *)payload + size;
-                *canary         = MP_CANARY_BYTE;
+                *canary = MP_CANARY_BYTE;
             }
             if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
                 memset(payload, 0, size);
@@ -1768,27 +1768,27 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             tls_cache_refill(pool, class_idx);
         }
         if (tls_cache.counts[class_idx] > 0) {
-            mp_slab_slot_t *slot       = tls_cache.slots[class_idx];
+            mp_slab_slot_t *slot = tls_cache.slots[class_idx];
             tls_cache.slots[class_idx] = slot->next;
             tls_cache.counts[class_idx]--;
 
             mp_block_header_t *header = (mp_block_header_t *)slot;
-            header->magic             = MP_MAGIC_HEAD;
-            header->alloc_type        = ALLOC_TYPE_SLAB;
-            header->slab_class        = class_idx;
-            header->flags             = 0;
-            header->requested_size    = size;
-            header->usable_size       = pool->slab_classes[class_idx].slot_size;
-            header->raw_base          = slot;
-            header->alloc_file        = NULL;
-            header->alloc_line        = 0;
-            header->alloc_func        = NULL;
-            header->backtrace_depth   = 0;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_SLAB;
+            header->slab_class = class_idx;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = pool->slab_classes[class_idx].slot_size;
+            header->raw_base = slot;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
 
             void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
             if (pool->flags & MP_FLAG_DEBUG_CANARY) {
                 uint8_t *canary = (uint8_t *)payload + size;
-                *canary         = MP_CANARY_BYTE;
+                *canary = MP_CANARY_BYTE;
             }
             if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
                 memset(payload, 0, size);
@@ -1834,22 +1834,22 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             pool->emergency_used += emerg_total;
 
             mp_block_header_t *header = (mp_block_header_t *)raw;
-            header->magic             = MP_MAGIC_HEAD;
-            header->alloc_type        = ALLOC_TYPE_EMERGENCY;
-            header->slab_class        = 0;
-            header->flags             = 0;
-            header->requested_size    = size;
-            header->usable_size       = size;
-            header->raw_base          = raw;
-            header->alloc_file        = NULL;
-            header->alloc_line        = 0;
-            header->alloc_func        = NULL;
-            header->backtrace_depth   = 0;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_EMERGENCY;
+            header->slab_class = 0;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = size;
+            header->raw_base = raw;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
 
             void *emergency_ptr = (void *)(raw + sizeof(mp_block_header_t));
             if (pool->flags & MP_FLAG_DEBUG_CANARY) {
                 uint8_t *canary = (uint8_t *)emergency_ptr + size;
-                *canary         = MP_CANARY_BYTE;
+                *canary = MP_CANARY_BYTE;
             }
             active_list_add(pool, header);
             pool->stats.active_bytes += size;
@@ -1880,22 +1880,22 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             void *raw_mem = sys_mem_alloc(pool, total_sz, 8);
             if (raw_mem) {
                 mp_block_header_t *header = (mp_block_header_t *)raw_mem;
-                header->magic             = MP_MAGIC_HEAD;
-                header->alloc_type        = ALLOC_TYPE_OS;
-                header->slab_class        = 0;
-                header->flags             = 0;
-                header->requested_size    = size;
-                header->usable_size       = size;
-                header->raw_base          = raw_mem;
-                header->alloc_file        = NULL;
-                header->alloc_line        = 0;
-                header->alloc_func        = NULL;
-                header->backtrace_depth   = 0;
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_type = ALLOC_TYPE_OS;
+                header->slab_class = 0;
+                header->flags = 0;
+                header->requested_size = size;
+                header->usable_size = size;
+                header->raw_base = raw_mem;
+                header->alloc_file = NULL;
+                header->alloc_line = 0;
+                header->alloc_func = NULL;
+                header->backtrace_depth = 0;
 
                 void *fallback_ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
                 if (pool->flags & MP_FLAG_DEBUG_CANARY) {
                     uint8_t *canary = (uint8_t *)fallback_ptr + size;
-                    *canary         = MP_CANARY_BYTE;
+                    *canary = MP_CANARY_BYTE;
                 }
                 if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
                     memset(fallback_ptr, 0, size);
@@ -1919,7 +1919,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
     if ((pool->flags & MP_FLAG_STATIC_BUFFER) == 0 && size <= SLAB_MAX_SIZE) {
         uint8_t class_idx = get_slab_class_index(pool, size);
-        ptr               = slab_alloc(pool, class_idx, size);
+        ptr = slab_alloc(pool, class_idx, size);
     } else if (size <= TLSF_MAX_SIZE || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
         ptr = tlsf_alloc(pool, size);
     } else {
@@ -1928,23 +1928,23 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         void *raw_mem = sys_mem_alloc(pool, total_sz, 8);
         if (raw_mem) {
             mp_block_header_t *header = (mp_block_header_t *)raw_mem;
-            header->magic             = MP_MAGIC_HEAD;
-            header->alloc_type        = ALLOC_TYPE_OS;
-            header->slab_class        = 0;
-            header->flags             = 0;
-            header->requested_size    = size;
-            header->usable_size       = size;
-            header->raw_base          = raw_mem;
-            header->alloc_file        = NULL;
-            header->alloc_line        = 0;
-            header->alloc_func        = NULL;
-            header->backtrace_depth   = 0;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_OS;
+            header->slab_class = 0;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = size;
+            header->raw_base = raw_mem;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
 
             ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
 
             if (pool->flags & MP_FLAG_DEBUG_CANARY) {
                 uint8_t *canary = (uint8_t *)ptr + size;
-                *canary         = MP_CANARY_BYTE;
+                *canary = MP_CANARY_BYTE;
             }
             if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
                 memset(ptr, 0, size);
@@ -2064,7 +2064,7 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
 void *mp_calloc(memory_pool_t *pool, size_t num, size_t size)
 {
     size_t total_size = num * size;
-    void  *ptr        = mp_alloc(pool, total_size);
+    void *ptr = mp_alloc(pool, total_size);
     if (ptr && !(pool->flags & MP_FLAG_ZERO_ON_ALLOC)) {
         memset(ptr, 0, total_size);
     }
@@ -2108,7 +2108,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
         uint8_t class_idx = header->slab_class;
 
         if (pool->flags & MP_FLAG_PERCPU_FREELIST) {
-            int             cpu  = percpu_cpu_index();
+            int cpu = percpu_cpu_index();
             mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
             if (percpu_push(pool, cpu, class_idx, slot)) {
                 if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
@@ -2149,8 +2149,8 @@ void mp_free(memory_pool_t *pool, void *ptr)
                 trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
             }
 
-            mp_slab_slot_t *slot       = (mp_slab_slot_t *)header->raw_base;
-            slot->next                 = tls_cache.slots[class_idx];
+            mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
+            slot->next = tls_cache.slots[class_idx];
             tls_cache.slots[class_idx] = slot;
             tls_cache.counts[class_idx]++;
             return;
@@ -2221,7 +2221,7 @@ void *mp_realloc(memory_pool_t *pool, void *ptr, size_t new_size)
         header->requested_size = new_size;
         if (pool->flags & MP_FLAG_DEBUG_CANARY) {
             uint8_t *canary = (uint8_t *)ptr + new_size;
-            *canary         = MP_CANARY_BYTE;
+            *canary = MP_CANARY_BYTE;
         }
         trigger_event(pool, MP_EVENT_REALLOC, ptr, new_size);
         return ptr;
@@ -2331,7 +2331,7 @@ void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size)
 
     size_t total_size = size + alignment + sizeof(mp_block_header_t) +
                         ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-    void  *raw_ptr    = mp_alloc_internal(pool, total_size);
+    void *raw_ptr = mp_alloc_internal(pool, total_size);
     if (!raw_ptr) {
         return NULL;
     }
@@ -2356,7 +2356,7 @@ void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size)
 
     if (new_header != orig_header) {
         pool_lock(pool);
-        *new_header                = *orig_header;
+        *new_header = *orig_header;
         new_header->requested_size = size;
 
         if (orig_header->prev) {
@@ -2374,7 +2374,7 @@ void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size)
 
     if (pool->flags & MP_FLAG_DEBUG_CANARY) {
         uint8_t *canary = (uint8_t *)aligned_addr + size;
-        *canary         = MP_CANARY_BYTE;
+        *canary = MP_CANARY_BYTE;
     }
 
     return (void *)aligned_addr;
@@ -2427,8 +2427,8 @@ bool mp_ptr_valid(memory_pool_t *pool, void *ptr)
         pool_rdunlock(pool);
         return false;
     }
-    bool               found = false;
-    mp_block_header_t *curr  = pool->active_head;
+    bool found = false;
+    mp_block_header_t *curr = pool->active_head;
     while (curr) {
         if (curr == header) {
             found = true;
@@ -2459,8 +2459,8 @@ bool mp_get_allocation_info(memory_pool_t *pool, void *ptr, mp_allocation_info_t
         pool_rdunlock(pool);
         return false;
     }
-    bool               found = false;
-    mp_block_header_t *curr  = pool->active_head;
+    bool found = false;
+    mp_block_header_t *curr = pool->active_head;
     while (curr) {
         if (curr == header) {
             found = true;
@@ -2473,15 +2473,15 @@ bool mp_get_allocation_info(memory_pool_t *pool, void *ptr, mp_allocation_info_t
         return false;
     }
 
-    info->ptr             = ptr;
-    info->requested_size  = header->requested_size;
-    info->usable_size     = header->usable_size;
-    info->alloc_type      = (mp_alloc_type_t)header->alloc_type;
-    info->slab_class      = header->slab_class;
-    info->raw_base        = header->raw_base;
-    info->alloc_file      = header->alloc_file;
-    info->alloc_line      = header->alloc_line;
-    info->alloc_func      = header->alloc_func;
+    info->ptr = ptr;
+    info->requested_size = header->requested_size;
+    info->usable_size = header->usable_size;
+    info->alloc_type = (mp_alloc_type_t)header->alloc_type;
+    info->slab_class = header->slab_class;
+    info->raw_base = header->raw_base;
+    info->alloc_file = header->alloc_file;
+    info->alloc_line = header->alloc_line;
+    info->alloc_func = header->alloc_func;
     info->backtrace_depth = header->backtrace_depth;
     if (header->backtrace_depth > 0) {
         for (int i = 0; i < header->backtrace_depth && i < 8; i++) {
@@ -2514,24 +2514,24 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
     size_t count = 0;
 
     for (int c = 0; c < SLAB_CLASS_COUNT && count < max_regions; c++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[c];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[c];
+        mp_slab_page_t *curr = sc->partial_pages;
         while (curr && count < max_regions) {
-            regions[count].base       = curr->page_raw_mem;
-            regions[count].size       = SLAB_PAGE_SIZE;
-            regions[count].type       = ALLOC_TYPE_SLAB;
+            regions[count].base = curr->page_raw_mem;
+            regions[count].size = SLAB_PAGE_SIZE;
+            regions[count].type = ALLOC_TYPE_SLAB;
             regions[count].slab_class = c;
-            regions[count].is_hot     = curr->is_hot;
+            regions[count].is_hot = curr->is_hot;
             count++;
             curr = curr->next;
         }
         curr = sc->full_pages;
         while (curr && count < max_regions) {
-            regions[count].base       = curr->page_raw_mem;
-            regions[count].size       = SLAB_PAGE_SIZE;
-            regions[count].type       = ALLOC_TYPE_SLAB;
+            regions[count].base = curr->page_raw_mem;
+            regions[count].size = SLAB_PAGE_SIZE;
+            regions[count].type = ALLOC_TYPE_SLAB;
             regions[count].slab_class = c;
-            regions[count].is_hot     = curr->is_hot;
+            regions[count].is_hot = curr->is_hot;
             count++;
             curr = curr->next;
         }
@@ -2539,21 +2539,21 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
 
     tlsf_pool_t *tcurr = pool->tlsf_root;
     while (tcurr && count < max_regions) {
-        regions[count].base       = tcurr->raw_area;
-        regions[count].size       = tcurr->raw_size;
-        regions[count].type       = ALLOC_TYPE_TLSF;
+        regions[count].base = tcurr->raw_area;
+        regions[count].size = tcurr->raw_size;
+        regions[count].type = ALLOC_TYPE_TLSF;
         regions[count].slab_class = 0;
-        regions[count].is_hot     = false;
+        regions[count].is_hot = false;
         count++;
         tcurr = tcurr->next;
     }
 
     if (pool->emergency_buf && count < max_regions) {
-        regions[count].base       = pool->emergency_buf;
-        regions[count].size       = pool->emergency_size;
-        regions[count].type       = ALLOC_TYPE_EMERGENCY;
+        regions[count].base = pool->emergency_buf;
+        regions[count].size = pool->emergency_size;
+        regions[count].type = ALLOC_TYPE_EMERGENCY;
         regions[count].slab_class = 0;
-        regions[count].is_hot     = false;
+        regions[count].is_hot = false;
         count++;
     }
 
@@ -2574,7 +2574,7 @@ cmem_frame_arena_t *mp_frame_arena_create(size_t frame_capacity)
         return NULL;
     }
 
-    size_t cap     = frame_capacity > 0 ? frame_capacity : 1024 * 1024;
+    size_t cap = frame_capacity > 0 ? frame_capacity : 1024 * 1024;
     farena->pool_a = mp_create(cap, MP_FLAG_DEFAULT);
     farena->pool_b = mp_create(cap, MP_FLAG_DEFAULT);
     if (!farena->pool_a || !farena->pool_b) {
