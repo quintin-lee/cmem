@@ -40,9 +40,9 @@ typedef std::atomic<size_t> cmem_atomic_size_t; /* Atomic size counter (C++ std:
 #elif defined(_WIN32)
 #include <windows.h>
 typedef volatile LONG_PTR cmem_atomic_size_t;
-#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) (InterlockedExchangeAdd64((LONG64 volatile *)(obj), (LONG64)(arg)) - (LONG64)(arg))
-#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) (InterlockedExchangeAdd64((LONG64 volatile *)(obj), -(LONG64)(arg)) + (LONG64)(arg))
-#define CMEM_ATOMIC_LOAD(obj, order) (*(volatile LONG_PTR *)(obj))
+#define CMEM_ATOMIC_FETCH_ADD(obj, arg, order) InterlockedExchangeAdd64((LONG64 volatile *)(obj), (LONG64)(arg))
+#define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) InterlockedExchangeAdd64((LONG64 volatile *)(obj), -(LONG64)(arg))
+#define CMEM_ATOMIC_LOAD(obj, order) InterlockedCompareExchange64((LONG64 volatile *)(obj), 0, 0)
 #define CMEM_ATOMIC_STORE(obj, val, order) InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
 #define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
     InterlockedCompareExchange64((LONG64 volatile *)(obj), (LONG64)(desired), (LONG64)(*expected))
