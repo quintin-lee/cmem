@@ -88,9 +88,9 @@ static inline void cmem_free(void *ptr)
  * @param new_size New requested size in bytes
  * @return Pointer to the reallocated memory, or NULL on failure
  */
-static inline void *cmem_realloc(void *ptr, size_t new_size)
+static inline void *cmem_realloc(void *__ptr, size_t __size)
 {
-    return mp_realloc(cmem_get_global_pool(), ptr, new_size);
+    return mp_realloc(cmem_get_global_pool(), __ptr, __size);
 }
 
 /**
@@ -100,9 +100,9 @@ static inline void *cmem_realloc(void *ptr, size_t new_size)
  * @param size Size of each element in bytes
  * @return Pointer to the zero-initialized memory, or NULL on failure
  */
-static inline void *cmem_calloc(size_t num, size_t size)
+static inline void *cmem_calloc(size_t __nmemb, size_t __size)
 {
-    return mp_calloc(cmem_get_global_pool(), num, size);
+    return mp_calloc(cmem_get_global_pool(), __nmemb, __size);
 }
 
 /**
