@@ -151,7 +151,7 @@ void bench_arena_reset()
 
 /**
  * @brief Entry point for cmem performance benchmarks.
- * Runs small alloc, medium alloc, and arena reset benchmarks.
+ * Runs small alloc, medium alloc, arena reset, multithreaded, and arena workload benchmarks.
  * @return 0 on success.
  */
 int main()
@@ -160,5 +160,138 @@ int main()
     bench_small_allocs();
     bench_medium_allocs();
     bench_arena_reset();
+    bench_multithreaded(4, 100000);
+    bench_arena_workload(1000, 500);
     return 0;
+}
+
+/**
+ * @brief Benchmarks multithreaded allocations comparing thread count scaling.
+ * Measures throughput for N threads with M allocations each.
+ */
+typedef struct {
+    memory_pool_t *pool;
+    int            thread_id;
+    int            alloc_count;
+    double         elapsed;
+} bench_thread_arg_t;
+
+static void *bench_thread_func(void *arg)
+{
+    bench_thread_arg_t *ta = (bench_thread_arg_t *)arg;
+    void **ptrs = (void **)malloc(sizeof(void *) * ta->alloc_count);
+    if (!ptrs) return NULL;
+
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    for (int i = 0; i < ta->alloc_count; i++) {
+        size_t sz = 32 + (i % 256);
+        ptrs[i]   = mp_alloc(ta->pool, sz);
+    }
+    for (int i = 0; i < ta->alloc_count; i++) {
+        mp_free(ta->pool, ptrs[i]);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    ta->elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    free(ptrs);
+    return NULL;
+}
+
+void bench_multithreaded(int thread_count, int allocs_per_thread)
+{
+    printf("\n--- Benchmark 4: Multithreaded Allocations (%d threads x %d ops) ---\n",
+           thread_count, allocs_per_thread);
+
+    memory_pool_t *pool = mp_create(64 * 1024 * 1024,
+                                    MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+
+    bench_thread_arg_t *args = (bench_thread_arg_t *)malloc(sizeof(bench_thread_arg_t) * thread_count);
+    pthread_t          *threads = (pthread_t *)malloc(sizeof(pthread_t) * thread_count);
+    if (!args || !threads) {
+        fprintf(stderr, "Failed to allocate benchmark resources\n");
+        mp_destroy(pool);
+        free(args);
+        free(threads);
+        return;
+    }
+
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    for (int i = 0; i < thread_count; i++) {
+        args[i].pool       = pool;
+        args[i].thread_id  = i;
+        args[i].alloc_count = allocs_per_thread;
+        pthread_create(&threads[i], NULL, bench_thread_func, &args[i]);
+    }
+
+    for (int i = 0; i < thread_count; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double total_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    printf("  Total Time: %.4f sec\n", total_time);
+    printf("  Throughput: %.2f Mops/sec\n",
+           (thread_count * allocs_per_thread) / total_time / 1e6);
+
+    for (int i = 0; i < thread_count; i++) {
+        printf("  Thread %d: %.4f sec\n", i, args[i].elapsed);
+    }
+
+    mp_destroy(pool);
+    free(args);
+    free(threads);
+}
+
+/**
+ * @brief Benchmarks arena workload (game/render style) comparing individual free vs arena reset.
+ * Simulates per-frame allocation patterns.
+ */
+void bench_arena_workload(int rounds, int allocs_per_round)
+{
+    printf("\n--- Benchmark 5: Arena Workload (Game/Render style) ---\n");
+
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_DEFAULT);
+    void **ptrs = (void **)malloc(sizeof(void *) * allocs_per_round);
+    if (!ptrs) {
+        fprintf(stderr, "Failed to allocate benchmark resources\n");
+        return;
+    }
+
+    // Method 1: Individual free
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int r = 0; r < rounds; r++) {
+        for (int i = 0; i < allocs_per_round; i++) {
+            ptrs[i] = mp_alloc(pool, 64 + (i * 8));
+        }
+        for (int i = 0; i < allocs_per_round; i++) {
+            mp_free(pool, ptrs[i]);
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double time_individual = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    // Method 2: Arena reset
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int r = 0; r < rounds; r++) {
+        for (int i = 0; i < allocs_per_round; i++) {
+            mp_alloc(pool, 64 + (i * 8));
+        }
+        mp_reset(pool);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double time_reset = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    printf("  Individual Free:  %.4f sec\n", time_individual);
+    printf("  Arena Reset:      %.4f sec\n", time_reset);
+    printf("  Speedup:          %.2fx\n", time_individual / time_reset);
+
+    mp_destroy(pool);
+    free(ptrs);
 }
