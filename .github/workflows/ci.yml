@@ -1,48 +1,56 @@
-name: cmem Continuous Integration
+name : cmem Continuous Integration
 
-on:
-  push:
-    branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
+           on : push : branches : [ master, main ] pull_request : branches : [ master, main ]
 
-jobs:
-  build-and-test:
-    name: Build & Test (${{ matrix.compiler.cc }}, ${{ matrix.build_type }})
-    runs-on: ubuntu-latest
+                                                                             jobs : build -
+                                                                                    and-test : name
+    : Build &
+      Test(${{matrix.compiler.cc}}, ${{matrix.build_type}}) runs - on : ubuntu
+                                                                        -
+                                                                        latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler:
-          - { cc: "gcc", cxx: "g++" }
-          - { cc: "clang", cxx: "clang++" }
-        build_type: [ "Debug", "Release" ]
+                                                                        strategy : fail
+                                                                                   -
+                                                                                   fast
+    : false matrix : compiler : -{cc : "gcc", cxx : "g++"} -
+                                {cc : "clang", cxx : "clang++"} build_type : [ "Debug", "Release" ]
 
-    steps:
-      - name: Checkout Codebase
-        uses: actions/checkout@v4
+                                                                             steps : -name
+    : Checkout Codebase uses : actions
+                               /
+                               checkout @v4
 
-      - name: Install System Dependencies & Tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build valgrind gcc g++ clang
+                                -
+                                name : Install System Dependencies &Tools run
+    : |
+      sudo apt - get update sudo apt - get install - y cmake ninja - build valgrind gcc g++ clang
 
-      - name: Run Makefile Build & Sanitizer Unit Tests
-        env:
-          CC: ${{ matrix.compiler.cc }}
-          CXX: ${{ matrix.compiler.cxx }}
-        run: |
-          make clean
-          make lib
-          make test
-          make test_advanced
-          make test_cpp
+          - name : Run Makefile Build &Sanitizer Unit Tests env : CC : $
+{
+    {
+        matrix.compiler.cc
+    }
+}
+CXX : $
+{
+    {
+        matrix.compiler.cxx
+    }
+}
+run : | make clean make lib make test make test_advanced make test_cpp
 
-      - name: Configure CMake Build
-        env:
-          CC: ${{ matrix.compiler.cc }}
-          CXX: ${{ matrix.compiler.cxx }}
+            - name : Configure CMake Build env : CC : $
+{
+    {
+        matrix.compiler.cc
+    }
+}
+CXX : $
+{
+    {
+        matrix.compiler.cxx
+    }
+}
         run: |
           cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
 
@@ -108,6 +116,80 @@ jobs:
           name: fuzz-corpus
           path: corpus/
           retention-days: 30
+
+  windows-build:
+    name: Windows Build (MSVC)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --config Release --output-on-failure
+
+  windows-gcc-build:
+    name: Windows Build (MinGW)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      - name: Configure CMake
+        run: cmake -B build -G "MinGW Makefiles"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows-build:
+    name: Windows Build (MSVC)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --config Release --output-on-failure
+
+  windows-gcc-build:
+    name: Windows Build (MinGW)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      - name: Configure CMake
+        run: cmake -B build -G "MinGW Makefiles"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
 
   code-quality:
     name: Code Quality Checks

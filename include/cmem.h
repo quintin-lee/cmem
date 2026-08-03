@@ -257,6 +257,19 @@ typedef struct {
     bool            is_hot;     /**< Hot page flag (for Slab pages) */
 } mp_region_info_t;
 
+/* Platform detection */
+#if defined(_WIN32) || defined(_WIN64)
+#define CMEM_PLATFORM_WINDOWS 1
+#elif defined(__APPLE__) && defined(__MACH__)
+#define CMEM_PLATFORM_MACOS 1
+#elif defined(__linux__)
+#define CMEM_PLATFORM_LINUX 1
+#elif defined(__ANDROID__)
+#define CMEM_PLATFORM_ANDROID 1
+#elif defined(__FreeBSD__)
+#define CMEM_PLATFORM_FREEBSD 1
+#endif
+
 /* ========================================================================== */
 /*  Advanced Feature API Declarations                                         */
 /* ========================================================================== */

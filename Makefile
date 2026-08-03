@@ -6,7 +6,7 @@ CXX = g++
 LDFLAGS = -pthread -lrt
 CFLAGS = -Wall -Wextra -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -I./include
 CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include
-CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -I./include
+CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -I./include
 CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include
 
 # 版本信息（从 VERSION 文件读取）
@@ -14,7 +14,7 @@ VERSION := $(shell cat VERSION | tr -d '[:space:]')
 LIBNAME = libcmem.a
 SONAME = libcmem.so.$(VERSION)
 
-SRC = src/cmem.c
+SRC = $(wildcard src/*.c)
 TEST_SRC = tests/test_main.c
 ADV_TEST_SRC = tests/test_advanced.c
 STRESS_SRC = tests/stress_test.c
