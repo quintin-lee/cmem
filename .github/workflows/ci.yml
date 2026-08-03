@@ -144,6 +144,7 @@ jobs:
         uses: egor-tensin/setup-mingw@v2
         with:
           platform: x64
+          static_workaround: false
 
       - name: Configure CMake
         run: cmake -B build -G "MinGW Makefiles"

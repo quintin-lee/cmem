@@ -16,6 +16,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define setenv(key, value, overwrite) _putenv_s(key, value)
+#endif
+
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
 /* ========================================================================== */
