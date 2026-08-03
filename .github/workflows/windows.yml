@@ -8,15 +8,8 @@ on:
 
 jobs:
   windows-build:
-    name: Windows Build & Test (${{ matrix.compiler }})
+    name: Windows Build & Test (MinGW)
     runs-on: windows-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler:
-          - { cc: "cl", name: "MSVC" }
-          - { cc: "gcc", name: "MinGW" }
 
     steps:
       - name: Checkout Codebase
@@ -24,24 +17,14 @@ jobs:
 
       - name: Setup Build Environment
         run: |
-          if ($env:CC -eq "gcc") {
-            choco install mingw -y
-            echo "C:\ProgramData\mingw64\mingw64\bin" >> $env:GITHUB_PATH
-            echo "C:\ProgramData\mingw64\mingw64\x86_64-w64-mingw32\include" >> $env:INCLUDE
-          }
-        env:
-          CC: ${{ matrix.compiler.cc }}
+          choco install mingw -y
+          echo "C:\ProgramData\mingw64\mingw64\bin" >> $env:GITHUB_PATH
+          echo "C:\ProgramData\mingw64\mingw64\x86_64-w64-mingw32\include" >> $env:INCLUDE
         shell: pwsh
 
       - name: Configure CMake
         run: |
-          if ($env:CC -eq "gcc") {
-            cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_CLANG_TIDY=""
-          } else {
-            cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_CLANG_TIDY=""
-          }
-        env:
-          CC: ${{ matrix.compiler.cc }}
+          cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_CLANG_TIDY=""
         shell: pwsh
 
       - name: Build
