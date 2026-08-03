@@ -229,6 +229,24 @@ typedef struct {
 } mp_allocation_info_t;
 
 /**
+ * @brief Leak severity classification.
+ */
+typedef enum {
+    MP_LEAK_SEVERITY_CRITICAL, /**< > 1MB or frequent allocation pattern */
+    MP_LEAK_SEVERITY_WARNING,  /**< Medium-sized or recurring leak */
+    MP_LEAK_SEVERITY_INFO      /**< Small or occasional leak */
+} mp_leak_severity_t;
+
+/**
+ * @brief Leak pattern analysis result.
+ */
+typedef struct {
+    const char *pattern_name; /**< Pattern identifier */
+    int         confidence;   /**< 0-100 confidence score */
+    const char *suggestion;   /**< Fix suggestion */
+} mp_leak_pattern_t;
+
+/**
  * @brief Memory region descriptor returned by mp_enumerate_regions().
  */
 typedef struct {
@@ -1032,6 +1050,22 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len);
  * @return true on success
  */
 bool mp_export_leak_report(memory_pool_t *pool, const char *filepath);
+
+/**
+ * @brief Gets the severity classification for a leak.
+ *
+ * @param info Allocation info from mp_get_allocation_info()
+ * @return Severity level
+ */
+mp_leak_severity_t mp_get_leak_severity(const mp_allocation_info_t *info);
+
+/**
+ * @brief Analyzes leak pattern and returns analysis result.
+ *
+ * @param info Allocation info from mp_get_allocation_info()
+ * @return Leak pattern analysis
+ */
+mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info);
 
 /**
  * @brief Exports an interactive visual HTML profiler dashboard to a file.

@@ -647,3 +647,65 @@ bool mp_check_leaks(memory_pool_t *pool)
     pool_unlock(pool);
     return true;
 }
+
+mp_leak_severity_t mp_get_leak_severity(const mp_allocation_info_t *info)
+{
+    if (!info) {
+        return MP_LEAK_SEVERITY_INFO;
+    }
+
+    // Critical: > 1MB or very frequent (small class with large count)
+    if (info->requested_size > 1024 * 1024) {
+        return MP_LEAK_SEVERITY_CRITICAL;
+    }
+
+    // Warning: >= 100KB
+    if (info->requested_size >= 100 * 1024) {
+        return MP_LEAK_SEVERITY_WARNING;
+    }
+
+    // Info: everything else
+    return MP_LEAK_SEVERITY_INFO;
+}
+
+mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
+{
+    mp_leak_pattern_t result = {0};
+
+    if (!info) {
+        result.pattern_name = "unknown";
+        result.confidence   = 0;
+        result.suggestion   = "Provide valid allocation info";
+        return result;
+    }
+
+    // Pattern 1: Large single allocation (likely buffer leak)
+    if (info->requested_size > 64 * 1024) {
+        result.pattern_name = "large_buffer_leak";
+        result.confidence   = 85;
+        result.suggestion   = "Check for missing free() on large allocations";
+        return result;
+    }
+
+    // Pattern 2: Repeated small allocation (likely loop leak)
+    if (info->requested_size < 256 && info->slab_class > 0) {
+        result.pattern_name = "repeated_small_leak";
+        result.confidence   = 70;
+        result.suggestion   = "Check for allocations in loops without corresponding free()";
+        return result;
+    }
+
+    // Pattern 3: String allocation (likely strdup leak)
+    if (info->alloc_file && info->alloc_func) {
+        result.pattern_name = "string_allocation_leak";
+        result.confidence   = 60;
+        result.suggestion   = "Check mp_strdup/mp_memdup calls for missing free()";
+        return result;
+    }
+
+    // Default: generic leak
+    result.pattern_name = "generic_leak";
+    result.confidence   = 50;
+    result.suggestion   = "Review allocation";
+    return result;
+}
