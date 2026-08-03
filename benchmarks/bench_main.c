@@ -4,12 +4,14 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include "cmem.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <pthread.h>
 
 #define SMALL_ALLOC_COUNT 1000000
 #define MEDIUM_ALLOC_COUNT 100000
