@@ -31,8 +31,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 编译选项
 if(MSVC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W3")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W3")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W3 /std:c11")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W3 /std:c11")
     add_compile_definitions(_STDC_LIMIT_MACROS _STDC_FORMAT_MACROS)
 else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -pthread")

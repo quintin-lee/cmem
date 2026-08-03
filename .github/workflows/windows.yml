@@ -26,7 +26,8 @@ jobs:
         run: |
           if ($env:CC -eq "gcc") {
             choco install mingw -y
-            echo "C:\Program Files\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            echo "C:\ProgramData\mingw64\mingw64\bin" >> $env:GITHUB_PATH
+            echo "C:\ProgramData\mingw64\mingw64\x86_64-w64-mingw32\include" >> $env:INCLUDE
           }
         env:
           CC: ${{ matrix.compiler.cc }}
@@ -34,7 +35,13 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_CLANG_TIDY=""
+          if ($env:CC -eq "gcc") {
+            cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_CLANG_TIDY=""
+          } else {
+            cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_CLANG_TIDY=""
+          }
+        env:
+          CC: ${{ matrix.compiler.cc }}
         shell: pwsh
 
       - name: Build
