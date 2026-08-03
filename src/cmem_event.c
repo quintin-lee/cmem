@@ -1340,7 +1340,7 @@ size_t mp_get_slab_class_count(memory_pool_t *pool)
         return 0;
     }
     pool_rdlock(pool);
-    size_t count = pool->use_custom_slab_sizes ? SLAB_CLASS_COUNT : SLAB_CLASS_COUNT;
+    size_t count = SLAB_CLASS_COUNT;
     pool_rdunlock(pool);
     return count;
 }

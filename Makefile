@@ -60,15 +60,17 @@ help:
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # 静态库
-lib: format-check | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $(SRC) -o $(BUILD_DIR)/cmem.o
-	ar rcs $(BUILD_DIR)/$(LIBNAME) $(BUILD_DIR)/cmem.o
+lib: format-check $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
+	ar rcs $(BUILD_DIR)/$(LIBNAME) $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 	@echo "Built static library: $(BUILD_DIR)/$(LIBNAME)"
 
 # 共享库
-lib_shared: format-check | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -fPIC -shared $(SRC) -o $(BUILD_DIR)/$(SONAME) $(LDFLAGS)
+lib_shared: format-check $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
+	$(CC) $(CFLAGS) -fPIC -shared $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC)) -o $(BUILD_DIR)/$(SONAME) $(LDFLAGS)
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
 	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
