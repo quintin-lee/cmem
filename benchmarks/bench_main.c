@@ -150,6 +150,18 @@ void bench_arena_reset()
 }
 
 /**
+ * @brief Benchmarks arena workload (game/render style) comparing individual free vs arena reset.
+ * Simulates per-frame allocation patterns.
+ */
+void bench_arena_workload(int rounds, int allocs_per_round);
+
+/**
+ * @brief Benchmarks multithreaded allocations comparing thread count scaling.
+ * Measures throughput for N threads with M allocations each.
+ */
+void bench_multithreaded(int thread_count, int allocs_per_thread);
+
+/**
  * @brief Entry point for cmem performance benchmarks.
  * Runs small alloc, medium alloc, arena reset, multithreaded, and arena workload benchmarks.
  * @return 0 on success.
@@ -178,9 +190,11 @@ typedef struct {
 
 static void *bench_thread_func(void *arg)
 {
-    bench_thread_arg_t *ta = (bench_thread_arg_t *)arg;
-    void **ptrs = (void **)malloc(sizeof(void *) * ta->alloc_count);
-    if (!ptrs) return NULL;
+    bench_thread_arg_t *ta   = (bench_thread_arg_t *)arg;
+    void              **ptrs = (void **)malloc(sizeof(void *) * ta->alloc_count);
+    if (!ptrs) {
+        return NULL;
+    }
 
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -203,13 +217,15 @@ static void *bench_thread_func(void *arg)
 void bench_multithreaded(int thread_count, int allocs_per_thread)
 {
     printf("\n--- Benchmark 4: Multithreaded Allocations (%d threads x %d ops) ---\n",
-           thread_count, allocs_per_thread);
+           thread_count,
+           allocs_per_thread);
 
-    memory_pool_t *pool = mp_create(64 * 1024 * 1024,
-                                    MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+    memory_pool_t *pool =
+        mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
 
-    bench_thread_arg_t *args = (bench_thread_arg_t *)malloc(sizeof(bench_thread_arg_t) * thread_count);
-    pthread_t          *threads = (pthread_t *)malloc(sizeof(pthread_t) * thread_count);
+    bench_thread_arg_t *args =
+        (bench_thread_arg_t *)malloc(sizeof(bench_thread_arg_t) * thread_count);
+    pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t) * thread_count);
     if (!args || !threads) {
         fprintf(stderr, "Failed to allocate benchmark resources\n");
         mp_destroy(pool);
@@ -222,8 +238,8 @@ void bench_multithreaded(int thread_count, int allocs_per_thread)
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < thread_count; i++) {
-        args[i].pool       = pool;
-        args[i].thread_id  = i;
+        args[i].pool        = pool;
+        args[i].thread_id   = i;
         args[i].alloc_count = allocs_per_thread;
         pthread_create(&threads[i], NULL, bench_thread_func, &args[i]);
     }
@@ -236,8 +252,7 @@ void bench_multithreaded(int thread_count, int allocs_per_thread)
     double total_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
     printf("  Total Time: %.4f sec\n", total_time);
-    printf("  Throughput: %.2f Mops/sec\n",
-           (thread_count * allocs_per_thread) / total_time / 1e6);
+    printf("  Throughput: %.2f Mops/sec\n", (thread_count * allocs_per_thread) / total_time / 1e6);
 
     for (int i = 0; i < thread_count; i++) {
         printf("  Thread %d: %.4f sec\n", i, args[i].elapsed);
@@ -257,7 +272,7 @@ void bench_arena_workload(int rounds, int allocs_per_round)
     printf("\n--- Benchmark 5: Arena Workload (Game/Render style) ---\n");
 
     memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_DEFAULT);
-    void **ptrs = (void **)malloc(sizeof(void *) * allocs_per_round);
+    void         **ptrs = (void **)malloc(sizeof(void *) * allocs_per_round);
     if (!ptrs) {
         fprintf(stderr, "Failed to allocate benchmark resources\n");
         return;
