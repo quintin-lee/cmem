@@ -1,11 +1,41 @@
 /**
  * @file cmem_tlsf.c
- * @brief Extracted module implementation.
+ * @brief Two-Level Segregated Fit (TLSF) allocator implementation.
+ *
+ * TLSF is an O(1) dynamic allocation scheme used here to serve the
+ * mid-size tier (a few hundred bytes up to 4 MB). Free blocks are kept
+ * in a two-level bitmap index:
+ *
+ *   - First level  (fl): the floor(log2(size)) of the block, giving the
+ *     size class within a power-of-two range.
+ *   - Second level (sl): a sub-division of each first-level class into
+ *     TLSF_SL_COUNT equal segments, so a request lands on a small,
+ *     bounded free list.
+ *
+ * `fl_bitmap` has a bit per first-level bin; each `sl_bitmap[fl]` holds the
+ * per-second-level occupancy for that bin. `blocks[fl][sl]` heads a doubly
+ * linked free list.  The scheme keeps allocation and free in worst-case O(1)
+ * while keeping fragmentation bounded like a good-fit strategy.
+ *
+ * Each mid-size allocation is preceded by a `tlsf_block_t` header (managed
+ * here) followed by the cmem `mp_block_header_t` (managed in cmem.c); the
+ * returned payload points after both. Blocks are split on allocation and
+ * coalesced with their physical neighbours on free.
  */
 
 #include "cmem.h"
 #include "cmem_internal.h"
 #include <string.h>
+
+/**
+ * @brief Find the index of the highest set bit (floor of log2).
+ *
+ * Built on __builtin_clz so it compiles to a single amd64 `lzcnt`/`bsr`
+ * instruction. This maps a size to its TLSF first-level bucket.
+ *
+ * @param val Value to analyse (nonzero).
+ * @return Position of the highest set bit (0-based), or -1 if val == 0.
+ */
 static inline int tlsf_fls(size_t val)
 {
     if (val == 0) {
@@ -14,6 +44,15 @@ static inline int tlsf_fls(size_t val)
     return 31 - __builtin_clz((uint32_t)val);
 }
 
+/**
+ * @brief Find the index of the lowest set bit (trailing zeros).
+ *
+ * Built on __builtin_ctz; used to locate the first occupied second-level
+ * bucket in a bitmap.
+ *
+ * @param val Bitmap to scan (nonzero).
+ * @return Position of the lowest set bit (0-based), or -1 if val == 0.
+ */
 static inline int tlsf_ffs(uint32_t val)
 {
     if (val == 0) {
@@ -22,6 +61,17 @@ static inline int tlsf_ffs(uint32_t val)
     return __builtin_ctz(val);
 }
 
+/**
+ * @brief Compute the first/second-level buckets a request maps onto.
+ *
+ * For small sizes (< 2^TLSF_SL_SHIFT) the whole range falls into fl=0 with
+ * sl equal to the size.  For larger sizes, fl = floor(log2(size)) and
+ * sl selects which sub-segment inside that power-of-two class the size lies.
+ *
+ * @param size Requested block size.
+ * @param fl   [out] First-level bucket index.
+ * @param sl   [out] Second-level bucket index.
+ */
 void tlsf_mapping_insert(size_t size, int *fl, int *sl)
 {
     if (size < (1 << TLSF_SL_SHIFT)) {
@@ -33,6 +83,18 @@ void tlsf_mapping_insert(size_t size, int *fl, int *sl)
     }
 }
 
+/**
+ * @brief Round a requested size UP to its search bucket (good-fit).
+ *
+ * Search treats the requested size as the bucket it would land in and
+ * rounds a mid-class request up to the top of its second-level segment so
+ * tlsf_mapping_insert() pins it to the correct (larger) free list, avoiding
+ * a wasted O(1) probe every allocation.
+ *
+ * @param size Requested block size.
+ * @param fl   [out] First-level bucket index.
+ * @param sl   [out] Second-level bucket index.
+ */
 void tlsf_mapping_search(size_t size, int *fl, int *sl)
 {
     if (size >= (1 << TLSF_SL_SHIFT)) {
@@ -42,6 +104,19 @@ void tlsf_mapping_search(size_t size, int *fl, int *sl)
     tlsf_mapping_insert(size, fl, sl);
 }
 
+/**
+ * @brief Create a new TLSF arena of `size` bytes.
+ *
+ * The arena's first 8-aligned `size` bytes come from `custom_mem` if given
+ * (used for static-buffer pools), otherwise from sys_mem_alloc(). The arena
+ * is seeded with one giant free block spanning all `size` bytes, registered
+ * in the bitmap index so future allocations can split it.
+ *
+ * @param pool       Owning pool (may be NULL).
+ * @param size       Arena size in bytes (rounded up to a multiple of 8).
+ * @param custom_mem Optional pre-allocated backing buffer (NULL to alloc).
+ * @return New tlsf_pool_t, or NULL on allocation failure.
+ */
 tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *custom_mem)
 {
     size          = (size + 7) & ~7;
@@ -58,12 +133,14 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
     tpool->raw_area = (void *)((uint8_t *)raw_mem + sizeof(tlsf_pool_t));
     tpool->raw_size = size;
 
+    /* Seed the arena with one covering free block. */
     tlsf_block_t *block   = (tlsf_block_t *)tpool->raw_area;
     block->size_and_flags = (size - sizeof(tlsf_block_t)) | BLOCK_STATE_FREE;
     block->prev_physical  = NULL;
     block->next_free      = NULL;
     block->prev_free      = NULL;
 
+    /* Sentinel block after the arena acts as the terminator for coalescing. */
     tlsf_block_t *sentinel =
         (tlsf_block_t *)((uint8_t *)block + (block->size_and_flags & BLOCK_SIZE_MASK));
     sentinel->size_and_flags = 0;
@@ -78,6 +155,15 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
     return tpool;
 }
 
+/**
+ * @brief Insert a free block into the correct TLSF free list.
+ *
+ * Computes the block's (fl, sl) buckets and pushes it onto the head of that
+ * list, updating the corresponding bitmap bits so later searches find it.
+ *
+ * @param tpool TLSF arena owning the list structure.
+ * @param block Block to mark free and link.
+ */
 void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
     int    fl, sl;
@@ -95,6 +181,15 @@ void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
     tpool->sl_bitmap[fl] |= (1U << sl);
 }
 
+/**
+ * @brief Remove a block from its TLSF free list.
+ *
+ * Unlinks the block from the doubly linked free list and clears the bitmap
+ * bits when the (fl, sl) list empties.
+ *
+ * @param tpool TLSF arena owning the list.
+ * @param block Free block to unlink.
+ */
 void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
     int    fl, sl;
@@ -119,17 +214,31 @@ void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
     }
 }
 
+/**
+ * @brief Find a free block large enough for `total_needed`.
+ *
+ * Two-level search: first scan the second-level bits of the exact
+ * first-level bucket that already covers the rounded request; if empty,
+ * scan upward through higher first-level buckets. Returns the first
+ * (smallest index) suitable block found - a "good-fit".
+ *
+ * @param tpool        Arena to search.
+ * @param total_needed Required block size (incl. headers, rounded up).
+ * @return A free tlsf_block_t capable of serving the request, or NULL.
+ */
 tlsf_block_t *tlsf_find_suitable_block(tlsf_pool_t *tpool, size_t total_needed)
 {
     int fl = 0, sl = 0;
     tlsf_mapping_search(total_needed, &fl, &sl);
 
+    /* 1) within the same first-level class, at or above the requested sl. */
     uint32_t sl_map = tpool->sl_bitmap[fl] & (~0U << sl);
     if (sl_map) {
         sl = tlsf_ffs(sl_map);
         return tpool->blocks[fl][sl];
     }
 
+    /* 2) move up to the next occupied first-level class. */
     uint32_t fl_map = tpool->fl_bitmap & (~0U << (fl + 1));
     if (fl_map) {
         fl     = tlsf_ffs(fl_map);
@@ -141,6 +250,20 @@ tlsf_block_t *tlsf_find_suitable_block(tlsf_pool_t *tpool, size_t total_needed)
     return NULL;
 }
 
+/**
+ * @brief Allocate `req_size` bytes from the pool's TLSF tier.
+ *
+ * Walks the arena chain for a suitable free block, expanding the pool with
+ * a fresh arena (doubling the request up to a 4 MB minimum) when none is
+ * available. The winning block is split so the remainder returns to the
+ * free list, then an `mp_block_header_t` is stamped right after the TLSF
+ * header so cmem.c can track the allocation.  Optional canary byte and
+ * zero-on-alloc behaviour are applied here.
+ *
+ * @param pool     Owning memory pool.
+ * @param req_size User-requested payload size.
+ * @return Pointer to user payload, or NULL on failure.
+ */
 void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
 {
     size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + req_size +
@@ -199,6 +322,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
     size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
     size_t remaining    = current_size - total_needed;
 
+    /* Split off a fresh free block when the remainder is worth keeping. */
     if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
         block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
 
@@ -217,6 +341,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         next_phys->size_and_flags &= ~BLOCK_STATE_PREV_FREE;
     }
 
+    /* Stamp the cmem metadata header that cmem.c relies on. */
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)block + sizeof(tlsf_block_t));
     header->magic             = MP_MAGIC_HEAD;
     header->alloc_type        = ALLOC_TYPE_TLSF;
@@ -246,6 +371,17 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
     return payload;
 }
 
+/**
+ * @brief Free a TLSF allocation, coalescing neighbours.
+ *
+ * Clears the block's FREE flag, then merges the block with its physically
+ * following block and (if flagged) its physically preceding neighbour so
+ * adjacent free memory forms larger reusable blocks.  The merged block is
+ * re-inserted into the free lists.
+ *
+ * @param pool   Owning memory pool.
+ * @param header The mp_block_header_t that tlsf_alloc stamped.
+ */
 void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
 {
     tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
@@ -256,6 +392,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     block->size_and_flags |= BLOCK_STATE_FREE;
 
+    /* Coalesce with the next physical block if it is free. */
     tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + size);
     if (next_phys->size_and_flags & BLOCK_STATE_FREE) {
         tlsf_remove_free_block(tpool, next_phys);
@@ -267,6 +404,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
         after_next->prev_physical = block;
     }
 
+    /* Coalesce with the previous physical block if it is free. */
     if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
         tlsf_block_t *prev_phys = block->prev_physical;
         if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
@@ -288,6 +426,19 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     tlsf_insert_free_block(tpool, block);
 }
 
+/**
+ * @brief Try to grow a TLSF allocation in place by absorbing the next free block.
+ *
+ * Used to serve realloc() without a copy when the physically-next block is
+ * free and large enough. The neighbour is removed from the free list and
+ * merged into this block; any surplus is split back off as a fresh free block.
+ * Only valid for ALLOC_TYPE_TLSF headers.
+ *
+ * @param pool     Owning memory pool (for canary flag and stats).
+ * @param header   The allocation's mp_block_header_t.
+ * @param new_size New requested payload size (>= current requested size).
+ * @return true if the block was expanded in place, false if it could not.
+ */
 bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, size_t new_size)
 {
     if (header->alloc_type != ALLOC_TYPE_TLSF) {
@@ -321,6 +472,7 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
     size_t combined_size = current_block_size + next_size;
     size_t remaining     = combined_size - total_needed;
 
+    /* Re-split the surplus tail into a fresh free block. */
     if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
         block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
 

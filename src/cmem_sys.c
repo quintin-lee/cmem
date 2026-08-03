@@ -1,6 +1,20 @@
 /**
  * @file cmem_sys.c
  * @brief System memory allocator and platform-specific helpers.
+ *
+ * This module is the thin OS-facing layer of cmem. It owns every
+ * interaction with the kernel's memory facilities: mmap/munmap, huge
+ * pages, guard pages, NUMA binding, mlock, madvise, and secure zeroing.
+ * Everything above this layer (slab, TLSF, block headers) treats memory
+ * as opaque byte ranges obtained through sys_mem_alloc()/sys_mem_free().
+ *
+ * Responsibilities:
+ *  - Raw backing allocation with configurable flags (HUGE_PAGES, GUARD_PAGES)
+ *  - Platform quirks: Windows VirtualAlloc vs POSIX mmap
+ *  - Optional custom sys-allocator vtable override (mp_sys_allocator_t)
+ *  - NUMA policy application on freshly mapped memory
+ *  - Pool expansion, compaction, lazy RSS purge and madvise hints
+ *  - Memory security: mlock/munlock, MADV_DONTDUMP, secure zeroing
  */
 
 #ifndef _GNU_SOURCE
@@ -11,6 +25,15 @@
 #include "cmem_internal.h"
 #include <sched.h>
 
+/**
+ * @brief Return the ID of the CPU the calling thread is running on.
+ *
+ * Used by the per-CPU freelist logic to pick the right lock-free list.
+ * macOS has no sched_getcpu(); a constant is returned there since the
+ * per-CPU lists are treated as a single logical list on that platform.
+ *
+ * @return CPU index (>= 0), or 0 on platforms without sched_getcpu().
+ */
 int cmem_sched_getcpu(void)
 {
 #ifdef __APPLE__
@@ -21,12 +44,22 @@ int cmem_sched_getcpu(void)
 }
 
 #ifdef _WIN32
+/** @brief Release a mapping previously obtained via sys_mem_alloc() (Windows). */
 void cmem_munmap(void *ptr, size_t size)
 {
     (void)size;
     VirtualFree(ptr, 0, MEM_RELEASE);
 }
 
+/**
+ * @brief Over-aligned malloc that keeps the original pointer for free().
+ *
+ * The raw allocation is stored in the word immediately before the aligned
+ * pointer so cmem_aligned_free() can recover it.  `alignment` must be a
+ * power of two.
+ *
+ * @return Aligned pointer, or NULL on allocation failure.
+ */
 void *cmem_aligned_malloc(size_t size, size_t alignment)
 {
     void *ptr = malloc(size + alignment - 1 + sizeof(void *));
@@ -39,6 +72,7 @@ void *cmem_aligned_malloc(size_t size, size_t alignment)
     return aligned;
 }
 
+/** @brief Free a pointer returned by cmem_aligned_malloc(). */
 void cmem_aligned_free(void *ptr)
 {
     if (ptr) {
@@ -46,12 +80,32 @@ void cmem_aligned_free(void *ptr)
     }
 }
 #else
+/** @brief Release a mapping previously obtained via sys_mem_alloc() (POSIX). */
 void cmem_munmap(void *ptr, size_t size)
 {
     munmap(ptr, size);
 }
 #endif
 
+/**
+ * @brief Allocate `size` bytes of backing memory honouring pool flags.
+ *
+ * Central allocation entry point for every cmem backend.  The chosen path
+ * depends on pool configuration, in priority order:
+ *  1. Custom sys-allocator vtable, if installed (bypasses the OS entirely);
+ *  2. MP_FLAG_HUGE_PAGES  -> mmap with MAP_HUGETLB, falling back to plain
+ *     mmap + MADV_HUGEPAGE when the kernel has no huge pages available;
+ *  3. MP_FLAG_GUARD_PAGES -> mmap payload surrounded by PROT_NONE pages to
+ *     catch out-of-bounds reads/writes;
+ *  4. otherwise -> aligned malloc (posix_memalign / cmem_aligned_malloc).
+ * On Linux, MPOL_BIND is applied afterwards to pin the pages to the pool's
+ * configured NUMA node.
+ *
+ * @param pool      Owning pool (may be NULL for raw OS allocation).
+ * @param size      Number of bytes requested.
+ * @param alignment Alignment for the returned pointer.
+ * @return Pointer to usable memory, or NULL on failure.
+ */
 void *sys_mem_alloc(memory_pool_t *pool, size_t size, size_t alignment)
 {
     void *ptr = NULL;
@@ -139,6 +193,19 @@ void *sys_mem_alloc(memory_pool_t *pool, size_t size, size_t alignment)
     return ptr;
 }
 
+/**
+ * @brief Release memory previously handed out by sys_mem_alloc().
+ *
+ * Mirrors the allocation paths: static-buffer pools never free (their
+ * backing is owned by the caller); custom allocators get the matching
+ * sys_free call; huge pages and guard pages are unmapped with their full
+ * original size (including the guard page margins); everything else is
+ * passed to free().
+ *
+ * @param pool Owning pool (must not be NULL).
+ * @param ptr  Pointer returned by sys_mem_alloc().
+ * @param size Original allocation size.
+ */
 void sys_mem_free(memory_pool_t *pool, void *ptr, size_t size)
 {
     if (pool->flags & MP_FLAG_STATIC_BUFFER) {
@@ -180,6 +247,17 @@ void sys_mem_free(memory_pool_t *pool, void *ptr, size_t size)
 #endif
 }
 
+/**
+ * @brief Grow the pool's TLSF arena by `additional_bytes`.
+ *
+ * Allocates a fresh TLSF arena of the requested size and prepends it to the
+ * pool's arena chain, immediately making the bytes available for
+ * mid-size (TLSF tier) allocations.  Rejected for static-buffer pools.
+ *
+ * @param pool             Pool to expand.
+ * @param additional_bytes Size of the new TLSF arena.
+ * @return true on success, false if the arena could not be created.
+ */
 bool mp_expand_pool(memory_pool_t *pool, size_t additional_bytes)
 {
     if (!pool || additional_bytes == 0) {
@@ -205,6 +283,12 @@ bool mp_expand_pool(memory_pool_t *pool, size_t additional_bytes)
     return true;
 }
 
+/**
+ * @brief Report whether the pool can still be expanded at runtime.
+ *
+ * @param pool Pool to query.
+ * @return true unless the pool is NULL or backed by a static buffer.
+ */
 bool mp_can_expand(memory_pool_t *pool)
 {
     if (!pool) {
@@ -216,6 +300,15 @@ bool mp_can_expand(memory_pool_t *pool)
     return true;
 }
 
+/**
+ * @brief Return how many more bytes the pool may grow before its limit.
+ *
+ * Computed from the configured max_memory_limit minus the currently
+ * committed pool size.
+ *
+ * @param pool Pool to query.
+ * @return Remaining expandable bytes (0 if unbounded or exhausted).
+ */
 size_t mp_get_expandable_size(memory_pool_t *pool)
 {
     if (!pool) {
@@ -229,6 +322,17 @@ size_t mp_get_expandable_size(memory_pool_t *pool)
     return expandable > 0 ? expandable : 0;
 }
 
+/**
+ * @brief Pin a range of the pool's memory into physical RAM (mlock).
+ *
+ * Prevents the kernel from swapping the given range; useful for
+ * latency-critical or security-sensitive buffers.
+ *
+ * @param pool   Owning pool (only used for validation).
+ * @param addr   Start of the range to lock.
+ * @param length Length of the range in bytes.
+ * @return 0 on success, -1 on invalid input or mlock failure.
+ */
 int mp_lock_memory(memory_pool_t *pool, void *addr, size_t length)
 {
     if (!pool || !addr || length == 0) {
@@ -243,6 +347,14 @@ int mp_lock_memory(memory_pool_t *pool, void *addr, size_t length)
     return 0;
 }
 
+/**
+ * @brief Unlock a range previously locked with mp_lock_memory().
+ *
+ * @param pool   Owning pool (only used for validation).
+ * @param addr   Start of the range to unlock.
+ * @param length Length of the range in bytes.
+ * @return 0 on success, -1 on invalid input or munlock failure.
+ */
 int mp_unlock_memory(memory_pool_t *pool, void *addr, size_t length)
 {
     if (!pool || !addr || length == 0) {
@@ -257,6 +369,17 @@ int mp_unlock_memory(memory_pool_t *pool, void *addr, size_t length)
     return 0;
 }
 
+/**
+ * @brief Exclude a range from core dumps (MADV_DONTDUMP).
+ *
+ * Keeps sensitive pool contents (keys, plaintext, passwords) out of
+ * crash dumps.
+ *
+ * @param pool   Owning pool (only used for validation).
+ * @param addr   Start of the range to protect.
+ * @param length Length of the range in bytes.
+ * @return 0 on success, -1 on invalid input or madvise failure.
+ */
 int mp_protect_from_dump(memory_pool_t *pool, void *addr, size_t length)
 {
     if (!pool || !addr || length == 0) {
@@ -271,6 +394,18 @@ int mp_protect_from_dump(memory_pool_t *pool, void *addr, size_t length)
     return 0;
 }
 
+/**
+ * @brief Zero a memory range in a way the compiler cannot optimise away.
+ *
+ * Uses an inline asm memory clobber (GCC/Clang) or a volatile byte loop
+ * elsewhere so the zeroing actually reaches memory even if the buffer is
+ * never read again.  Used to wipe secrets and for sanitisation before
+ * returning memory to the OS.
+ *
+ * @param pool   Owning pool (only used for validation).
+ * @param ptr    Start of the range to zero.
+ * @param length Number of bytes to zero.
+ */
 void mp_secure_zero(memory_pool_t *pool, void *ptr, size_t length)
 {
     if (!pool || !ptr || length == 0) {
@@ -287,6 +422,15 @@ void mp_secure_zero(memory_pool_t *pool, void *ptr, size_t length)
 #endif
 }
 
+/**
+ * @brief Toggle the pool's encrypted-memory flag.
+ *
+ * Merely sets/clears MP_FLAG_ENCRYPTED_MEMORY; the flag is advisory for
+ * downstream backends that want to keep allocations from being swapped.
+ *
+ * @param pool   Pool whose flag to change.
+ * @param enable true to set the flag, false to clear it.
+ */
 void mp_set_encrypted_memory(memory_pool_t *pool, bool enable)
 {
     if (!pool) {
@@ -301,6 +445,12 @@ void mp_set_encrypted_memory(memory_pool_t *pool, bool enable)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Set the pool's maximum committed size (hard memory limit).
+ *
+ * @param pool      Pool to configure.
+ * @param max_bytes New cap on total committed bytes (0 = unlimited).
+ */
 void mp_set_memory_limit(memory_pool_t *pool, size_t max_bytes)
 {
     if (!pool) {
@@ -311,6 +461,16 @@ void mp_set_memory_limit(memory_pool_t *pool, size_t max_bytes)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Return completely-free slab pages to the OS.
+ *
+ * Scans every slab class' partial-page list; any page whose slots are all
+ * free is unlinked and unmapped, shrinking the pool's committed size.
+ * Static-buffer pools are skipped (their backing is not owned by cmem).
+ *
+ * @param pool Pool to compact.
+ * @return Number of bytes returned to the OS.
+ */
 size_t mp_compact(memory_pool_t *pool)
 {
     if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
@@ -355,6 +515,16 @@ size_t mp_compact(memory_pool_t *pool)
     return freed_bytes;
 }
 
+/**
+ * @brief Release physical RSS pages of idle slab pages (MADV_DONTNEED).
+ *
+ * For each completely-free slab page the payload region is passed to
+ * madvise(MADV_DONTNEED), letting the kernel reclaim the backing physical
+ * pages while the mapping itself stays valid for reuse.
+ *
+ * @param pool Pool to purge.
+ * @return Number of bytes handed back to the kernel.
+ */
 size_t mp_purge_lazy(memory_pool_t *pool)
 {
     if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
@@ -404,6 +574,18 @@ size_t mp_purge_lazy(memory_pool_t *pool)
     return purged_bytes;
 }
 
+/**
+ * @brief Apply a kernel memory-advice hint to an aligned sub-range.
+ *
+ * Rounds the requested [addr, addr+length) range out to whole pages before
+ * issuing madvise().  A no-op on Windows.
+ *
+ * @param pool   Owning pool (unused, kept for API symmetry).
+ * @param addr   Start of the range.
+ * @param length Length of the range in bytes.
+ * @param advice madvise() advice constant (e.g. MADV_DONTNEED).
+ * @return 0 on success or when there is nothing to advise, -1 on failure.
+ */
 int mp_madvise(memory_pool_t *pool, void *addr, size_t length, int advice)
 {
     if (!addr || length == 0) {
@@ -442,6 +624,17 @@ int mp_madvise(memory_pool_t *pool, void *addr, size_t length, int advice)
 #endif
 }
 
+/**
+ * @brief Reclaim memory from the pool and all of its child arenas.
+ *
+ * Combines a full compaction (unmap empty slab pages) with a lazy RSS
+ * purge, then recursively does the same for every descendant arena in the
+ * child tree.  `pad` is accepted for API compatibility with glibc malloc_trim.
+ *
+ * @param pool Root pool to trim.
+ * @param pad  Padding hint (unused, kept for malloc_trim() symmetry).
+ * @return Total bytes reclaimed across the whole arena tree.
+ */
 size_t mp_trim(memory_pool_t *pool, size_t pad)
 {
     if (!pool) {

@@ -1,15 +1,33 @@
 /**
  * @file cmem_slab.c
- * @brief Extracted module implementation.
+ * @brief Slab (small-object) allocator implementation.
+ *
+ * The slab tier serves allocations up to SLAB_MAX_SIZE (512 bytes) through
+ * fixed size classes.  Memory is carved into SLAB_PAGE_SIZE (64 KB) pages,
+ * each dedicated to a single size class and split into equal-size slots
+ * threaded onto an intrusive free list.  Per class, pages are organised into
+ * partial (refill source) and full lists, optionally hot/cold tagged for
+ * cache-friendly separation.  Two accelerators sit on top of the per-class
+ * locks: a thread-local cache and a per-CPU lock-free freelist.
  */
 
 #include "cmem.h"
 #include "cmem_internal.h"
 
+/** Fixed slot sizes served by the slab tier, one class per entry. */
 const size_t      kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
 thread_cache_t    tls_cache                    = {{0}, {0}};
 mp_thread_quota_t thread_quota                 = {0, 0};
 
+/**
+ * @brief Initialise every slab size class for a pool.
+ *
+ * Each class records its slot size (from kSlabSizes or a custom table) and
+ * receives its own mutex together with empty partial/full page lists.
+ *
+ * @param pool Pool whose slab_classes[] will be initialised.
+ * @return true on success (always).
+ */
 bool slab_init(memory_pool_t *pool)
 {
     for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
@@ -22,6 +40,19 @@ bool slab_init(memory_pool_t *pool)
     return true;
 }
 
+/**
+ * @brief Create and carve a new slab page for a size class.
+ *
+ * Maps SLAB_PAGE_SIZE (64 KB) of memory and aligns it to a page boundary,
+ * releasing any margin that remains unused. The area past the embedded
+ * mp_slab_page_t header is divided into equal-size slots, each of
+ * total_slot_size (header + payload + optional canary, 8-byte aligned),
+ * and every slot is threaded onto the page's intrusive free list.
+ *
+ * @param pool      Pool the page belongs to (for flags and accounting).
+ * @param class_idx Index of the size class this page will serve.
+ * @return The newly created page, or NULL on allocation failure.
+ */
 mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
 {
     size_t slot_payload_size = pool->slab_classes[class_idx].slot_size;
@@ -36,6 +67,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
         return NULL;
     }
 #else
+    /* Overallocate by one page so the returned region can be page-aligned. */
     size_t map_size = SLAB_PAGE_SIZE + SLAB_PAGE_SIZE - 1;
     void  *raw_mem =
         mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -50,6 +82,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
         return NULL;
     }
 
+    /* Release the unneeded head/tail margins so only the exact page remains. */
     if (aligned > start) {
         munmap((void *)start, aligned - start);
     }
@@ -77,6 +110,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
     uint8_t *ptr    = (uint8_t *)page_mem + sizeof(mp_slab_page_t);
     page->free_list = (mp_slab_slot_t *)ptr;
 
+    /* Link every slot, point each one at the next, the last at NULL. */
     for (uint16_t i = 0; i < page->total_slots; i++) {
         mp_slab_slot_t *slot = (mp_slab_slot_t *)(ptr + i * total_slot_size);
         if (i < page->total_slots - 1) {
@@ -90,6 +124,19 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
     return page;
 }
 
+/**
+ * @brief Allocate `req_size` bytes from the slab tier.
+ *
+ * Pops the first free slot off the class' partial page, creating a fresh
+ * page if none has free slots. When a page runs out of slots it is moved
+ * from the partial to the full list. The slot is reinterpreted as an
+ * mp_block_header_t and the caller-facing payload returned just past it.
+ *
+ * @param pool      Pool serving the allocation.
+ * @param class_idx Size class index for the request.
+ * @param req_size  User-requested size (must fit the class slot size).
+ * @return Pointer to the allocated payload, or NULL if no page can be made.
+ */
 void *slab_alloc(memory_pool_t *pool, uint8_t class_idx, size_t req_size)
 {
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
@@ -167,6 +214,17 @@ void *slab_alloc(memory_pool_t *pool, uint8_t class_idx, size_t req_size)
     return payload;
 }
 
+/**
+ * @brief Return an allocation to its owning slab page's free list.
+ *
+ * Recomputes the page base address by masking the slot address down to a
+ * 64 KB boundary, pushes the slot back onto the page free list, and moves
+ * the page from `full` back to `partial` when it gains its first free slot,
+ * so it becomes a refill candidate once more.
+ *
+ * @param pool   Pool owning the allocation.
+ * @param header The mp_block_header_t to free (alloc_type == SLAB).
+ */
 void slab_free(memory_pool_t *pool, mp_block_header_t *header)
 {
     uint8_t          class_idx = header->slab_class;
@@ -212,6 +270,16 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
     }
 }
 
+/**
+ * @brief Refill the calling thread's cache for a size class.
+ *
+ * Bulk-allocates up to 32 slots for the class directly from the slab tier
+ * and threads them onto the thread-local cache's free list, so subsequent
+ * allocations are served lock-free from tls_cache until it drains again.
+ *
+ * @param pool      Pool to draw slots from.
+ * @param class_idx Size class whose thread cache needs topping up.
+ */
 inline void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
 {
     for (int i = 0; i < 32; i++) {
@@ -228,6 +296,16 @@ inline void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
     }
 }
 
+/**
+ * @brief Allocate the per-CPU lock-free freelist table.
+ *
+ * Detects the number of online CPUs (capped at 256), reserves a
+ * num_cpus x SLAB_CLASS_COUNT array of freelist entries, and stores it in
+ * pool->percpu_freelists.  Each entry holds an atomic head pointer plus a
+ * batch counter for lock-free push/pop.
+ *
+ * @param pool Pool receiving the table.
+ */
 void percpu_init(memory_pool_t *pool)
 {
     if (!pool || pool->percpu_freelists) {
@@ -253,6 +331,11 @@ void percpu_init(memory_pool_t *pool)
     }
 }
 
+/**
+ * @brief Free and clear the per-CPU freelist table.
+ *
+ * @param pool Pool whose freelist table is released.
+ */
 void percpu_destroy(memory_pool_t *pool)
 {
     if (!pool || !pool->percpu_freelists) {
@@ -263,6 +346,14 @@ void percpu_destroy(memory_pool_t *pool)
     pool->num_cpus         = 0;
 }
 
+/**
+ * @brief Resolve the CPU index of the current thread.
+ *
+ * On Windows no sched_getcpu equivalent is available, so a constant 0 is
+ * returned, collapsing all threads onto one logical CPU freelist.
+ *
+ * @return A non-negative CPU identifier for freelist indexing.
+ */
 inline int percpu_cpu_index(void)
 {
 #ifdef _WIN32
@@ -276,6 +367,19 @@ inline int percpu_cpu_index(void)
 #endif
 }
 
+/**
+ * @brief Lock-free pop of a cached slot for (cpu, class) from the freelist.
+ *
+ * Loads the entry's atomic head, then tries a compare-and-swap to install
+ * the next slot as the new head.  Returns NULL when the list is empty or the
+ * CAS loses to a concurrent producer, letting the caller fall back to the
+ * synchronous slab tier.
+ *
+ * @param pool      Pool holding the freelist table.
+ * @param cpu       Owner CPU index into the table.
+ * @param class_idx Size class to pop from.
+ * @return A cached slot, or NULL if the list was empty or contended.
+ */
 inline mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_idx)
 {
     if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) {
@@ -300,6 +404,17 @@ inline mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_id
     return slot;
 }
 
+/**
+ * @brief Top up a per-CPU freelist from the synchronous slab tier.
+ *
+ * When the entry's count has dropped below half the maximum batch, allocates
+ * up to MP_PERCPU_MAX_BATCH slots from the slab, chains them together, then
+ * atomically prepends the batch to the entry's head pointer.
+ *
+ * @param pool      Pool to draw slots from.
+ * @param cpu       Owner CPU whose freelist to refill.
+ * @param class_idx Size class to refill.
+ */
 inline void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
 {
     if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) {
@@ -338,6 +453,15 @@ inline void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
     entry->count += (uint16_t)got;
 }
 
+/**
+ * @brief Enable or disable the per-CPU freelist accelerator.
+ *
+ * Enabling sets MP_FLAG_PERCPU_FREELIST and lazily allocates the freelist
+ * table; disabling clears the flag and frees the table.
+ *
+ * @param pool   Pool to configure.
+ * @param enable true to turn on, false to turn off.
+ */
 void mp_set_percpu_freelist(memory_pool_t *pool, bool enable)
 {
     if (!pool) {
@@ -356,6 +480,12 @@ void mp_set_percpu_freelist(memory_pool_t *pool, bool enable)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Query whether the per-CPU freelist feature is active.
+ *
+ * @param pool Pool to query.
+ * @return true if the flag is set and the freelist table is allocated.
+ */
 bool mp_get_percpu_freelist(memory_pool_t *pool)
 {
     if (!pool) {
@@ -367,6 +497,12 @@ bool mp_get_percpu_freelist(memory_pool_t *pool)
     return enabled;
 }
 
+/**
+ * @brief Report the number of online CPUs tracked for the freelist table.
+ *
+ * @param pool Pool to query.
+ * @return The number of per-CPU freelist slots (0 if uninitialised).
+ */
 int mp_get_percpu_cpu_count(memory_pool_t *pool)
 {
     if (!pool) {
@@ -378,6 +514,17 @@ int mp_get_percpu_cpu_count(memory_pool_t *pool)
     return count;
 }
 
+/**
+ * @brief Mark the slab page backed by `page_raw_mem` as hot.
+ *
+ * Searches every size class' partial and full page lists for a page whose
+ * backing address matches and sets its is_hot flag.  Used to hint the hot/cold
+ * separation pass about frequently-touched pages.
+ *
+ * @param pool         Pool owning the slab pages.
+ * @param page_raw_mem Raw base address of the page (page->page_raw_mem).
+ * @return true if the page was found and marked, false otherwise.
+ */
 bool mp_mark_page_hot(memory_pool_t *pool, void *page_raw_mem)
 {
     if (!pool || !page_raw_mem) {
@@ -416,6 +563,16 @@ bool mp_mark_page_hot(memory_pool_t *pool, void *page_raw_mem)
     return found;
 }
 
+/**
+ * @brief Mark the slab page backed by `page_raw_mem` as cold.
+ *
+ * The inverse of mp_mark_page_hot: clears the is_hot flag on a matching page
+ * so the hot/cold separation pass may consider releasing it.
+ *
+ * @param pool         Pool owning the slab pages.
+ * @param page_raw_mem Raw base address of the page (page->page_raw_mem).
+ * @return true if the page was found and marked, false otherwise.
+ */
 bool mp_mark_page_cold(memory_pool_t *pool, void *page_raw_mem)
 {
     if (!pool || !page_raw_mem) {
@@ -454,6 +611,12 @@ bool mp_mark_page_cold(memory_pool_t *pool, void *page_raw_mem)
     return found;
 }
 
+/**
+ * @brief Count slab pages currently marked hot across all size classes.
+ *
+ * @param pool Pool whose pages are scanned.
+ * @return Total number of hot pages.
+ */
 size_t mp_get_hot_page_count(memory_pool_t *pool)
 {
     if (!pool) {
@@ -482,6 +645,15 @@ size_t mp_get_hot_page_count(memory_pool_t *pool)
     return count;
 }
 
+/**
+ * @brief Count slab pages currently marked cold across all size classes.
+ *
+ * Cold pages are the hot-count subtracted from the total page count, and are
+ * the candidates for the hot/cold separation pass.
+ *
+ * @param pool Pool whose pages are scanned.
+ * @return Total number of cold (non-hot) pages.
+ */
 size_t mp_get_cold_page_count(memory_pool_t *pool)
 {
     if (!pool) {
@@ -513,6 +685,16 @@ size_t mp_get_cold_page_count(memory_pool_t *pool)
     return total > hot ? total - hot : 0;
 }
 
+/**
+ * @brief Count cold pages as a separation pass candidate.
+ *
+ * Only meaningful when MP_FLAG_HOT_COLD_SEPARATION is set: returns how many
+ * pages are currently cold, giving callers a size estimate for a subsequent
+ * hot/cold separation or compaction.
+ *
+ * @param pool Pool whose pages are scanned.
+ * @return Number of cold pages, or 0 when the flag is not enabled.
+ */
 size_t mp_separate_hot_cold_pages(memory_pool_t *pool)
 {
     if (!pool) {
@@ -544,6 +726,19 @@ size_t mp_separate_hot_cold_pages(memory_pool_t *pool)
     return separated;
 }
 
+/**
+ * @brief Lock-free push of a slot onto a per-CPU freelist.
+ *
+ * Returns false (leaving the slot unmanaged) when the entry's count is at
+ * the maximum batch, so oversized returns fall back to the synchronous tier.
+ * Otherwise prepends the slot to the atomic head via compare-and-swap.
+ *
+ * @param pool      Pool holding the freelist table.
+ * @param cpu       Owner CPU index into the table.
+ * @param class_idx Size class to push onto.
+ * @param slot      Slot to return to the freelist.
+ * @return true if the slot was accepted onto the freelist.
+ */
 bool percpu_push(memory_pool_t *pool, int cpu, uint8_t class_idx, mp_slab_slot_t *slot)
 {
     if (!pool->percpu_freelists || cpu < 0 || cpu >= pool->num_cpus) {

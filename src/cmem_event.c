@@ -1,6 +1,14 @@
 /**
  * @file cmem_event.c
- * @brief Extracted module implementation.
+ * @brief Event, tracking, arena-lifecycle and extended allocation subsystems.
+ *
+ * Implements the public cmem API surface beyond the core tiers: dirty-state and
+ * fault isolation, per-thread quota and circuit breaker, cgroup awareness, ASan
+ * integration, a bounded SPSC ring buffer used as an event log, pprof export,
+ * typed object pools, process-shared and buffer-backed arenas, latency
+ * histogram instrumentation, slab class tuning, and a double-buffer frame arena
+ * for automatic bulk reclamation. Heavy allocation entry points (alloc/free/
+ * realloc/strdup/asprintf) live here and dispatch into the slab/TLSF/OS tiers.
  */
 
 #include "cmem.h"
@@ -8,6 +16,11 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
+/**
+ * @brief Mark a memory pool corrupted/dirty and emit a MP_EVENT_DIRTY event.
+ * Sets pool->is_dirty under the pool lock and notifies the event sink.
+ * @param pool The memory pool to mark. No-op when NULL.
+ */
 void mp_mark_pool_dirty(memory_pool_t *pool)
 {
     if (!pool) {
@@ -19,6 +32,10 @@ void mp_mark_pool_dirty(memory_pool_t *pool)
     trigger_event(pool, MP_EVENT_DIRTY, NULL, 0);
 }
 
+/**
+ * @brief Clear the dirty flag of a memory pool.
+ * @param pool The memory pool to clear. No-op when NULL.
+ */
 void mp_clear_pool_dirty(memory_pool_t *pool)
 {
     if (!pool) {
@@ -29,6 +46,10 @@ void mp_clear_pool_dirty(memory_pool_t *pool)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Query whether a memory pool is marked dirty.
+ * @return True if dirty; false otherwise (including when pool is NULL).
+ */
 bool mp_is_pool_dirty(memory_pool_t *pool)
 {
     if (!pool) {
@@ -40,6 +61,15 @@ bool mp_is_pool_dirty(memory_pool_t *pool)
     return dirty;
 }
 
+/**
+ * @brief Detach a corrupt block from the pool's active list.
+ * Validates the block magic, unlinks the header from the active list, adjusts
+ * active-bytes/allocations accounting, stamps a poison magic to flag the fault,
+ * and emits a MP_EVENT_DOUBLE_FREE event.
+ * @param pool The memory pool.
+ * @param ptr  Pointer presumed to reference an active block.
+ * @return True on success; false when pool/ptr are NULL or the magic mismatches.
+ */
 bool mp_isolate_bad_block(memory_pool_t *pool, void *ptr)
 {
     if (!pool || !ptr) {
@@ -62,6 +92,12 @@ bool mp_isolate_bad_block(memory_pool_t *pool, void *ptr)
     return true;
 }
 
+/**
+ * @brief Set the per-thread byte quota used by the circuit breaker.
+ * The breaker trips once a thread's cumulative allocation reaches the quota.
+ * @param pool        The memory pool.
+ * @param quota_bytes Maximum cumulative bytes a thread may allocate.
+ */
 void mp_set_thread_quota(memory_pool_t *pool, size_t quota_bytes)
 {
     if (!pool) {
@@ -72,6 +108,12 @@ void mp_set_thread_quota(memory_pool_t *pool, size_t quota_bytes)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Enable or disable the per-thread circuit breaker.
+ * When enabled, allocations exceeding the thread quota trip the pool.
+ * @param pool   The memory pool.
+ * @param enable True to arm, false to disarm.
+ */
 void mp_set_circuit_breaker(memory_pool_t *pool, bool enable)
 {
     if (!pool) {
@@ -82,6 +124,12 @@ void mp_set_circuit_breaker(memory_pool_t *pool, bool enable)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Return the calling thread's cumulative allocated bytes.
+ * Read from the thread-local quota accumulator.
+ * @param pool The memory pool (may be NULL).
+ * @return Cumulative bytes allocated by the calling thread.
+ */
 size_t mp_get_thread_allocated_bytes(memory_pool_t *pool)
 {
     if (!pool) {
@@ -90,6 +138,10 @@ size_t mp_get_thread_allocated_bytes(memory_pool_t *pool)
     return thread_quota.alloc_bytes;
 }
 
+/**
+ * @brief Reset the calling thread's quota accounting to zero.
+ * @param pool The memory pool (may be NULL).
+ */
 void mp_reset_thread_quota(memory_pool_t *pool)
 {
     if (!pool) {
@@ -99,6 +151,11 @@ void mp_reset_thread_quota(memory_pool_t *pool)
     thread_quota.alloc_count = 0;
 }
 
+/**
+ * @brief Query whether the circuit breaker is currently tripped.
+ * @param pool The memory pool.
+ * @return True if tripped, false otherwise (including when pool is NULL).
+ */
 bool mp_is_circuit_breaker_tripped(memory_pool_t *pool)
 {
     if (!pool) {
@@ -110,11 +167,22 @@ bool mp_is_circuit_breaker_tripped(memory_pool_t *pool)
     return tripped;
 }
 
+/**
+ * @brief Return the current ABI version of the library.
+ * @return Constant ABI version tag of this build.
+ */
 uint32_t mp_abi_version(void)
 {
     return 1;
 }
 
+/**
+ * @brief Enable cgroup-aware memory-limit detection.
+ * When enabled, probes /sys/fs/cgroup (v1 then v2) for the memory limit and caches
+ * it in pool->cgroup_mem_limit.
+ * @param pool   The memory pool.
+ * @param enable True to probe and cache the limit.
+ */
 void mp_set_cgroup_aware(memory_pool_t *pool, bool enable)
 {
     if (!pool) {
@@ -142,6 +210,10 @@ void mp_set_cgroup_aware(memory_pool_t *pool, bool enable)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Return the cached cgroup memory limit in bytes.
+ * @return The cached limit, or 0 when none known or pool is NULL.
+ */
 size_t mp_get_cgroup_mem_limit(memory_pool_t *pool)
 {
     if (!pool) {
@@ -153,6 +225,10 @@ size_t mp_get_cgroup_mem_limit(memory_pool_t *pool)
     return limit;
 }
 
+/**
+ * @brief Detect whether the binary was built with AddressSanitizer.
+ * @return True when __SANITIZE_ADDRESS__ is defined.
+ */
 bool mp_asan_is_enabled(void)
 {
 #ifdef __SANITIZE_ADDRESS__
@@ -162,6 +238,15 @@ bool mp_asan_is_enabled(void)
 #endif
 }
 
+/**
+ * @brief Report an ASan-detected memory error.
+ * Logs the faulting address/size/access, invokes the error-recovery callback and
+ * traps the process. Only does work under AddressSanitizer.
+ * @param pool     The memory pool.
+ * @param ptr      Address of the fault.
+ * @param size     Access span in bytes.
+ * @param is_write Non-zero for a write access.
+ */
 void mp_asan_report_error(memory_pool_t *pool, void *ptr, size_t size, bool is_write)
 {
     (void)pool;
@@ -185,6 +270,13 @@ void mp_asan_report_error(memory_pool_t *pool, void *ptr, size_t size, bool is_w
 #endif
 }
 
+/**
+ * @brief Validate that an address is a live active allocation.
+ * @param pool The memory pool.
+ * @param ptr  Address to validate.
+ * @param size Access span (unused for validation).
+ * @return True when the pointer is a valid active allocation in a clean pool.
+ */
 bool mp_asan_check_memory(memory_pool_t *pool, void *ptr, size_t size)
 {
     if (!pool || !ptr || size == 0) {
@@ -206,6 +298,11 @@ bool mp_asan_check_memory(memory_pool_t *pool, void *ptr, size_t size)
 #endif
 }
 
+/**
+ * @brief Set or clear the ASan-integration flag on a pool.
+ * @param pool   The memory pool.
+ * @param enable True to set MP_FLAG_ASAN_INTEGRATION.
+ */
 void mp_set_asan_integration(memory_pool_t *pool, bool enable)
 {
     if (!pool) {
@@ -220,6 +317,13 @@ void mp_set_asan_integration(memory_pool_t *pool, bool enable)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Create a fixed-capacity single-producer/single-consumer ring buffer.
+ * Capacity is rounded up to a power of two; payload storage is 64-byte aligned.
+ * @param slot_size Size in bytes of each slot.
+ * @param capacity  Requested slot count (rounded up).
+ * @return A new ring buffer, or NULL on invalid input or allocation failure.
+ */
 cmem_ring_buffer_t *mp_ring_create(size_t slot_size, size_t capacity)
 {
     if (slot_size == 0 || capacity == 0) {
@@ -263,6 +367,11 @@ cmem_ring_buffer_t *mp_ring_create(size_t slot_size, size_t capacity)
     return ring;
 }
 
+/**
+ * @brief Claim the next producer slot from a ring buffer.
+ * @param ring The ring buffer.
+ * @return Pointer to the claimed slot, or NULL when full or ring is NULL.
+ */
 void *mp_ring_alloc(cmem_ring_buffer_t *ring)
 {
     if (!ring) {
@@ -278,6 +387,12 @@ void *mp_ring_alloc(cmem_ring_buffer_t *ring)
     return ring->slots[head & ring->mask];
 }
 
+/**
+ * @brief Return a slot to the consumer end of a ring buffer.
+ * @param ring The ring buffer.
+ * @param ptr  Slot pointer to release back to the consumer tail.
+ * @return True on success, false on invalid arguments.
+ */
 bool mp_ring_free(cmem_ring_buffer_t *ring, void *ptr)
 {
     if (!ring || !ptr) {
@@ -288,6 +403,10 @@ bool mp_ring_free(cmem_ring_buffer_t *ring, void *ptr)
     return true;
 }
 
+/**
+ * @brief Destroy a ring buffer and release its backing storage.
+ * @param ring The ring buffer. No-op when NULL.
+ */
 void mp_ring_destroy(cmem_ring_buffer_t *ring)
 {
     if (!ring) {
@@ -306,6 +425,11 @@ void mp_ring_destroy(cmem_ring_buffer_t *ring)
     free(ring);
 }
 
+/**
+ * @brief Create an event log backed by a ring buffer.
+ * @param capacity Maximum entry count the ring may hold.
+ * @return A new event log, or NULL on allocation failure.
+ */
 mp_event_log_t *mp_event_log_create(size_t capacity)
 {
     mp_event_log_t *log = (mp_event_log_t *)calloc(1, sizeof(mp_event_log_t));
@@ -323,6 +447,10 @@ mp_event_log_t *mp_event_log_create(size_t capacity)
     return log;
 }
 
+/**
+ * @brief Destroy an event log and release its resources.
+ * @param log The event log. No-op when NULL.
+ */
 void mp_event_log_destroy(mp_event_log_t *log)
 {
     if (!log) {
@@ -334,6 +462,15 @@ void mp_event_log_destroy(mp_event_log_t *log)
     free(log);
 }
 
+/**
+ * @brief Append an event entry to an event log.
+ * Timestamps the entry with CLOCK_MONOTONIC and pushes it into the ring.
+ * @param log        The event log.
+ * @param event_type Event class (see mp_event_type_t).
+ * @param ptr        Optional pointer associated with the event.
+ * @param size       Optional size associated with the event.
+ * @return True on success, false when the ring is full or args invalid.
+ */
 bool mp_event_log_record(mp_event_log_t *log, mp_event_type_t event_type, void *ptr, size_t size)
 {
     if (!log || !log->ring) {
@@ -356,6 +493,12 @@ bool mp_event_log_record(mp_event_log_t *log, mp_event_type_t event_type, void *
     return true;
 }
 
+/**
+ * @brief Pop the oldest event record into the caller's buffer.
+ * @param log   The event log.
+ * @param entry Receives a copy of the next record.
+ * @return True when a record is consumed, false when empty or args invalid.
+ */
 bool mp_event_log_consume(mp_event_log_t *log, mp_event_log_entry_t *entry)
 {
     if (!log || !log->ring || !entry) {
@@ -372,6 +515,11 @@ bool mp_event_log_consume(mp_event_log_t *log, mp_event_log_entry_t *entry)
     return true;
 }
 
+/**
+ * @brief Return the number of unread event records.
+ * @param log The event log.
+ * @return Count of pending records (0 when NULL).
+ */
 size_t mp_event_log_pending(mp_event_log_t *log)
 {
     if (!log) {
@@ -380,6 +528,10 @@ size_t mp_event_log_pending(mp_event_log_t *log)
     return (size_t)CMEM_ATOMIC_LOAD(&log->count, CMEM_ORDER_ACQUIRE);
 }
 
+/**
+ * @brief Drop all recorded events and reallocate a fresh ring.
+ * @param log The event log. No-op when NULL.
+ */
 void mp_event_log_clear(mp_event_log_t *log)
 {
     if (!log) {
@@ -390,6 +542,14 @@ void mp_event_log_clear(mp_event_log_t *log)
     log->ring = mp_ring_create(sizeof(mp_event_log_entry_t), log->capacity);
 }
 
+/**
+ * @brief Render pool statistics in the pprof text profile format.
+ * Emits heap, alloc_objects, alloc_space, inuse_objects, inuse_space and peak_space rows.
+ * @param pool    The memory pool.
+ * @param out_buf Caller-owned output buffer.
+ * @param max_len Capacity of out_buf.
+ * @return Bytes written (excluding NUL), max_len on truncation, or 0 on invalid args.
+ */
 size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len)
 {
     if (!pool || !out_buf || max_len == 0) {
@@ -423,6 +583,14 @@ size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len)
     return (size_t)n;
 }
 
+/**
+ * @brief Create a fixed-size typed object pool.
+ * Element size is padded up to sizeof(void*) and 8-byte aligned; capacity entries
+ * are pre-linked onto an intrusive free list.
+ * @param elem_size Size of each object in bytes (padded up).
+ * @param capacity  Number of objects the pool holds.
+ * @return A new typed pool, or NULL on invalid input or allocation failure.
+ */
 mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity)
 {
     if (elem_size == 0 || capacity == 0) {
@@ -465,6 +633,11 @@ mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity)
     return tpool;
 }
 
+/**
+ * @brief Pop one object from a typed pool's free list.
+ * @param tpool The typed pool.
+ * @return An object pointer, or NULL when empty or tpool is NULL.
+ */
 void *mp_typed_alloc(mp_typed_pool_t *tpool)
 {
     if (!tpool || !tpool->free_list) {
@@ -477,6 +650,11 @@ void *mp_typed_alloc(mp_typed_pool_t *tpool)
     return ptr;
 }
 
+/**
+ * @brief Push an object back onto a typed pool's free list.
+ * @param tpool The typed pool.
+ * @param ptr   Object previously allocated from the pool.
+ */
 void mp_typed_free(mp_typed_pool_t *tpool, void *ptr)
 {
     if (!tpool || !ptr) {
@@ -490,6 +668,10 @@ void mp_typed_free(mp_typed_pool_t *tpool, void *ptr)
     }
 }
 
+/**
+ * @brief Destroy a typed pool and release its object buffer.
+ * @param tpool The typed pool. No-op when NULL.
+ */
 void mp_typed_pool_destroy(mp_typed_pool_t *tpool)
 {
     if (!tpool) {
@@ -505,11 +687,28 @@ void mp_typed_pool_destroy(mp_typed_pool_t *tpool)
     free(tpool);
 }
 
+/**
+ * @brief Create a default memory pool with no custom system allocator.
+ * Thin wrapper for mp_create_custom with a NULL sys-alloc vtable.
+ * @param initial_capacity Initial/expansion capacity hint in bytes.
+ * @param flags            Configuration bitmask (see mp_flags_t).
+ * @return A new memory pool, or NULL on failure.
+ */
 memory_pool_t *mp_create(size_t initial_capacity, mp_flags_t flags)
 {
     return mp_create_custom(initial_capacity, flags, NULL);
 }
 
+/**
+ * @brief Create (or attach to) a shared-memory-backed pool (POSIX only).
+ * Opens/creates a POSIX shared-memory object, sizes it, and lays out the pool
+ * inside it; the pool lock is configured process-shared when MP_FLAG_THREAD_SAFE
+ * is set. Unsupported on Windows (returns NULL).
+ * @param shm_name POSIX shm object name (e.g. "/cmem0").
+ * @param capacity Minimum mapping size; clamped to 1 MiB when smaller than 64 KiB.
+ * @param flags    Configuration bit flags.
+ * @return A shared memory pool, or NULL on failure.
+ */
 memory_pool_t *mp_create_shared(const char *shm_name, size_t capacity, mp_flags_t flags)
 {
     (void)shm_name;
@@ -555,6 +754,12 @@ memory_pool_t *mp_create_shared(const char *shm_name, size_t capacity, mp_flags_
 #endif
 }
 
+/**
+ * @brief Detach and unlink a shared-memory pool.
+ * Unmaps the pool mapping range and unlinks the named shm object. No-op on Windows.
+ * @param pool     The shared pool.
+ * @param shm_name The shm object to unlink (NULL skips unlink).
+ */
 void mp_destroy_shared(memory_pool_t *pool, const char *shm_name)
 {
     if (!pool) {
@@ -572,6 +777,14 @@ void mp_destroy_shared(memory_pool_t *pool, const char *shm_name)
 #endif
 }
 
+/**
+ * @brief Read and apply the CMEM_CONF environment configuration.
+ * Recognises canary/zero/tls/track/poison/aligned/guard/hugepages directives
+ * (each as name=1 or name=on) and ORs them into the flags. If CMEM_CONF is unset
+ * or empty, returns default_flags unchanged.
+ * @param default_flags Flags to retain when the env contributes nothing.
+ * @return The effective flags after applying the environment.
+ */
 mp_flags_t mp_parse_env_flags(mp_flags_t default_flags)
 {
     const char *env_conf = getenv("CMEM_CONF");
@@ -609,6 +822,16 @@ mp_flags_t mp_parse_env_flags(mp_flags_t default_flags)
     return flags;
 }
 
+/**
+ * @brief Create a memory pool over caller-provided memory (never allocates).
+ * 8-byte-aligns the buffer, stamps MP_FLAG_STATIC_BUFFER, initialises the slab
+ * tier, and carves a TLSF pool out of the remainder. Used by shared-memory pools
+ * and embedded/static use cases.
+ * @param buffer      Memory region to manage.
+ * @param buffer_size Size of buffer in bytes.
+ * @param flags       Configuration bit flags.
+ * @return A pool object laid out inside the buffer, or NULL if under-sized.
+ */
 memory_pool_t *mp_create_from_buffer(void *buffer, size_t buffer_size, mp_flags_t flags)
 {
     if (!buffer ||
@@ -648,6 +871,11 @@ memory_pool_t *mp_create_from_buffer(void *buffer, size_t buffer_size, mp_flags_
     return pool;
 }
 
+/**
+ * @brief Set the human-readable name of an arena.
+ * @param name Name text (copied, truncated to arena_name capacity).
+ * @param The memory pool.
+ */
 void mp_set_name(memory_pool_t *pool, const char *name)
 {
     if (!pool || !name) {
@@ -658,6 +886,10 @@ void mp_set_name(memory_pool_t *pool, const char *name)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Return the human-readable name of an arena.
+ * @return The arena name string, or NULL when pool is NULL.
+ */
 const char *mp_get_name(memory_pool_t *pool)
 {
     if (!pool) {
@@ -666,6 +898,10 @@ const char *mp_get_name(memory_pool_t *pool)
     return pool->arena_name;
 }
 
+/**
+ * @brief Return the parent arena of a pool.
+ * @return Parent pool, or NULL when pool is NULL or an arena root.
+ */
 memory_pool_t *mp_get_parent(memory_pool_t *pool)
 {
     if (!pool) {
@@ -674,6 +910,11 @@ memory_pool_t *mp_get_parent(memory_pool_t *pool)
     return pool->parent;
 }
 
+/**
+ * @brief Count the direct child arenas of a pool.
+ * Walks the child sibling list under the read lock.
+ * @return Number of direct child arenas (0 when NULL).
+ */
 size_t mp_get_child_count(memory_pool_t *pool)
 {
     if (!pool) {
@@ -690,6 +931,12 @@ size_t mp_get_child_count(memory_pool_t *pool)
     return count;
 }
 
+/**
+ * @brief Compute the current memory-pressure ratio of a pool.
+ * active_bytes / max_memory_limit (or total_pool_size when no limit), clamped to
+ * [0.0, 1.0].
+ * @return Pressure ratio in [0.0, 1.0].
+ */
 double mp_pressure(memory_pool_t *pool)
 {
     if (!pool) {
@@ -712,6 +959,12 @@ double mp_pressure(memory_pool_t *pool)
     return ratio;
 }
 
+/**
+ * @brief Estimate bytes of freeable, fully-empty slab pages.
+ * Counts only pages whose every slot is free.
+ * @param pool The memory pool.
+ * @return Summed SLAB_PAGE_SIZE for each completely free page.
+ */
 size_t mp_freeable(memory_pool_t *pool)
 {
     if (!pool) {
@@ -735,6 +988,10 @@ size_t mp_freeable(memory_pool_t *pool)
     return freeable_bytes;
 }
 
+/**
+ * @brief Return the total resident size of a pool.
+ * @return pool->stats.total_pool_size, or 0 when pool is NULL.
+ */
 size_t mp_resident(memory_pool_t *pool)
 {
     if (!pool) {
@@ -746,6 +1003,12 @@ size_t mp_resident(memory_pool_t *pool)
     return res;
 }
 
+/**
+ * @brief Re-read CMEM_CONF and update the pool flags if they changed.
+ * Bumps env_flags_generation when the flags change; otherwise leaves them intact.
+ * @param pool The memory pool.
+ * @return The new flag set.
+ */
 mp_flags_t mp_reparse_env_flags(memory_pool_t *pool)
 {
     if (!pool) {
@@ -764,6 +1027,10 @@ mp_flags_t mp_reparse_env_flags(memory_pool_t *pool)
     return pool->flags;
 }
 
+/**
+ * @brief Return how many times the environment flags were re-parsed.
+ * @return Generation counter (0 when pool is NULL).
+ */
 uint64_t mp_get_env_generation(memory_pool_t *pool)
 {
     if (!pool) {
@@ -772,6 +1039,11 @@ uint64_t mp_get_env_generation(memory_pool_t *pool)
     return pool->env_flags_generation;
 }
 
+/**
+ * @brief Trigger auto-compaction whenever pressure/fragmentation exceed thresholds.
+ * Runs at most once per second to avoid thrashing.
+ * @return True if compaction ran, false when disabled or below thresholds/NULL.
+ */
 bool mp_auto_compact_check(memory_pool_t *pool)
 {
     if (!pool || !pool->auto_compact_enabled) {
@@ -803,6 +1075,11 @@ bool mp_auto_compact_check(memory_pool_t *pool)
     return false;
 }
 
+/**
+ * @brief Verify the pool's active bytes are within its arena quota.
+ * Always returns true when no quota is configured.
+ * @return True within quota (or quota unlimited), false when exceeded.
+ */
 bool mp_check_arena_quota(memory_pool_t *pool)
 {
     if (!pool || pool->arena_quota_limit == 0) {
@@ -814,6 +1091,11 @@ bool mp_check_arena_quota(memory_pool_t *pool)
     return ok;
 }
 
+/**
+ * @brief Set whether allocation should fall back to the OS on OOM.
+ * @param pool   The memory pool.
+ * @param enable When set, OOM allocations go via sys_mem_alloc.
+ */
 void mp_set_fallback_on_oom(memory_pool_t *pool, bool enable)
 {
     if (!pool) {
@@ -824,6 +1106,12 @@ void mp_set_fallback_on_oom(memory_pool_t *pool, bool enable)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Install the garbage-collection pressure callback.
+ * @param pool      The memory pool.
+ * @param cb        Callback invoked under allocation pressure.
+ * @param user_data Opaque data passed to cb.
+ */
 void mp_set_gc_callback(memory_pool_t *pool, mp_watermark_callback_t cb, void *user_data)
 {
     if (!pool) {
@@ -835,6 +1123,12 @@ void mp_set_gc_callback(memory_pool_t *pool, mp_watermark_callback_t cb, void *u
     pool_unlock(pool);
 }
 
+/**
+ * @brief Install the eviction pressure callback.
+ * @param pool      The memory pool.
+ * @param cb        Callback invoked under eviction pressure.
+ * @param user_data Opaque data passed to cb.
+ */
 void mp_set_eviction_callback(memory_pool_t *pool, mp_watermark_callback_t cb, void *user_data)
 {
     if (!pool) {
@@ -846,6 +1140,11 @@ void mp_set_eviction_callback(memory_pool_t *pool, mp_watermark_callback_t cb, v
     pool_unlock(pool);
 }
 
+/**
+ * @brief Record one allocation-latency sample into a power-of-two histogram.
+ * @param pool       The memory pool.
+ * @param latency_ns Sample latency in nanoseconds.
+ */
 void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
 {
     if (!pool) {
@@ -865,6 +1164,11 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Estimate the P99 allocation latency.
+ * Walks the power-of-two histogram until 99% of samples are covered.
+ * @return Upper-bound P99 latency in ns, or 0 when no sample/pool NULL.
+ */
 uint64_t mp_get_latency_p99(memory_pool_t *pool)
 {
     if (!pool || pool->alloc_latency_count == 0) {
@@ -886,6 +1190,10 @@ uint64_t mp_get_latency_p99(memory_pool_t *pool)
     return p99_ns;
 }
 
+/**
+ * @brief Compute the mean allocation latency.
+ * @return Average latency in ns, or 0 when no sample/pool NULL.
+ */
 uint64_t mp_get_latency_avg(memory_pool_t *pool)
 {
     if (!pool || pool->alloc_latency_count == 0) {
@@ -897,6 +1205,10 @@ uint64_t mp_get_latency_avg(memory_pool_t *pool)
     return avg;
 }
 
+/**
+ * @brief Zero the allocation-latency histogram and aggregates.
+ * @param pool The memory pool.
+ */
 void mp_reset_latency_stats(memory_pool_t *pool)
 {
     if (!pool) {
@@ -909,6 +1221,11 @@ void mp_reset_latency_stats(memory_pool_t *pool)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Reset the pool's cumulative runtime statistics.
+ * Clears counters, peak (reset to active), window, size and latency histograms.
+ * @param pool The memory pool.
+ */
 void mp_reset_stats(memory_pool_t *pool)
 {
     if (!pool) {
@@ -929,6 +1246,12 @@ void mp_reset_stats(memory_pool_t *pool)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Choose the ideal slot size for an allocation request.
+ * Returns the smallest slab class covering size, else an 8-byte multiple.
+ * @param size Requested allocation size.
+ * @return Preferred slot/class size.
+ */
 size_t mp_preferred_size(size_t size)
 {
     if (size == 0) {
@@ -944,6 +1267,13 @@ size_t mp_preferred_size(size_t size)
     return (size + 7) & ~7;
 }
 
+/**
+ * @brief Choose the best fitting size within a specific pool.
+ * Uses the pool's (possibly custom) slab classes under the read lock.
+ * @param pool The memory pool.
+ * @param size Requested allocation size.
+ * @return Preferred slot size.
+ */
 size_t mp_preferred_size_for_pool(memory_pool_t *pool, size_t size)
 {
     if (!pool || size == 0) {
@@ -962,6 +1292,14 @@ size_t mp_preferred_size_for_pool(memory_pool_t *pool, size_t size)
     return (size + 7) & ~7;
 }
 
+/**
+ * @brief Override the slab size classes used by a pool.
+ * Requires strictly increasing sizes; unsupported remainder slots are doubled.
+ * @param pool  The memory pool.
+ * @param sizes Array of slot sizes in bytes.
+ * @param count Number of classes (<= SLAB_CLASS_COUNT).
+ * @return true on success, false on invalid argument or non-increasing sizes.
+ */
 bool mp_set_slab_classes(memory_pool_t *pool, const size_t *sizes, size_t count)
 {
     if (!pool || !sizes || count == 0 || count > SLAB_CLASS_COUNT) {
@@ -991,6 +1329,11 @@ bool mp_set_slab_classes(memory_pool_t *pool, const size_t *sizes, size_t count)
     return true;
 }
 
+/**
+ * @brief Return how many slab size classes the pool uses.
+ * @param pool The memory pool.
+ * @return Class count, or 0 when pool is NULL.
+ */
 size_t mp_get_slab_class_count(memory_pool_t *pool)
 {
     if (!pool) {
@@ -1002,6 +1345,13 @@ size_t mp_get_slab_class_count(memory_pool_t *pool)
     return count;
 }
 
+/**
+ * @brief Copy the pool's active slab class sizes into an output array.
+ * @param pool The memory pool.
+ * @param out_sizes Receives the class sizes (may be NULL to query count).
+ * @param max_count Capacity of out_sizes.
+ * @return Number of sizes written, or 0 on invalid arguments.
+ */
 size_t mp_get_slab_classes(memory_pool_t *pool, size_t *out_sizes, size_t max_count)
 {
     if (!pool || !out_sizes || max_count == 0) {
@@ -1016,6 +1366,14 @@ size_t mp_get_slab_classes(memory_pool_t *pool, size_t *out_sizes, size_t max_co
     return count;
 }
 
+/**
+ * @brief Tear down a pool, releasing all of its resident memory.
+ * Destroys any child arenas recursively, unmaps slab pages and TLSF arenas,
+ * then frees the slab class locks, emergency reserve, per-CPU freelists and
+ * the pool structure itself.
+ *
+ * @param pool Pool to destroy; now invalid afterwards.
+ */
 void mp_destroy(memory_pool_t *pool)
 {
     if (!pool) {
@@ -1083,6 +1441,12 @@ void mp_destroy(memory_pool_t *pool)
     }
 }
 
+/**
+ * @brief Return the pool to a fresh state without destroying it.
+ * Clears all statistics, releases every slab slot back to its page lists and
+ * re-seeds the TLSF arenas so the pool can be reused.
+ * @param pool The memory pool.
+ */
 void mp_reset(memory_pool_t *pool)
 {
     if (!pool) {
@@ -1165,6 +1529,12 @@ void mp_reset(memory_pool_t *pool)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Install the diagnostics event callback for a pool.
+ * @param pool The memory pool.
+ * @param callback Event callback; NULL to clear.
+ * @param user_data Opaque data passed to callback.
+ */
 void mp_set_event_callback(memory_pool_t *pool, mp_event_callback_t callback, void *user_data)
 {
     if (!pool) {
@@ -1176,6 +1546,12 @@ void mp_set_event_callback(memory_pool_t *pool, mp_event_callback_t callback, vo
     pool_unlock(pool);
 }
 
+/**
+ * @brief Pin this pool's future allocations to a NUMA node.
+ * @param pool The memory pool.
+ * @param numa_node NUMA node id, or -1 for system default.
+ * @return true on success.
+ */
 bool mp_set_numa_node(memory_pool_t *pool, int numa_node)
 {
     if (!pool) {
@@ -1189,6 +1565,14 @@ bool mp_set_numa_node(memory_pool_t *pool, int numa_node)
     return true;
 }
 
+/**
+ * @brief Set aside an emergency memory reserve for OOM recovery.
+ * Allocates a dedicated buffer (with canary on) used as a last-resort fallback
+ * when the pool would otherwise fail an allocation.
+ * @param pool The memory pool.
+ * @param reserve_bytes Size of the reserve to set aside.
+ * @return true on success.
+ */
 bool mp_enable_emergency_reserve(memory_pool_t *pool, size_t reserve_bytes)
 {
     if (!pool || reserve_bytes == 0) {
@@ -1214,6 +1598,10 @@ bool mp_enable_emergency_reserve(memory_pool_t *pool, size_t reserve_bytes)
     return true;
 }
 
+/**
+ * @brief Fire the high/low watermark callback when a threshold is crossed.
+ * @param pool The memory pool.
+ */
 inline void check_watermark_after_change(memory_pool_t *pool)
 {
     if (!pool->watermark_cb || pool->stats.max_memory_limit == 0) {
@@ -1238,6 +1626,11 @@ inline void check_watermark_after_change(memory_pool_t *pool)
     }
 }
 
+/**
+ * @brief Push an allocation onto the pool's active-allocation list.
+ * @param pool The memory pool.
+ * @param header Block header to track as live.
+ */
 void active_list_add(memory_pool_t *pool, mp_block_header_t *header)
 {
     header->next = pool->active_head;
@@ -1248,6 +1641,11 @@ void active_list_add(memory_pool_t *pool, mp_block_header_t *header)
     pool->active_head = header;
 }
 
+/**
+ * @brief Unlink an allocation from the pool's active-allocation list.
+ * @param pool The memory pool.
+ * @param header Block header to untrack.
+ */
 void active_list_remove(memory_pool_t *pool, mp_block_header_t *header)
 {
     if (header->prev) {
@@ -1260,6 +1658,12 @@ void active_list_remove(memory_pool_t *pool, mp_block_header_t *header)
     }
 }
 
+/**
+ * @brief Allocate with caller source-location attribution.
+ * Records file/line/function and, when tracking is on, a backtrace before
+ * delegating to the size-class dispatcher.
+ * @return Allocated pointer, or NULL/OOM via fallback.
+ */
 void *mp_alloc_loc(memory_pool_t *pool, size_t size, const char *file, int line, const char *func)
 {
     void *ptr = mp_alloc(pool, size);
@@ -1280,6 +1684,16 @@ void *mp_alloc_loc(memory_pool_t *pool, size_t size, const char *file, int line,
     return ptr;
 }
 
+/**
+ * @brief The core allocation dispatcher.
+ * Applies dirty/circuit-breaker/percpu-freelist/thread-local-cache fast paths,
+ * enforces the memory budget with the emergency reserve, then hands to slab
+ * size <=512, TLSF 512..4MB, or the OS backend for larger requests, updating
+ * stats/watermarks and firing events.
+ * @param pool The memory pool.
+ * @param size Requested bytes.
+ * @return Allocated pointer or NULL.
+ */
 void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 {
     if (!pool || size == 0) {
@@ -1569,6 +1983,12 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
     return ptr;
 }
 
+/**
+ * @brief Cache-aligned allocation entry point with circuit-breaker accounting.
+ * @param pool A memory pool; NULL routes to the C library malloc.
+ * @param size Requested bytes.
+ * @return Pointer to usable storage, or NULL on failure.
+ */
 void *mp_alloc(memory_pool_t *pool, size_t size)
 {
     if (!pool || size == 0) {
@@ -1590,6 +2010,14 @@ void *mp_alloc(memory_pool_t *pool, size_t size)
     return ptr;
 }
 
+/**
+ * @brief Allocate a batch of same-sized entries into a caller array.
+ * @param pool The memory pool.
+ * @param size Bytes per element.
+ * @param out_ptrs Receives up to count pointers.
+ * @param count Maximum number of allocations requested.
+ * @return Number of pointers actually filled, or 0 on failure.
+ */
 size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t count)
 {
     if (!pool || !out_ptrs || count == 0) {
@@ -1607,6 +2035,12 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
     return allocated;
 }
 
+/**
+ * @brief Free an array of pointers from a batch allocation.
+ * @param pool The memory pool.
+ * @param ptrs Array of pointers to free.
+ * @param count Number of entries.
+ */
 void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
 {
     if (!pool || !ptrs || count == 0) {
@@ -1620,6 +2054,13 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
     }
 }
 
+/**
+ * @brief Zero-initialized allocation.
+ * @param pool A memory pool (NULL -> libc calloc).
+ * @param num Element count.
+ * @param size Element size.
+ * @return Zeroed pointer, or NULL.
+ */
 void *mp_calloc(memory_pool_t *pool, size_t num, size_t size)
 {
     size_t total_size = num * size;
@@ -1630,6 +2071,13 @@ void *mp_calloc(memory_pool_t *pool, size_t num, size_t size)
     return ptr;
 }
 
+/**
+ * @brief Release a pointer back to its owning tier.
+ * Validates magic, optionally poisons, handles TLS/percpu caches and canary
+ * check, unlinks from the active list, and routes to slab/tlsf/OS-free.
+ * @param pool The memory pool.
+ * @param ptr Allocation to release.
+ */
 void mp_free(memory_pool_t *pool, void *ptr)
 {
     if (!pool || !ptr) {
@@ -1750,6 +2198,10 @@ void mp_free(memory_pool_t *pool, void *ptr)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Resize a live allocation in place when possible, else copy elsewhere.
+ * @return Pointer to the resized storage, or NULL.
+ */
 void *mp_realloc(memory_pool_t *pool, void *ptr, size_t new_size)
 {
     if (!ptr) {
@@ -1793,6 +2245,14 @@ void *mp_realloc(memory_pool_t *pool, void *ptr, size_t new_size)
     return new_ptr;
 }
 
+/**
+ * @brief Realloc with overflow-checked element multiplication.
+ * @param pool The memory pool.
+ * @param ptr Pointer to resize (may be NULL).
+ * @param nmemb Element count.
+ * @param size Bytes per element.
+ * @return Pointer to resized storage, or NULL on overflow/failure.
+ */
 void *mp_reallocarray(memory_pool_t *pool, void *ptr, size_t nmemb, size_t size)
 {
     if (nmemb != 0 && size > SIZE_MAX / nmemb) {
@@ -1801,16 +2261,36 @@ void *mp_reallocarray(memory_pool_t *pool, void *ptr, size_t nmemb, size_t size)
     return mp_realloc(pool, ptr, nmemb * size);
 }
 
+/**
+ * @brief Duplicate a NUL-terminated string into the pool.
+ * @param pool A memory pool (NULL -> libc strdup).
+ * @param str String to copy.
+ * @return Newly allocated copy, or NULL on failure.
+ */
 char *mp_strdup(memory_pool_t *pool, const char *str)
 {
     return mp_strdup_loc(pool, str, NULL, 0, NULL);
 }
 
+/**
+ * @brief Duplicate n bytes into the pool.
+ * @param pool A memory pool (NULL -> malloc + memcpy).
+ * @param src Source bytes.
+ * @param n Length in bytes.
+ * @return Copy, or NULL on failure.
+ */
 void *mp_memdup(memory_pool_t *pool, const void *src, size_t n)
 {
     return mp_memdup_loc(pool, src, n, NULL, 0, NULL);
 }
 
+/**
+ * @brief printf-style formatted allocation into the pool.
+ * Formats varargs per fmt and allocates the result via the pool.
+ * @param pool A memory pool (NULL -> libc behavior).
+ * @param fmt printf-style format string.
+ * @return Newly allocated formatted string, or NULL on failure.
+ */
 char *mp_asprintf(memory_pool_t *pool, const char *fmt, ...)
 {
     if (!fmt) {
@@ -1836,6 +2316,13 @@ char *mp_asprintf(memory_pool_t *pool, const char *fmt, ...)
     return buf;
 }
 
+/**
+ * @brief Allocate memory aligned to a power-of-two boundary.
+ * @param pool A memory pool.
+ * @param alignment Required alignment (power of two).
+ * @param size Requested bytes.
+ * @return Aligned pointer, or NULL.
+ */
 void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size)
 {
     if ((alignment & (alignment - 1)) != 0 || alignment < sizeof(void *)) {
@@ -1893,6 +2380,12 @@ void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size)
     return (void *)aligned_addr;
 }
 
+/**
+ * @brief Return usable bytes of an allocated pointer.
+ * @param pool The memory pool.
+ * @param ptr Allocation.
+ * @return Usable size, or 0 on invalid.
+ */
 size_t mp_usable_size(memory_pool_t *pool, void *ptr)
 {
     if (!pool || !ptr || !mp_ptr_valid(pool, ptr)) {
@@ -1902,6 +2395,12 @@ size_t mp_usable_size(memory_pool_t *pool, void *ptr)
     return header->usable_size;
 }
 
+/**
+ * @brief Return the requested size of an allocation.
+ * @param pool The memory pool.
+ * @param ptr Allocation.
+ * @return Requested size, or 0.
+ */
 size_t mp_alloc_size(memory_pool_t *pool, void *ptr)
 {
     if (!pool || !ptr || !mp_ptr_valid(pool, ptr)) {
@@ -1911,6 +2410,12 @@ size_t mp_alloc_size(memory_pool_t *pool, void *ptr)
     return header->requested_size;
 }
 
+/**
+ * @brief Check whether a pointer belongs to this pool.
+ * @param pool The memory pool.
+ * @param ptr Candidate pointer.
+ * @return true for a live valid allocation, false otherwise.
+ */
 bool mp_ptr_valid(memory_pool_t *pool, void *ptr)
 {
     if (!pool || !ptr) {
@@ -1935,6 +2440,13 @@ bool mp_ptr_valid(memory_pool_t *pool, void *ptr)
     return found;
 }
 
+/**
+ * @brief Fetch source/size metadata for a live allocation.
+ * @param pool The memory pool.
+ * @param ptr Allocation of interest.
+ * @param info Receives the metadata on success.
+ * @return true when filled, false on invalid pointer/pool.
+ */
 bool mp_get_allocation_info(memory_pool_t *pool, void *ptr, mp_allocation_info_t *info)
 {
     if (!pool || !ptr || !info) {
@@ -1985,6 +2497,13 @@ bool mp_get_allocation_info(memory_pool_t *pool, void *ptr, mp_allocation_info_t
     return true;
 }
 
+/**
+ * @brief List the pool's slab pages, TLSF arenas and emergency buffer.
+ * @param pool The memory pool.
+ * @param regions Receives region descriptors.
+ * @param max_regions Capacity of regions (0 to query count).
+ * @return Number of regions written, or 0 on invalid pool.
+ */
 size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size_t max_regions)
 {
     if (!pool || !regions || max_regions == 0) {
@@ -2042,6 +2561,12 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
     return count;
 }
 
+/**
+ * @brief Build a double-buffer frame arena for automatic reset.
+ * Allocates two child frame pools from the default arena.
+ * @param frame_capacity Per-frame capacity in bytes (0 for 1 MiB each).
+ * @return New frame arena, or NULL on failure.
+ */
 cmem_frame_arena_t *mp_frame_arena_create(size_t frame_capacity)
 {
     cmem_frame_arena_t *farena = (cmem_frame_arena_t *)malloc(sizeof(cmem_frame_arena_t));
@@ -2068,6 +2593,12 @@ cmem_frame_arena_t *mp_frame_arena_create(size_t frame_capacity)
     return farena;
 }
 
+/**
+ * @brief Allocate from the active frame pool.
+ * @param farena Frame arena.
+ * @param size Requested bytes.
+ * @return Zeroed pointer, or NULL on failure.
+ */
 void *mp_frame_alloc(cmem_frame_arena_t *farena, size_t size)
 {
     if (!farena || !farena->active_pool) {
@@ -2076,6 +2607,11 @@ void *mp_frame_alloc(cmem_frame_arena_t *farena, size_t size)
     return mp_alloc(farena->active_pool, size);
 }
 
+/**
+ * @brief Close the current frame and switch to the idle buffer.
+ * Afterwards the previous frame's allocations are automatically reclaimed.
+ * @param farena Frame arena.
+ */
 void mp_frame_end(cmem_frame_arena_t *farena)
 {
     if (!farena) {
@@ -2091,6 +2627,10 @@ void mp_frame_end(cmem_frame_arena_t *farena)
     }
 }
 
+/**
+ * @brief Destroy both child frame pools and free the frame arena.
+ * @param farena Frame arena.
+ */
 void mp_frame_arena_destroy(cmem_frame_arena_t *farena)
 {
     if (!farena) {

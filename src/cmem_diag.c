@@ -1,11 +1,34 @@
 /**
  * @file cmem_diag.c
- * @brief Extracted module implementation.
+ * @brief Diagnostics and observability subsystem.
+ *
+ * Provides runtime introspection of a cmem arena: heap-integrity auditing,
+ * detailed memory-leak analysis, human-readable and HTML report export,
+ * binary crash-snapshot generation/parsing, aggregate statistics with
+ * real-time QPS/bandwidth rates, an ASCII allocation-size histogram, arena
+ * tree dumps, JSON and Prometheus metric exports, and heuristic leak
+ * classification. These helpers are all read-only w.r.t. the allocation
+ * pools themselves; they traverse the live active-block list and stats
+ * under the pool lock to assemble human- and machine-readable reports.
  */
 
 #include "cmem.h"
 #include "cmem_internal.h"
 #include <inttypes.h>
+
+/**
+ * @brief Walk every live allocation and verify header/canary integrity.
+ *
+ * Iterates the pool's active-block list, checking that each header still
+ * carries the expected magic AND that (when MP_FLAG_DEBUG_CANARY is enabled)
+ * the trailing redzone byte is unperturbed. On any mismatch it prints a
+ * detailed error to stderr describing the offending payload, its size and
+ * allocation site.
+ *
+ * @param pool The arena pool to audit (NULL -> healthy).
+ * @return true when every live block is intact, false when any corruption was
+ *         detected.
+ */
 bool mp_audit_heap(memory_pool_t *pool)
 {
     if (!pool) {
@@ -55,6 +78,22 @@ bool mp_audit_heap(memory_pool_t *pool)
     return healthy;
 }
 
+/**
+ * @brief Render a human-readable memory-leak analysis report into a buffer.
+ *
+ * Formats a header summarizing the pool's reserved/active totals, then walks
+ * the active-block list emitting one [Leak #N] entry per outstanding
+ * allocation: its payload address, requested size, backing tier (SLAB/TLSF/
+ * DIRECT OS), source location (file:line in function), and, when present and
+ * built with execinfo support, the recorded back-trace call stack. The report
+ * is written gradually and stops once @p max_len would be exceeded.
+ *
+ * @param pool       The arena pool whose outstanding allocations are reported.
+ * @param report_buf Caller-owned buffer to receive the NUL-terminated report.
+ * @param max_len    Capacity of @p report_buf in bytes.
+ * @return The number of bytes written (excluding the NUL terminator), or 0 on
+ *         invalid arguments.
+ */
 size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
 {
     if (!pool || !report_buf || max_len == 0) {
@@ -142,6 +181,16 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
     return offset;
 }
 
+/**
+ * @brief Write the leak-analysis report to a text file on disk.
+ *
+ * Generates the report via @ref mp_analyze_leaks into a fixed scratch buffer,
+ * then writes it to @p filepath (truncating any existing file).
+ *
+ * @param pool     The arena to analyze.
+ * @param filepath Destination path for the report.
+ * @return true on success, false on invalid arguments or file-open failure.
+ */
 bool mp_export_leak_report(memory_pool_t *pool, const char *filepath)
 {
     if (!pool || !filepath) {
@@ -161,6 +210,16 @@ bool mp_export_leak_report(memory_pool_t *pool, const char *filepath)
     return true;
 }
 
+/**
+ * @brief Export an interactive HTML profiler & leak dashboard.
+ */
+/**
+ * @brief Export an interactive HTML profiler & leak dashboard.
+ *
+ * @param pool     The arena pool to profile.
+ * @param filepath Destination path for the generated HTML file.
+ * @return true on success, false on invalid arguments or file-open failure.
+ */
 bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
 {
     if (!pool || !filepath) {
@@ -290,6 +349,18 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
     return true;
 }
 
+/**
+ * @brief Serialize the pool's live allocations to a compact binary snapshot.
+ *
+ * Writes a cmem_snapshot_header_t followed by one cmem_snapshot_record_t per
+ * active allocation (payload address, requested size, tier, source location).
+ * The fixed binary layout survives crashes, so the dump can be parsed offline
+ * after the process has died by @ref mp_parse_binary_snapshot.
+ *
+ * @param pool     The arena to snapshot (read under the write lock).
+ * @param filepath Destination path of the binary file.
+ * @return true on success, false on invalid arguments or file-open failure.
+ */
 bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
 {
     if (!pool || !filepath) {
@@ -337,6 +408,20 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
     return true;
 }
 
+/**
+ * @brief Rehydrate a binary snapshot dump into a human-readable report.
+ *
+ * Reads the cmem_snapshot_header_t written by @ref mp_export_binary_snapshot,
+ * validates its magic, then decodes each trailing cmem_snapshot_record_t into
+ * a text line describing the allocation. Stops early if @p max_len would be
+ * exceeded.
+ *
+ * @param filepath   Path of the binary snapshot file to read.
+ * @param out_report Caller-owned buffer to receive the parsed report.
+ * @param max_len    Capacity of @p out_report.
+ * @return true on success (including a valid but empty dump), false if the
+ *         file cannot be opened or the header magic is invalid.
+ */
 bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max_len)
 {
     if (!filepath || !out_report || max_len == 0) {
@@ -391,6 +476,17 @@ bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max
     return true;
 }
 
+/**
+ * @brief Populate an mp_stats_t with the pool's live and cumulative counters.
+ *
+ * Copies the pool's mantained stats under a read lock, derives the
+ * fragmentation ratio (1 - active_bytes / total_pool_size, 0 when empty), and
+ * computes real-time allocation QPS and bandwidth from the cumulative alloc
+ * and active-byte totals normalized over the window since first sample.
+ *
+ * @param pool  The arena pool to sample.
+ * @param stats Out-parameter to be populated (ignored when NULL).
+ */
 void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
 {
     if (!pool || !stats) {
@@ -420,6 +516,15 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
     pool_rdunlock(pool);
 }
 
+/**
+ * @brief Print a summary of the pool's runtime statistics to stdout.
+ *
+ * Formats a bordered overview using @ref mp_get_stats: reserved totals, active
+ * blocks/bytes, peak, optional memory budget, fragmentation, real-time
+ * QPS/bandwidth, cumulative alloc/free counts, and a per-tier byte breakdown.
+ *
+ * @param pool The arena pool to summarize.
+ */
 void mp_dump_info(memory_pool_t *pool)
 {
     if (!pool) {
@@ -455,6 +560,15 @@ void mp_dump_info(memory_pool_t *pool)
     printf("==============================================================\n\n");
 }
 
+/**
+ * @brief Print an ASCII allocation-size histogram to stdout.
+ *
+ * Renders progress-bar lines for every non-empty bucket of the size
+ * histogram, one line per bucket with a count and a '*' bar scaled relative
+ * to the most populated bucket (max 20 chars wide).
+ *
+ * @param pool The arena pool whose histogram is printed.
+ */
 void mp_dump_histogram(memory_pool_t *pool)
 {
     if (!pool) {
@@ -504,6 +618,16 @@ void mp_dump_histogram(memory_pool_t *pool)
     printf("=========================================================================\n\n");
 }
 
+/**
+ * @brief Recursively print one arena node and its descendant children.
+ *
+ * Emits an indented '[Arena: name]' line with the node's active byte/block
+ * totals, then recurses depth-first over the entire child-arena sub-tree.
+ * Called by @ref mp_dump_tree_info for the whole hierarchy.
+ *
+ * @param pool   The arena node to print.
+ * @param indent Indentation depth, incremented per child level.
+ */
 void print_arena_node(memory_pool_t *pool, int indent)
 {
     if (!pool) {
@@ -524,6 +648,15 @@ void print_arena_node(memory_pool_t *pool, int indent)
     }
 }
 
+/**
+ * @brief Print the arena hierarchy as an indented tree.
+ *
+ * Acquires the pool write lock (tree topology mutates on child create/destroy)
+ * and delegates layout to @ref print_arena_node, producing a parent/child
+ * overview of every arena in the pool.
+ *
+ * @param pool The root arena of the tree to dump.
+ */
 void mp_dump_tree_info(memory_pool_t *pool)
 {
     if (!pool) {
@@ -536,6 +669,15 @@ void mp_dump_tree_info(memory_pool_t *pool)
     pool_unlock(pool);
 }
 
+/**
+ * @brief Serialize a JSON object of the pool's key statistics.
+ *
+ * @param pool    The arena pool to serialize.
+ * @param buf     Caller-owned buffer for the JSON string.
+ * @param max_len Capacity of @p buf.
+ * @return The number of bytes written (excluding the NUL terminator), or 0 on
+ *         invalid arguments; on truncation returns max_len - 1.
+ */
 size_t mp_dump_json_stats(memory_pool_t *pool, char *buf, size_t max_len)
 {
     if (!pool || !buf || max_len == 0) {
@@ -576,6 +718,19 @@ size_t mp_dump_json_stats(memory_pool_t *pool, char *buf, size_t max_len)
     return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
+/**
+ * @brief Render pool statistics as Prometheus exposition-format metrics.
+ *
+ * Emits a series of HELP/TYPE blocks then one gauge/counter line per metric
+ * (total pool bytes, active bytes, active allocations, cumulative alloc ops,
+ * real-time QPS, bandwidth, and fragmentation ratio), tagged by arena name.
+ *
+ * @param pool    The arena pool to export.
+ * @param out_buf Caller-owned buffer for the metrics text.
+ * @param max_len Capacity of @p out_buf.
+ * @return The number of bytes written (excluding NUL), or 0 on invalid
+ *         arguments; on truncation returns max_len - 1.
+ */
 size_t mp_export_prometheus_metrics(memory_pool_t *pool, char *out_buf, size_t max_len)
 {
     if (!pool || !out_buf || max_len == 0) {
@@ -626,6 +781,16 @@ size_t mp_export_prometheus_metrics(memory_pool_t *pool, char *out_buf, size_t m
     return (len > 0 && (size_t)len < max_len) ? (size_t)len : max_len - 1;
 }
 
+/**
+ * @brief Verify no outstanding allocations remain (no leaks).
+ *
+ * Returns whether the pool's active-allocation count is zero. When leaks are
+ * present it releases the lock, renders the full report via @ref
+ * mp_analyze_leaks, prints it to stderr and returns false.
+ *
+ * @param pool The arena pool to check.
+ * @return true when clean, false when leaks were found.
+ */
 bool mp_check_leaks(memory_pool_t *pool)
 {
     if (!pool) {
@@ -648,6 +813,15 @@ bool mp_check_leaks(memory_pool_t *pool)
     return true;
 }
 
+/**
+ * @brief Classify a leaked allocation into a coarse severity band.
+ *
+ * Severity is derived purely from the allocation size: >1MB is CRITICAL,
+ * >=100KB is WARNING, and everything else resolves to INFO.
+ *
+ * @param info Allocation metadata to grade (NULL -> INFO).
+ * @return The matching mp_leak_severity_t rank.
+ */
 mp_leak_severity_t mp_get_leak_severity(const mp_allocation_info_t *info)
 {
     if (!info) {
@@ -668,6 +842,18 @@ mp_leak_severity_t mp_get_leak_severity(const mp_allocation_info_t *info)
     return MP_LEAK_SEVERITY_INFO;
 }
 
+/**
+ * @brief Heuristically classify the likely root cause of a leaked allocation.
+ *
+ * Applies ordered pattern tests against the allocation metadata: a very large
+ * block (>64KB) maps to a large-buffer leak, a small repeated allocation with
+ * a slab class to a loop leak, an allocation carrying both file and function
+ * to a string (strdup) leak, and anything else to a generic leak. Each result
+ * carries a human-readable name, a confidence percentage, and a fix suggestion.
+ *
+ * @param info Allocation metadata to analyze (NULL -> generic unknown).
+ * @return A populated mp_leak_pattern_t describing the guessed leak pattern.
+ */
 mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
 {
     mp_leak_pattern_t result = {0};
