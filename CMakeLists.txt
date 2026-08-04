@@ -97,6 +97,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+option(CMEM_BUILD_SHARED "Build shared library" OFF)
+
 # 代码覆盖率配置
 set(CMAKE_C_FLAGS_COVERAGE "-g -O0 -fprofile-arcs -ftest-coverage")
 set(CMAKE_CXX_FLAGS_COVERAGE "${CMAKE_C_FLAGS_COVERAGE}")
@@ -135,6 +137,31 @@ add_custom_command(TARGET cmem POST_BUILD
         $<TARGET_FILE:cmem>
         ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a
 )
+
+if(CMEM_BUILD_SHARED)
+    add_library(cmem_shared SHARED src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c)
+    target_link_libraries(cmem_shared PRIVATE pthread ${RT_LIBRARY})
+    set_target_properties(cmem_shared PROPERTIES
+        VERSION ${CMEM_VERSION}
+        SOVERSION ${CMEM_VERSION_MAJOR}
+        PUBLIC_HEADER include/cmem.h
+        OUTPUT_NAME cmem
+    )
+    if(NOT MSVC)
+        set_target_properties(cmem_shared PROPERTIES
+            PREFIX "lib"
+            SUFFIX ".so"
+        )
+        target_compile_options(cmem_shared PRIVATE -ftls-model=initial-exec)
+    endif()
+
+    install(TARGETS cmem_shared
+        EXPORT cmemTargets
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+        PUBLIC_HEADER DESTINATION include
+    )
+endif()
 
 # 安装配置
 install(TARGETS cmem
