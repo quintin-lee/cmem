@@ -150,6 +150,14 @@ typedef struct {
 #define CMEM_MPOL_BIND 2
 #endif
 
+/* Lazily-probed NUMA topology.  cpu_to_node[cpu] holds the node owning that
+ * CPU; NULL when topology detection is unavailable (single-node fallback). */
+typedef struct cmem_numa_topology {
+    int node_count;   /* Number of NUMA nodes (>= 1)                          */
+    int cpu_count;    /* Number of CPUs covered by cpu_to_node[]              */
+    int *cpu_to_node; /* cpu -> owning node map, NULL if not probed           */
+} cmem_numa_topology_t;
+
 /* Slab allocator tuning. Small allocations (<= SLAB_MAX_SIZE) are served from
  * SLAB_CLASS_COUNT fixed bucket sizes carved out of SLAB_PAGE_SIZE pages. */
 #define SLAB_CLASS_COUNT 7         /* Number of distinct small-object size classes    */
@@ -581,6 +589,9 @@ tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, size_t n
 
 /* System memory & platform (cmem_sys.c) */
 extern int cmem_sched_getcpu(void);
+extern int cmem_numa_current_node(void);
+extern int cmem_numa_node_count(void);
+extern int cmem_cpu_to_node(int cpu);
 extern void cmem_munmap(void *ptr, size_t size);
 extern void *cmem_aligned_malloc(size_t size, size_t alignment);
 extern void cmem_aligned_free(void *ptr);
