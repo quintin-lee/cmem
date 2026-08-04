@@ -4,10 +4,10 @@
 CC = gcc
 CXX = g++
 LDFLAGS = -pthread -lrt
-CFLAGS = -Wall -Wextra -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -I./include
-CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -I./include
-CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -I./include
-CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include
+CFLAGS = -Wall -Wextra -O3 -std=c11 -D_GNU_SOURCE -I./include
+CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -D_GNU_SOURCE -I./include
+CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -D_GNU_SOURCE -I./include
+CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include -D_GNU_SOURCE
 
 # 版本信息（从 VERSION 文件读取）
 VERSION := $(shell cat VERSION | tr -d '[:space:]')
@@ -124,7 +124,7 @@ examples: format-check $(SRC) | $(BUILD_DIR)
 # Fuzzing targets (requires clang; falls back to ASan-only on gcc)
 FUZZ_SRCS = tests/fuzz_alloc.c src/*.c
 FUZZ_CC ?= clang
-FUZZ_CFLAGS = -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -O1 -g -D_POSIX_C_SOURCE=200809L -I./include
+FUZZ_CFLAGS = -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -O1 -g -D_GNU_SOURCE -I./include
 FUZZ_LDFLAGS = -fsanitize=fuzzer,address,undefined -pthread -lrt
 FUZZ_ARGS = -max_len=4096 -jobs=4
 
