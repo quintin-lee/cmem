@@ -219,6 +219,16 @@ add_executable(example_arena_tree examples/example_arena_tree.c)
 target_link_libraries(example_arena_tree PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(example_arena_tree format-check check-mermaid)
 
+add_executable(cmem-inspect tools/cmem-inspect/cmem-inspect.c tools/common/cmem-diag-output.c)
+target_link_libraries(cmem-inspect PRIVATE cmem pthread ${RT_LIBRARY})
+target_include_directories(cmem-inspect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/common)
+add_dependencies(cmem-inspect format-check check-mermaid)
+
+add_executable(cmem-analyze tools/cmem-analyze/cmem-analyze.c tools/cmem-analyze/cmem-analyze-parser.c tools/common/cmem-diag-output.c)
+target_link_libraries(cmem-analyze PRIVATE pthread ${RT_LIBRARY})
+target_include_directories(cmem-analyze PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/common)
+add_dependencies(cmem-analyze format-check check-mermaid)
+
 add_executable(stress_test tests/stress_test.c)
 target_link_libraries(stress_test PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(stress_test format-check check-mermaid)

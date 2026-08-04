@@ -415,6 +415,26 @@ void mp_typed_pool_destroy(mp_typed_pool_t *tpool);
 memory_pool_t *mp_create(size_t initial_capacity, mp_flags_t flags);
 
 /**
+ * @brief Retrieves or initializes the global cmem memory pool instance.
+ *
+ * Creates a 4MB thread-safe pool with thread-local cache on first call.
+ * Subsequent calls return the same pool instance.
+ *
+ * @return Pointer to the global cmem memory pool, or NULL on failure
+ */
+memory_pool_t *mp_get_global_pool(void);
+
+/**
+ * @brief Sets the global cmem memory pool instance.
+ *
+ * Replaces the default global pool with a user-provided pool.
+ * Useful for custom global pool initialization.
+ *
+ * @param pool Pointer to the memory pool to set as global (NULL resets to default)
+ */
+void mp_set_global_pool(memory_pool_t *pool);
+
+/**
  * @brief Creates a lock-free DPDK-style Ring Buffer Allocator.
  *
  * Single-producer single-consumer lock-free ring buffer with atomic head/tail indices.

@@ -28,9 +28,9 @@ LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean check-mermaid
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean check-mermaid tools
 
-all: format-check check-mermaid lib test test_advanced test_cpp bench examples
+all: format-check check-mermaid lib test test_advanced test_cpp bench examples tools
 
 help:
 	@echo "cmem Makefile Targets:"
@@ -47,6 +47,7 @@ help:
 	@echo "  coverage     - Generate code coverage report (requires lcov)"
 	@echo "  static-analysis - Run cppcheck static analysis"
 	@echo "  examples     - Build and run all example programs"
+	@echo "  tools        - Build diagnostic tools (cmem-inspect, cmem-analyze)"
 	@echo "  install      - Install library and headers to $(PREFIX)"
 	@echo "  uninstall    - Remove installed files from $(PREFIX)"
 	@echo "  package      - Create source tarball for distribution"
@@ -121,6 +122,15 @@ examples: format-check $(SRC) | $(BUILD_DIR)
 	./$(BUILD_DIR)/example_embedded
 	./$(BUILD_DIR)/example_leak_analysis
 	./$(BUILD_DIR)/example_arena_tree
+
+# 构建诊断工具
+tools: cmem-inspect cmem-analyze
+
+cmem-inspect: lib
+	$(CC) $(CFLAGS) -I./include -I./tools/common tools/cmem-inspect/cmem-inspect.c tools/common/cmem-diag-output.c -o $(BUILD_DIR)/cmem-inspect -L./build -lcmem -lpthread $(LDFLAGS)
+
+cmem-analyze: tools/common/cmem-diag-output.c
+	$(CC) $(CFLAGS) -I./include -I./tools/common tools/cmem-analyze/cmem-analyze.c tools/cmem-analyze/cmem-analyze-parser.c tools/common/cmem-diag-output.c -o $(BUILD_DIR)/cmem-analyze -lpthread $(LDFLAGS)
 
 # Fuzzing targets (requires clang; falls back to ASan-only on gcc)
 FUZZ_SRCS = tests/fuzz_alloc.c src/*.c
@@ -204,7 +214,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -f leak_report.txt test_report.html memory_profile.html
 	rm -f snap_a.cmem_dump snap_b.cmem_dump test_snapshot.cmem_dump
-	rm -f test_report.html
+	rm -f test_report.html snapshot_diff.txt
 
 # 彻底清理
 distclean: clean

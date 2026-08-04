@@ -701,6 +701,23 @@ bool mp_diff_snapshots(const char *snapshot_a_path,
     return true;
 }
 
+/* --- Global Memory Pool Instance --- */
+static memory_pool_t *g_global_pool = NULL;
+
+memory_pool_t *mp_get_global_pool(void)
+{
+    if (!g_global_pool) {
+        g_global_pool =
+            mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+    }
+    return g_global_pool;
+}
+
+void mp_set_global_pool(memory_pool_t *pool)
+{
+    g_global_pool = pool;
+}
+
 /* --- Game & Graphics Pipeline Dual Ping-Pong Frame Arena --- */
 /**
  * @brief Frame arena structure for double-buffered per-frame allocations.
