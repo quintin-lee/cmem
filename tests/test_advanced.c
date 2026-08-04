@@ -7,8 +7,6 @@
 #undef NDEBUG
 #endif
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "../include/cmem.h"
 #include <assert.h>
 #include <pthread.h>
@@ -20,6 +18,8 @@
 #define setenv(key, value, overwrite) _putenv_s(key, value)
 #endif
 
+// NOLINTBEGIN(readability-magic-numbers, clang-analyzer-optin.core.EnumCastOutOfRange)
+// Test vectors and flag combinations in this suite intentionally use literal values.
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
 /* ========================================================================== */
@@ -32,17 +32,17 @@ static void test_calloc_loc()
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void *p = mp_calloc_loc(pool, 32, 1, __FILE__, __LINE__, __func__);
-    assert(p != NULL);
-    assert(mp_ptr_valid(pool, p));
-    assert(mp_alloc_size(pool, p) == 32);
+    void *ptr = mp_calloc_loc(pool, 32, 1, __FILE__, __LINE__, __func__);
+    assert(ptr != NULL);
+    assert(mp_ptr_valid(pool, ptr));
+    assert(mp_alloc_size(pool, ptr) == 32);
 
-    unsigned char *bytes = (unsigned char *)p;
+    unsigned char *bytes = (unsigned char *)ptr;
     for (int i = 0; i < 32; i++) {
         assert(bytes[i] == 0);
     }
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_calloc_loc");
@@ -54,20 +54,20 @@ static void test_realloc_loc()
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void *p = mp_alloc_loc(pool, 32, __FILE__, __LINE__, __func__);
-    assert(p != NULL);
-    memset(p, 0xAB, 32);
+    void *ptr = mp_alloc_loc(pool, 32, __FILE__, __LINE__, __func__);
+    assert(ptr != NULL);
+    memset(ptr, 0xAB, 32);
 
-    p = mp_realloc_loc(pool, p, 64, __FILE__, __LINE__, __func__);
-    assert(p != NULL);
-    assert(mp_alloc_size(pool, p) == 64);
+    ptr = mp_realloc_loc(pool, ptr, 64, __FILE__, __LINE__, __func__);
+    assert(ptr != NULL);
+    assert(mp_alloc_size(pool, ptr) == 64);
 
-    unsigned char *bytes = (unsigned char *)p;
+    unsigned char *bytes = (unsigned char *)ptr;
     for (int i = 0; i < 32; i++) {
         assert(bytes[i] == 0xAB);
     }
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_realloc_loc");
@@ -147,8 +147,11 @@ static void test_asprintf_loc()
 
 static bool g_error_recovery_called = false;
 
-static void
-error_recovery_cb(memory_pool_t *pool, bool is_high, size_t current, size_t limit, void *udata)
+static void error_recovery_cb(memory_pool_t *pool,
+                              bool           is_high,
+                              size_t current, // NOLINT(bugprone-easily-swappable-parameters)
+                              size_t limit,
+                              void  *udata)
 {
     (void)pool;
     (void)is_high;
@@ -166,10 +169,10 @@ static void test_callbacks()
 
     mp_set_error_recovery_callback(pool, error_recovery_cb, NULL);
 
-    void *p = mp_alloc(pool, 128);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 128);
+    assert(ptr != NULL);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_callbacks");
@@ -203,10 +206,10 @@ static void test_isolate_bad_block()
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
-    void *p = mp_alloc(pool, 64);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 64);
+    assert(ptr != NULL);
 
-    assert(mp_isolate_bad_block(pool, p) == true);
+    assert(mp_isolate_bad_block(pool, ptr) == true);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_isolate_bad_block");
@@ -248,14 +251,14 @@ static void test_quota_and_circuit_breaker()
     mp_set_circuit_breaker(pool, true);
     assert(mp_is_circuit_breaker_tripped(pool) == false);
 
-    void *p = mp_alloc(pool, 1024);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 1024);
+    assert(ptr != NULL);
     assert(mp_get_thread_allocated_bytes(pool) >= 1024);
 
     mp_reset_thread_quota(pool);
     assert(mp_get_thread_allocated_bytes(pool) == 0);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_quota_and_circuit_breaker");
@@ -361,11 +364,11 @@ static void test_auto_compact()
 
     mp_set_memory_limit(pool, 1024);
     mp_set_auto_compact(pool, true, 0.001, 0.001);
-    void *p = mp_alloc(pool, 512);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 512);
+    assert(ptr != NULL);
     assert(mp_auto_compact_check(pool) == true);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     mp_destroy(pool);
     TEST_PASS("test_auto_compact");
 }
@@ -382,15 +385,15 @@ static void test_encrypted_memory()
 
     mp_set_encrypted_memory(pool, true);
 
-    void *p = mp_alloc(pool, 256);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 256);
+    assert(ptr != NULL);
 
-    mp_lock_memory(pool, p, 256);
-    mp_protect_from_dump(pool, p, 256);
-    mp_secure_zero(pool, p, 256);
-    mp_unlock_memory(pool, p, 256);
+    mp_lock_memory(pool, ptr, 256);
+    mp_protect_from_dump(pool, ptr, 256);
+    mp_secure_zero(pool, ptr, 256);
+    mp_unlock_memory(pool, ptr, 256);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_encrypted_memory");
@@ -410,13 +413,13 @@ static void test_asan_integration()
     assert(mp_asan_is_enabled() == false || true); /* depends on compile flags */
     assert(mp_asan_check_memory(pool, NULL, 0) == false);
 
-    void *p = mp_alloc(pool, 128);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 128);
+    assert(ptr != NULL);
 #ifndef __SANITIZE_ADDRESS__
-    mp_asan_report_error(pool, p, 128, true);
+    mp_asan_report_error(pool, ptr, 128, true);
 #endif
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_asan_integration");
@@ -432,11 +435,11 @@ static void test_hot_cold_pages()
     memory_pool_t *pool = mp_create(0, MP_FLAG_HOT_COLD_SEPARATION);
     assert(pool != NULL);
 
-    void *p = mp_alloc(pool, 4096);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 4096);
+    assert(ptr != NULL);
 
-    mp_mark_page_hot(pool, p);
-    mp_mark_page_cold(pool, p);
+    mp_mark_page_hot(pool, ptr);
+    mp_mark_page_cold(pool, ptr);
 
     mp_get_hot_page_count(pool);
     mp_get_cold_page_count(pool);
@@ -445,7 +448,7 @@ static void test_hot_cold_pages()
 
     mp_separate_hot_cold_pages(pool);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_hot_cold_pages");
@@ -469,10 +472,10 @@ static void test_online_expansion()
     bool ok = mp_expand_pool(pool, 512 * 1024);
     assert(ok == true);
 
-    void *p = mp_alloc(pool, 256);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 256);
+    assert(ptr != NULL);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_online_expansion");
@@ -508,8 +511,8 @@ static void test_exports()
     memory_pool_t *pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
-    void *p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
-    assert(p != NULL);
+    void *ptr = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    assert(ptr != NULL);
 
     assert(mp_export_leak_report(pool, "test_advanced_leak.txt") == true);
 
@@ -517,10 +520,10 @@ static void test_exports()
     size_t len = mp_export_pprof(pool, pprof_buf, sizeof(pprof_buf));
     assert(len > 0);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
-    remove("test_advanced_leak.txt");
+    (void)remove("test_advanced_leak.txt");
     TEST_PASS("test_exports");
 }
 
@@ -556,10 +559,10 @@ static void test_create_custom()
     memory_pool_t *pool = mp_create_custom(1024 * 1024, MP_FLAG_DEFAULT, NULL);
     assert(pool != NULL);
 
-    void *p = mp_alloc(pool, 128);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 128);
+    assert(ptr != NULL);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_create_custom");
@@ -571,11 +574,11 @@ static void test_calloc()
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void *p = mp_calloc(pool, 1, 64);
-    assert(p != NULL);
-    memset(p, 0xFF, 64);
+    void *ptr = mp_calloc(pool, 1, 64);
+    assert(ptr != NULL);
+    memset(ptr, 0xFF, 64);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
     TEST_PASS("test_calloc");
@@ -642,10 +645,10 @@ static void test_static_buffer_pool()
     memory_pool_t *pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void *p = mp_alloc(pool, 256);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 256);
+    assert(ptr != NULL);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
     mp_destroy(pool);
     TEST_PASS("test_static_buffer_pool");
 }
@@ -674,9 +677,9 @@ static void test_os_fallback_alloc()
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
     assert(pool != NULL);
 
-    void *p = mp_alloc(pool, 5 * 1024 * 1024);
-    if (p) {
-        mp_free(pool, p);
+    void *ptr = mp_alloc(pool, 5 * 1024 * 1024);
+    if (ptr) {
+        mp_free(pool, ptr);
     }
 
     mp_destroy(pool);
@@ -751,13 +754,13 @@ static void test_dirty_pool_rejection()
     mp_mark_pool_dirty(pool);
     assert(mp_is_pool_dirty(pool) == true);
 
-    void *p = mp_alloc(pool, 64);
-    assert(p == NULL);
+    void *ptr = mp_alloc(pool, 64);
+    assert(ptr == NULL);
 
     mp_clear_pool_dirty(pool);
-    p = mp_alloc(pool, 64);
-    assert(p != NULL);
-    mp_free(pool, p);
+    ptr = mp_alloc(pool, 64);
+    assert(ptr != NULL);
+    mp_free(pool, ptr);
 
     mp_destroy(pool);
     TEST_PASS("test_dirty_pool_rejection");
@@ -833,13 +836,15 @@ static void test_get_allocation_info()
     memory_pool_t *pool = mp_create(0, MP_FLAG_TRACK_LOCATIONS);
     assert(pool != NULL);
 
-    void *p = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
-    assert(p != NULL);
+    void *ptr = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
+    assert(ptr != NULL);
 
     mp_allocation_info_t info;
-    bool ok = mp_get_allocation_info(pool, p, &info);
+
+    bool                 ok = mp_get_allocation_info(pool, ptr, &info);
+
     assert(ok == true);
-    assert(info.ptr == p);
+    assert(info.ptr == ptr);
     assert(info.requested_size == 256);
     assert(info.usable_size >= 256);
     assert(info.alloc_type == ALLOC_TYPE_SLAB || info.alloc_type == ALLOC_TYPE_TLSF);
@@ -847,9 +852,9 @@ static void test_get_allocation_info()
     assert(info.alloc_line > 0);
     assert(info.alloc_func != NULL);
 
-    mp_free(pool, p);
+    mp_free(pool, ptr);
 
-    ok = mp_get_allocation_info(pool, p, &info);
+    ok = mp_get_allocation_info(pool, ptr, &info);
     assert(ok == false);
 
     mp_destroy(pool);
@@ -898,8 +903,8 @@ static void test_report_leaks_on_destroy()
     memory_pool_t *pool = mp_create(0, MP_FLAG_REPORT_LEAKS_ON_DESTROY);
     assert(pool != NULL);
 
-    void *p = mp_alloc(pool, 128);
-    assert(p != NULL);
+    void *ptr = mp_alloc(pool, 128);
+    assert(ptr != NULL);
 
     mp_destroy(pool);
     TEST_PASS("test_report_leaks_on_destroy");
@@ -979,6 +984,8 @@ static void test_reset_with_full_pages()
 /* ========================================================================== */
 /*  Entry Point                                                                */
 /* ========================================================================== */
+
+// NOLINTEND(readability-magic-numbers, clang-analyzer-optin.core.EnumCastOutOfRange)
 
 int main()
 {

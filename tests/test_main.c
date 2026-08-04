@@ -7,15 +7,19 @@
 #undef NDEBUG
 #endif
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "../include/cmem.h"
-#include "../include/cmem_override.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// Include AFTER system headers so the malloc/calloc/realloc/free override
+// macros do not expand standard library declarations.
+#include "../include/cmem_override.h"
+
+// Test vectors in this suite intentionally use literal values (sizes, counts,
+// byte patterns, thresholds) to pin exact expected behavior.
+// NOLINTBEGIN(readability-magic-numbers)
 
 #define TEST_PASS(name) printf("[PASS] %s\n", name)
 
@@ -67,10 +71,12 @@ test_event_cb(memory_pool_t *pool, mp_event_type_t event, void *ptr, size_t size
  * @param user_data Optional user data passed to the callback.
  */
 static void test_watermark_cb(memory_pool_t *pool,
-                              bool is_high_watermark,
-                              size_t current_bytes,
+
+                              bool           is_high_watermark,
+                              size_t current_bytes, // NOLINT(bugprone-easily-swappable-parameters)
                               size_t limit_bytes,
-                              void *user_data)
+                              void  *user_data)
+
 {
     (void)pool;
     (void)current_bytes;
@@ -510,8 +516,8 @@ void test_diff_snapshots()
 
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
-    remove("snap_a.cmem_dump");
-    remove("snap_b.cmem_dump");
+    (void)remove("snap_a.cmem_dump");
+    (void)remove("snap_b.cmem_dump");
     TEST_PASS("test_diff_snapshots");
 }
 
@@ -635,7 +641,9 @@ void test_typed_object_pool()
 void test_slab_small_allocs()
 {
     printf("\n--- Test 1: Slab Allocations (Small Objects <= 512B) ---\n");
+    // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
     memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC);
+    // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
     assert(pool != NULL);
 
     void *ptrs[100];
@@ -740,7 +748,7 @@ void test_binary_snapshot()
 
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
-    remove("test_snapshot.cmem_dump");
+    (void)remove("test_snapshot.cmem_dump");
     TEST_PASS("test_binary_snapshot");
 }
 
@@ -1037,8 +1045,10 @@ void test_batch_alloc_and_compact()
 void test_leak_analysis_and_heap_audit()
 {
     printf("\n--- Test 7: Leak Analysis Report & Heap Audit ---\n");
+    // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
     memory_pool_t *pool = mp_create(
         1024 * 1024, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS | MP_FLAG_POISON_ON_FREE);
+    // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
 
     void *leak_ptr = mp_alloc_loc(pool, 256, __FILE__, __LINE__, __func__);
     assert(leak_ptr != NULL);
@@ -1186,8 +1196,10 @@ void *thread_worker(void *arg)
 void test_multithread_safety()
 {
     printf("\n--- Test 4: Multithreaded Concurrent Safety & Thread-Local Cache ---\n");
+    // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
     memory_pool_t *pool =
         mp_create(2 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+    // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
     assert(pool != NULL);
 
     pthread_t threads[THREAD_COUNT];
@@ -1249,8 +1261,8 @@ void test_error_paths()
 
     mp_free(pool, NULL);
 
-    char *s = mp_strdup(pool, NULL);
-    assert(s == NULL);
+    char *str_result = mp_strdup(pool, NULL);
+    assert(str_result == NULL);
 
     char *as = mp_asprintf(pool, NULL);
     assert(as == NULL);
@@ -1258,9 +1270,9 @@ void test_error_paths()
     uint8_t tiny[65536];
     memory_pool_t *sp = mp_create_from_buffer(tiny, sizeof(tiny), MP_FLAG_DEFAULT);
     assert(sp != NULL);
-    void *p = mp_alloc(sp, 8);
-    assert(p != NULL);
-    mp_free(sp, p);
+    void *ptr = mp_alloc(sp, 8);
+    assert(ptr != NULL);
+    mp_free(sp, ptr);
     mp_destroy(sp);
 
     mp_destroy(pool);
@@ -1275,7 +1287,9 @@ void test_security_detection()
     printf("\n--- Test: Security Detection ---\n");
 
     {
+        // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
         memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+        // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
         assert(pool != NULL);
 
         void *p1 = mp_alloc(pool, 64);
@@ -1287,7 +1301,9 @@ void test_security_detection()
     }
 
     {
+        // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
         memory_pool_t *pool = mp_create(0, MP_FLAG_DEBUG_CANARY | MP_FLAG_TRACK_LOCATIONS);
+        // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
         assert(pool != NULL);
 
         void *p2 = mp_alloc(pool, 64);
@@ -1303,39 +1319,45 @@ void test_security_detection()
 }
 
 static void
-test_callback_event_cb(memory_pool_t *p, mp_event_type_t ev, void *ptr, size_t sz, void *ud)
+test_callback_event_cb(memory_pool_t *pool, mp_event_type_t ev, void *ptr, size_t sz, void *ud)
 {
-    (void)p;
+    (void)pool;
     (void)ud;
     printf("  Event: %d ptr=%p size=%zu\n", (int)ev, ptr, sz);
 }
 
 static void
-test_callback_watermark_cb(memory_pool_t *p, bool high, size_t used, size_t limit, void *ud)
+test_callback_watermark_cb(memory_pool_t *pool, bool high, size_t used, size_t limit, void *ud)
 {
-    (void)p;
+    (void)pool;
     (void)ud;
-    printf("  Watermark: high=%d used=%zu limit=%zu\n", high ? 1 : 0, used, limit);
+    printf("  Watermark: high=%d used=%zu limit=%zu\n", (int)high, used, limit);
 }
 
-static void
-test_callback_gc_cb(memory_pool_t *p, bool critical, size_t used, size_t limit, void *ud)
+static void test_callback_gc_cb(memory_pool_t *pool,
+                                bool           critical,
+                                size_t         used, // NOLINT(bugprone-easily-swappable-parameters)
+                                size_t         limit,
+                                void          *ud)
 {
-    (void)p;
+    (void)pool;
     (void)used;
     (void)limit;
     (void)ud;
-    printf("  GC callback: critical=%d\n", critical ? 1 : 0);
+    printf("  GC callback: critical=%d\n", (int)critical);
 }
 
-static void
-test_callback_eviction_cb(memory_pool_t *p, bool critical, size_t used, size_t limit, void *ud)
+static void test_callback_eviction_cb(memory_pool_t *pool,
+                                      bool           critical,
+                                      size_t used, // NOLINT(bugprone-easily-swappable-parameters)
+                                      size_t limit,
+                                      void  *ud)
 {
-    (void)p;
+    (void)pool;
     (void)used;
     (void)limit;
     (void)ud;
-    printf("  Eviction callback: critical=%d\n", critical ? 1 : 0);
+    printf("  Eviction callback: critical=%d\n", (int)critical);
 }
 
 void test_callback_interactions()
@@ -1349,9 +1371,9 @@ void test_callback_interactions()
     mp_set_gc_callback(pool, test_callback_gc_cb, NULL);
     mp_set_eviction_callback(pool, test_callback_eviction_cb, NULL);
 
-    void *p = mp_alloc(pool, 1024);
-    assert(p != NULL);
-    mp_free(pool, p);
+    void *ptr = mp_alloc(pool, 1024);
+    assert(ptr != NULL);
+    mp_free(pool, ptr);
 
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
@@ -1383,6 +1405,8 @@ void test_reset_and_resize()
     mp_destroy(pool);
     TEST_PASS("test_reset_and_resize");
 }
+
+// NOLINTEND(readability-magic-numbers)
 
 /**
  * @brief Entry point for all cmem C unit tests.

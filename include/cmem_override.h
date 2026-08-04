@@ -55,7 +55,9 @@ static inline memory_pool_t *cmem_get_global_pool(void)
 {
     static memory_pool_t *g_pool = NULL;
     if (!g_pool) {
+        // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
         g_pool = mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+        // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
     }
     return g_pool;
 }

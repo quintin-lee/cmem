@@ -18,8 +18,6 @@ static inline int cmem_rand_r(unsigned int *seed)
 #undef NDEBUG
 #endif
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "../include/cmem.h"
 #include <assert.h>
 #include <errno.h>
@@ -32,6 +30,9 @@ static inline int cmem_rand_r(unsigned int *seed)
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+// NOLINTBEGIN(readability-magic-numbers, clang-analyzer-optin.core.EnumCastOutOfRange)
+// Test vectors, sizes, and flag combinations in this suite intentionally use literal values.
 
 /* ========================================================================== */
 /*  Configuration                                                             */
@@ -63,24 +64,24 @@ static inline int cmem_rand_r(unsigned int *seed)
 
 static size_t get_rss_kb()
 {
-    FILE *f = fopen("/proc/self/status", "r");
-    if (!f) {
+    FILE *fp = fopen("/proc/self/status", "r");
+    if (!fp) {
         return 0;
     }
 
     char line[256];
     size_t rss = 0;
-    while (fgets(line, sizeof(line), f)) {
+    while (fgets(line, sizeof(line), fp)) {
         if (strncmp(line, "VmRSS:", 6) == 0) {
-            char *p = line + 6;
-            while (*p == ' ' || *p == '\t') {
-                p++;
+            char *pos = line + 6;
+            while (*pos == ' ' || *pos == '\t') {
+                pos++;
             }
-            rss = (size_t)strtoul(p, NULL, 10);
+            rss = (size_t)strtoul(pos, NULL, 10);
             break;
         }
     }
-    fclose(f);
+    (void)fclose(fp);
     return rss;
 }
 
@@ -112,21 +113,23 @@ static void *stress_worker(void *arg)
     unsigned int seed = (unsigned int)time(NULL) ^ (unsigned int)ctx->thread_id;
 
     while (!g_stop) {
-        size_t sz = 32 + (rand_r(&seed) % (STRESS_MAX_ALLOC_SIZE - 32));
-        void *p = mp_alloc(ctx->pool, sz);
 
-        if (!p) {
+        size_t sz  = 32 + (rand_r(&seed) % (STRESS_MAX_ALLOC_SIZE - 32));
+        void  *ptr = mp_alloc(ctx->pool, sz);
+
+
+        if (!ptr) {
             ctx->fail_count++;
             continue;
         }
 
         if (ctx->slot_count < ctx->slot_capacity) {
-            ctx->slots[ctx->slot_count++] = p;
+            ctx->slots[ctx->slot_count++] = ptr;
         } else {
             int idx = rand_r(&seed) % ctx->slot_capacity;
             void *old = ctx->slots[idx];
             mp_free(ctx->pool, old);
-            ctx->slots[idx] = p;
+            ctx->slots[idx] = ptr;
         }
 
         ctx->alloc_count++;
@@ -148,7 +151,7 @@ static void *stress_worker(void *arg)
 
 int main()
 {
-    setbuf(stdout, NULL);
+    (void)setvbuf(stdout, NULL, _IONBF, 0);
     printf("================ CMEM LONG-RUN STRESS TEST ================\n");
     printf("Threads            : %d\n", STRESS_THREADS);
     printf("Duration           : %d seconds\n", STRESS_DURATION_SEC);
@@ -231,7 +234,7 @@ int main()
 
     for (int i = 0; i < STRESS_THREADS; i++) {
         pthread_join(threads[i], NULL);
-        free(contexts[i].slots);
+        free((void *)contexts[i].slots);
     }
 
     // mp_check_leaks(pool); // Disabled for long-run stress; enable for leak debugging
@@ -240,3 +243,4 @@ int main()
     printf("\n[STRESS] Long-run stress test completed successfully.\n");
     return 0;
 }
+// NOLINTEND(readability-magic-numbers, clang-analyzer-optin.core.EnumCastOutOfRange)
