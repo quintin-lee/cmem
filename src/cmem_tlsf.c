@@ -126,7 +126,7 @@ void tlsf_mapping_search(size_t size, int *fl, int *sl)
 tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *custom_mem)
 {
 
-    size          = (size + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+    size = (size + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
 
     void *raw_mem = custom_mem;
     if (!raw_mem) {
@@ -277,7 +277,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
     size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + req_size +
                           ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
 
-    total_needed        = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+    total_needed = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
 
     if (total_needed < TLSF_MIN_BLOCK_SIZE) {
         total_needed = TLSF_MIN_BLOCK_SIZE;
@@ -462,9 +462,9 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
 
     size_t current_block_size = block->size_and_flags & BLOCK_SIZE_MASK;
 
-    size_t total_needed       = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + new_size +
-                                ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-    total_needed              = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+    size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + new_size +
+                          ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+    total_needed = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
 
     if (total_needed < TLSF_MIN_BLOCK_SIZE) {
         total_needed = TLSF_MIN_BLOCK_SIZE;

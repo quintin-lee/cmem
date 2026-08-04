@@ -46,8 +46,8 @@ int main()
     do_leaky_work(pool);
 
     printf("\n2. Running Heap Integrity Audit (mp_audit_heap):\n");
-    bool        healthy = mp_audit_heap(pool);
-    const char *health  = "CORRUPTED";
+    bool healthy = mp_audit_heap(pool);
+    const char *health = "CORRUPTED";
     if (healthy) {
         health = "HEALTHY";
     }

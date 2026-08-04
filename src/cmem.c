@@ -280,7 +280,7 @@ memory_pool_t *mp_create_child(memory_pool_t *parent,
  * @return Pointer to the new memory pool, or NULL on failure
  */
 memory_pool_t *
-mp_create_custom(size_t     initial_capacity, // NOLINT(bugprone-easily-swappable-parameters)
+mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-parameters)
                  mp_flags_t flags,
                  const mp_sys_allocator_t *sys_allocator)
 {
@@ -336,7 +336,7 @@ mp_create_custom(size_t     initial_capacity, // NOLINT(bugprone-easily-swappabl
  */
 void mp_set_auto_compact(memory_pool_t *pool,
 
-                         bool           enable,
+                         bool enable,
                          double pressure_threshold, // NOLINT(bugprone-easily-swappable-parameters)
 
                          double fragmentation_threshold)
@@ -502,10 +502,10 @@ void *mp_reallocarray_loc(memory_pool_t *pool,
  * @return Pointer to the duplicated string, or NULL on failure
  */
 char *mp_strdup_loc(memory_pool_t *pool,
-                    const char    *str, // NOLINT(bugprone-easily-swappable-parameters)
-                    const char    *file,
-                    int            line,
-                    const char    *func)
+                    const char *str, // NOLINT(bugprone-easily-swappable-parameters)
+                    const char *file,
+                    int line,
+                    const char *func)
 {
     if (!str) {
         return NULL;
@@ -551,10 +551,10 @@ void *mp_memdup_loc(
  * @return Pointer to the formatted string, or NULL on failure
  */
 char *mp_asprintf_loc(memory_pool_t *pool,
-                      const char    *file,
-                      int            line,
-                      const char    *func, // NOLINT(bugprone-easily-swappable-parameters)
-                      const char    *fmt,
+                      const char *file,
+                      int line,
+                      const char *func, // NOLINT(bugprone-easily-swappable-parameters)
+                      const char *fmt,
                       ...)
 {
     if (!fmt) {
@@ -619,9 +619,8 @@ bool mp_diff_snapshots(const char *snapshot_a_path,
         return false;
     }
 
-
-    size_t                  count_a = (size_t)hdra.active_allocations;
-    cmem_snapshot_record_t *recs_a  = NULL;
+    size_t count_a = (size_t)hdra.active_allocations;
+    cmem_snapshot_record_t *recs_a = NULL;
     if (count_a > CMEM_MAX_SNAPSHOT_RECORDS) {
         count_a = 0;
     }

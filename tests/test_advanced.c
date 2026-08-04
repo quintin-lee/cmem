@@ -148,10 +148,10 @@ static void test_asprintf_loc()
 static bool g_error_recovery_called = false;
 
 static void error_recovery_cb(memory_pool_t *pool,
-                              bool           is_high,
+                              bool is_high,
                               size_t current, // NOLINT(bugprone-easily-swappable-parameters)
                               size_t limit,
-                              void  *udata)
+                              void *udata)
 {
     (void)pool;
     (void)is_high;
@@ -841,7 +841,7 @@ static void test_get_allocation_info()
 
     mp_allocation_info_t info;
 
-    bool                 ok = mp_get_allocation_info(pool, ptr, &info);
+    bool ok = mp_get_allocation_info(pool, ptr, &info);
 
     assert(ok == true);
     assert(info.ptr == ptr);

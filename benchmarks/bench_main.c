@@ -44,8 +44,7 @@ void bench_small_allocs()
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
 
         size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
-        ptrs[i]   = malloc(sz);
-
+        ptrs[i] = malloc(sz);
     }
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         free(ptrs[i]);
@@ -58,8 +57,7 @@ void bench_small_allocs()
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
 
         size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
-        ptrs[i]   = mp_alloc(pool, sz);
-
+        ptrs[i] = mp_alloc(pool, sz);
     }
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         mp_free(pool, ptrs[i]);
@@ -92,8 +90,7 @@ void bench_medium_allocs()
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
 
         size_t sz = 1024 + (i % MEDIUM_ALLOC_SPREAD);
-        ptrs[i]   = malloc(sz);
-
+        ptrs[i] = malloc(sz);
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         free(ptrs[i]);
@@ -105,8 +102,7 @@ void bench_medium_allocs()
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
 
         size_t sz = 1024 + (i % MEDIUM_ALLOC_SPREAD);
-        ptrs[i]   = mp_alloc(pool, sz);
-
+        ptrs[i] = mp_alloc(pool, sz);
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         mp_free(pool, ptrs[i]);
@@ -132,8 +128,7 @@ void bench_arena_reset()
            ARENA_RESET_ALLOCS);
     memory_pool_t *pool = mp_create(8 * 1024 * 1024, MP_FLAG_DEFAULT);
 
-    void          *ptrs[ARENA_RESET_ALLOCS];
-
+    void *ptrs[ARENA_RESET_ALLOCS];
 
     // Standard Free loop
     double start_loop = get_time_sec();
@@ -187,8 +182,8 @@ int main()
     bench_small_allocs();
     bench_medium_allocs();
     bench_arena_reset();
-    bench_multithreaded(4, 100000);
-    bench_arena_workload(1000, 500);
+    bench_multithreaded(4, MEDIUM_ALLOC_COUNT);
+    bench_arena_workload(ARENA_RESET_ROUNDS, ARENA_RESET_ALLOCS);
     return 0;
 }
 
@@ -223,7 +218,7 @@ static void *bench_thread_func(void *arg)
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-    ta->elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    ta->elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / NSEC_PER_SEC;
 
     free(ptrs);
     return NULL;
@@ -264,10 +259,11 @@ void bench_multithreaded(int thread_count, int allocs_per_thread)
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double total_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    double total_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / NSEC_PER_SEC;
 
     printf("  Total Time: %.4f sec\n", total_time);
-    printf("  Throughput: %.2f Mops/sec\n", (thread_count * allocs_per_thread) / total_time / 1e6);
+    printf("  Throughput: %.2f Mops/sec\n",
+           (thread_count * allocs_per_thread) / total_time / MILLION_OPS);
 
     for (int i = 0; i < thread_count; i++) {
         printf("  Thread %d: %.4f sec\n", i, args[i].elapsed);
@@ -296,7 +292,7 @@ void bench_arena_workload(int rounds, int allocs_per_round)
     // Method 1: Individual free
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int r = 0; r < rounds; r++) {
+    for (int frame = 0; frame < rounds; frame++) {
         for (int i = 0; i < allocs_per_round; i++) {
             ptrs[i] = mp_alloc(pool, 64 + (i * 8));
         }
@@ -305,18 +301,19 @@ void bench_arena_workload(int rounds, int allocs_per_round)
         }
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double time_individual = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    double time_individual =
+        (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / NSEC_PER_SEC;
 
     // Method 2: Arena reset
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int r = 0; r < rounds; r++) {
+    for (int frame = 0; frame < rounds; frame++) {
         for (int i = 0; i < allocs_per_round; i++) {
             mp_alloc(pool, 64 + (i * 8));
         }
         mp_reset(pool);
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double time_reset = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    double time_reset = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / NSEC_PER_SEC;
 
     printf("  Individual Free:  %.4f sec\n", time_individual);
     printf("  Arena Reset:      %.4f sec\n", time_reset);

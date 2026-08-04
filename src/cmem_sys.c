@@ -478,11 +478,9 @@ size_t mp_compact(memory_pool_t *pool)
 
     size_t freed_bytes = 0;
 
-
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
-
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             mp_slab_page_t *next = curr->next;
@@ -544,10 +542,9 @@ size_t mp_purge_lazy(memory_pool_t *pool)
         page_sz = 4096;
     }
 
-
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             if (curr->free_count == curr->total_slots && curr->page_raw_mem) {
@@ -589,9 +586,9 @@ size_t mp_purge_lazy(memory_pool_t *pool)
  * @return 0 on success or when there is nothing to advise, -1 on failure.
  */
 int mp_madvise(memory_pool_t *pool,
-               void          *addr,
-               size_t         length, // NOLINT(bugprone-easily-swappable-parameters)
-               int            advice)
+               void *addr,
+               size_t length, // NOLINT(bugprone-easily-swappable-parameters)
+               int advice)
 {
     if (!addr || length == 0) {
         return -1;

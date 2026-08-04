@@ -72,10 +72,10 @@ test_event_cb(memory_pool_t *pool, mp_event_type_t event, void *ptr, size_t size
  */
 static void test_watermark_cb(memory_pool_t *pool,
 
-                              bool           is_high_watermark,
+                              bool is_high_watermark,
                               size_t current_bytes, // NOLINT(bugprone-easily-swappable-parameters)
                               size_t limit_bytes,
-                              void  *user_data)
+                              void *user_data)
 
 {
     (void)pool;
@@ -1335,10 +1335,10 @@ test_callback_watermark_cb(memory_pool_t *pool, bool high, size_t used, size_t l
 }
 
 static void test_callback_gc_cb(memory_pool_t *pool,
-                                bool           critical,
-                                size_t         used, // NOLINT(bugprone-easily-swappable-parameters)
-                                size_t         limit,
-                                void          *ud)
+                                bool critical,
+                                size_t used, // NOLINT(bugprone-easily-swappable-parameters)
+                                size_t limit,
+                                void *ud)
 {
     (void)pool;
     (void)used;
@@ -1348,10 +1348,10 @@ static void test_callback_gc_cb(memory_pool_t *pool,
 }
 
 static void test_callback_eviction_cb(memory_pool_t *pool,
-                                      bool           critical,
+                                      bool critical,
                                       size_t used, // NOLINT(bugprone-easily-swappable-parameters)
                                       size_t limit,
-                                      void  *ud)
+                                      void *ud)
 {
     (void)pool;
     (void)used;

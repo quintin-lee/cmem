@@ -145,8 +145,8 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
  * @return Pointer to the allocated payload, or NULL if no page can be made.
  */
 void *slab_alloc(memory_pool_t *pool,
-                 uint8_t        class_idx, // NOLINT(bugprone-easily-swappable-parameters)
-                 size_t         req_size)
+                 uint8_t class_idx, // NOLINT(bugprone-easily-swappable-parameters)
+                 size_t req_size)
 {
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
@@ -546,8 +546,8 @@ bool mp_mark_page_hot(memory_pool_t *pool, void *page_raw_mem)
     pool_lock(pool);
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             if (curr->page_raw_mem == page_raw_mem) {
@@ -596,8 +596,8 @@ bool mp_mark_page_cold(memory_pool_t *pool, void *page_raw_mem)
     pool_lock(pool);
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             if (curr->page_raw_mem == page_raw_mem) {
@@ -642,8 +642,8 @@ size_t mp_get_hot_page_count(memory_pool_t *pool)
     pool_rdlock(pool);
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             if (curr->is_hot) {
@@ -682,8 +682,8 @@ size_t mp_get_cold_page_count(memory_pool_t *pool)
     pool_rdlock(pool);
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             total++;
@@ -727,8 +727,8 @@ size_t mp_separate_hot_cold_pages(memory_pool_t *pool)
     pool_lock(pool);
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             if (!curr->is_hot) {

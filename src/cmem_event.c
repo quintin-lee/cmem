@@ -208,8 +208,8 @@ void mp_set_cgroup_aware(memory_pool_t *pool, bool enable)
             char buf[64] = {0};
 
             if (fgets(buf, sizeof(buf), fp) != NULL) {
-                char              *endptr = NULL;
-                unsigned long long limit  = strtoull(buf, &endptr, CMEM_DECIMAL_BASE);
+                char *endptr = NULL;
+                unsigned long long limit = strtoull(buf, &endptr, CMEM_DECIMAL_BASE);
 
                 if (endptr != buf && limit > 0) {
                     pool->cgroup_mem_limit = (size_t)limit;
@@ -498,10 +498,9 @@ bool mp_event_log_record(mp_event_log_t *log, mp_event_type_t event_type, void *
     clock_gettime(CLOCK_MONOTONIC, &ts);
 
     entry->timestamp_ns = (uint64_t)ts.tv_sec * CMEM_NSEC_PER_SEC_U64 + (uint64_t)ts.tv_nsec;
-    entry->event_type   = event_type;
-    entry->size         = size;
-    entry->ptr          = (uintptr_t)ptr;
-
+    entry->event_type = event_type;
+    entry->size = size;
+    entry->ptr = (uintptr_t)ptr;
 
     CMEM_ATOMIC_FETCH_ADD(&log->count, 1, CMEM_ORDER_RELAXED);
     return true;
@@ -612,8 +611,7 @@ mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity)
     }
     size_t real_elem_sz = (elem_size < sizeof(void *)) ? sizeof(void *) : elem_size;
 
-    real_elem_sz        = (real_elem_sz + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
-
+    real_elem_sz = (real_elem_sz + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
 
     mp_typed_pool_t *tpool = (mp_typed_pool_t *)calloc(1, sizeof(mp_typed_pool_t));
     if (!tpool) {
@@ -849,8 +847,8 @@ mp_flags_t mp_parse_env_flags(mp_flags_t default_flags)
  * @return A pool object laid out inside the buffer, or NULL if under-sized.
  */
 memory_pool_t *
-mp_create_from_buffer(void      *buffer,
-                      size_t     buffer_size, // NOLINT(bugprone-easily-swappable-parameters)
+mp_create_from_buffer(void *buffer,
+                      size_t buffer_size, // NOLINT(bugprone-easily-swappable-parameters)
                       mp_flags_t flags)
 {
     if (!buffer ||
@@ -858,11 +856,9 @@ mp_create_from_buffer(void      *buffer,
         return NULL;
     }
 
-
-    uintptr_t buf_addr     = (uintptr_t)buffer;
+    uintptr_t buf_addr = (uintptr_t)buffer;
     uintptr_t aligned_addr = (buf_addr + CMEM_ALIGN_MASK) & ~(uintptr_t)CMEM_ALIGN_MASK;
-    size_t    align_offset = aligned_addr - buf_addr;
-
+    size_t align_offset = aligned_addr - buf_addr;
 
     if (buffer_size <=
         align_offset + sizeof(memory_pool_t) + sizeof(tlsf_pool_t) + TLSF_MIN_BLOCK_SIZE) {
@@ -994,10 +990,9 @@ size_t mp_freeable(memory_pool_t *pool)
     pool_rdlock(pool);
     size_t freeable_bytes = 0;
 
-
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
             if (curr->free_count == curr->total_slots) {
@@ -1177,8 +1172,7 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
     pool->alloc_latency_sum_ns += latency_ns;
     pool->alloc_latency_count++;
 
-
-    size_t   idx = 0;
+    size_t idx = 0;
     uint64_t val = latency_ns;
     while (val >= 1024 && idx < CMEM_LATENCY_HISTOGRAM_MAX_INDEX) {
         val >>= 1;
@@ -1201,9 +1195,9 @@ uint64_t mp_get_latency_p99(memory_pool_t *pool)
     }
     pool_rdlock(pool);
 
-    size_t   total  = pool->alloc_latency_count;
-    size_t   target = (total * CMEM_LATENCY_P99_NUMERATOR) / CMEM_LATENCY_P99_DENOMINATOR;
-    size_t   cum    = 0;
+    size_t total = pool->alloc_latency_count;
+    size_t target = (total * CMEM_LATENCY_P99_NUMERATOR) / CMEM_LATENCY_P99_DENOMINATOR;
+    size_t cum = 0;
 
     uint64_t p99_ns = 0;
     for (int i = 0; i < 32; i++) {
@@ -1494,27 +1488,26 @@ void mp_reset(memory_pool_t *pool)
     pool->stats.os_allocated_bytes = 0;
     pool->active_head = NULL;
 
-
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
         mp_slab_class_t *sc = &pool->slab_classes[cls];
 
         while (sc->full_pages) {
             mp_slab_page_t *node = sc->full_pages;
-            sc->full_pages       = node->next;
-            node->next           = sc->partial_pages;
+            sc->full_pages = node->next;
+            node->next = sc->partial_pages;
 
             if (sc->partial_pages) {
                 sc->partial_pages->prev = node;
             }
 
-            node->prev        = NULL;
+            node->prev = NULL;
             sc->partial_pages = node;
         }
 
-        mp_slab_page_t *page              = sc->partial_pages;
-        size_t          slot_payload_size = pool->slab_classes[cls].slot_size;
-        size_t          header_overhead   = sizeof(mp_block_header_t);
-        size_t          total_slot_size =
+        mp_slab_page_t *page = sc->partial_pages;
+        size_t slot_payload_size = pool->slab_classes[cls].slot_size;
+        size_t header_overhead = sizeof(mp_block_header_t);
+        size_t total_slot_size =
 
             header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
         total_slot_size = (total_slot_size + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
@@ -2545,16 +2538,15 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
     pool_rdlock(pool);
     size_t count = 0;
 
-
     for (int cls = 0; cls < SLAB_CLASS_COUNT && count < max_regions; cls++) {
-        mp_slab_class_t *sc   = &pool->slab_classes[cls];
-        mp_slab_page_t  *curr = sc->partial_pages;
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
         while (curr && count < max_regions) {
-            regions[count].base       = curr->page_raw_mem;
-            regions[count].size       = SLAB_PAGE_SIZE;
-            regions[count].type       = ALLOC_TYPE_SLAB;
+            regions[count].base = curr->page_raw_mem;
+            regions[count].size = SLAB_PAGE_SIZE;
+            regions[count].type = ALLOC_TYPE_SLAB;
             regions[count].slab_class = cls;
-            regions[count].is_hot     = curr->is_hot;
+            regions[count].is_hot = curr->is_hot;
 
             count++;
             curr = curr->next;
@@ -2562,11 +2554,11 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
         curr = sc->full_pages;
         while (curr && count < max_regions) {
 
-            regions[count].base       = curr->page_raw_mem;
-            regions[count].size       = SLAB_PAGE_SIZE;
-            regions[count].type       = ALLOC_TYPE_SLAB;
+            regions[count].base = curr->page_raw_mem;
+            regions[count].size = SLAB_PAGE_SIZE;
+            regions[count].type = ALLOC_TYPE_SLAB;
             regions[count].slab_class = cls;
-            regions[count].is_hot     = curr->is_hot;
+            regions[count].is_hot = curr->is_hot;
 
             count++;
             curr = curr->next;

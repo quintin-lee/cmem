@@ -298,11 +298,10 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
     size_t total_alloc =
         stats.slab_allocated_bytes + stats.tlsf_allocated_bytes + stats.os_allocated_bytes;
 
-    size_t tot    = (total_alloc > 0) ? total_alloc : 1;
+    size_t tot = (total_alloc > 0) ? total_alloc : 1;
     double p_slab = ((double)stats.slab_allocated_bytes * 100.0) / (double)tot;
     double p_tlsf = ((double)stats.tlsf_allocated_bytes * 100.0) / (double)tot;
-    double p_os   = ((double)stats.os_allocated_bytes * 100.0) / (double)tot;
-
+    double p_os = ((double)stats.os_allocated_bytes * 100.0) / (double)tot;
 
     (void)fprintf(fp,
                   "  <h2>Allocation Tier Distribution</h2>\n"
@@ -389,10 +388,10 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
 
     cmem_snapshot_header_t hdr;
 
-    hdr.magic              = CMEM_SNAPSHOT_MAGIC;
-    hdr.version            = 1;
-    hdr.total_pool_size    = (uint64_t)pool->stats.total_pool_size;
-    hdr.active_bytes       = (uint64_t)pool->stats.active_bytes;
+    hdr.magic = CMEM_SNAPSHOT_MAGIC;
+    hdr.version = 1;
+    hdr.total_pool_size = (uint64_t)pool->stats.total_pool_size;
+    hdr.active_bytes = (uint64_t)pool->stats.active_bytes;
 
     hdr.active_allocations = (uint64_t)pool->stats.active_allocations;
 
@@ -521,16 +520,15 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
 
     double elapsed = (double)(now.tv_sec - pool->window_start_time.tv_sec) +
                      (double)(now.tv_nsec - pool->window_start_time.tv_nsec) / CMEM_NSEC_PER_SEC;
-    size_t ops     = pool->stats.total_alloc_ops;
-    size_t active  = pool->stats.active_bytes;
+    size_t ops = pool->stats.total_alloc_ops;
+    size_t active = pool->stats.active_bytes;
     if (elapsed > CMEM_MIN_ELAPSED_SEC && ops > 0) {
         stats->alloc_qps = (double)ops / elapsed;
         stats->bandwidth_mbps =
             ((double)active / (CMEM_BYTES_PER_KIB * CMEM_BYTES_PER_KIB)) / elapsed;
     } else {
-        stats->alloc_qps      = (double)ops;
+        stats->alloc_qps = (double)ops;
         stats->bandwidth_mbps = (double)active / (CMEM_BYTES_PER_KIB * CMEM_BYTES_PER_KIB);
-
     }
     pool_rdunlock(pool);
 }
@@ -627,9 +625,9 @@ void mp_dump_histogram(memory_pool_t *pool)
             continue;
         }
 
-        int  bar_len = (max_count > 0)
-                           ? (int)((stats.size_histogram[i] * CMEM_HISTOGRAM_BAR_WIDTH) / max_count)
-                           : 0;
+        int bar_len = (max_count > 0)
+                          ? (int)((stats.size_histogram[i] * CMEM_HISTOGRAM_BAR_WIDTH) / max_count)
+                          : 0;
         char bar_str[CMEM_HISTOGRAM_BAR_WIDTH + 1];
         memset(bar_str, '*', (size_t)bar_len);
 
@@ -892,8 +890,8 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
     if (info->requested_size > 64 * 1024) {
         result.pattern_name = "large_buffer_leak";
 
-        result.confidence   = CMEM_CONFIDENCE_STRONG;
-        result.suggestion   = "Check for missing free() on large allocations";
+        result.confidence = CMEM_CONFIDENCE_STRONG;
+        result.suggestion = "Check for missing free() on large allocations";
 
         return result;
     }
@@ -902,8 +900,8 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
     if (info->requested_size < 256 && info->slab_class > 0) {
         result.pattern_name = "repeated_small_leak";
 
-        result.confidence   = CMEM_CONFIDENCE_MEDIUM;
-        result.suggestion   = "Check for allocations in loops without corresponding free()";
+        result.confidence = CMEM_CONFIDENCE_MEDIUM;
+        result.suggestion = "Check for allocations in loops without corresponding free()";
 
         return result;
     }
@@ -912,8 +910,8 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
     if (info->alloc_file && info->alloc_func) {
         result.pattern_name = "string_allocation_leak";
 
-        result.confidence   = CMEM_CONFIDENCE_WEAK;
-        result.suggestion   = "Check mp_strdup/mp_memdup calls for missing free()";
+        result.confidence = CMEM_CONFIDENCE_WEAK;
+        result.suggestion = "Check mp_strdup/mp_memdup calls for missing free()";
 
         return result;
     }
@@ -921,8 +919,8 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
     // Default: generic leak
     result.pattern_name = "generic_leak";
 
-    result.confidence   = CMEM_CONFIDENCE_FALLBACK;
-    result.suggestion   = "Review allocation";
+    result.confidence = CMEM_CONFIDENCE_FALLBACK;
+    result.suggestion = "Review allocation";
 
     return result;
 }

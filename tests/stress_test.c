@@ -114,9 +114,8 @@ static void *stress_worker(void *arg)
 
     while (!g_stop) {
 
-        size_t sz  = 32 + (rand_r(&seed) % (STRESS_MAX_ALLOC_SIZE - 32));
-        void  *ptr = mp_alloc(ctx->pool, sz);
-
+        size_t sz = 32 + (rand_r(&seed) % (STRESS_MAX_ALLOC_SIZE - 32));
+        void *ptr = mp_alloc(ctx->pool, sz);
 
         if (!ptr) {
             ctx->fail_count++;
