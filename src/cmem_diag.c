@@ -145,41 +145,67 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
                                    ? "SLAB"
                                    : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
 
-        offset += snprintf(report_buf + offset,
-                           max_len - offset,
-                           "\n[Leak #%zu] Address: %p | Payload Size: %zu bytes | Tier: %s\n",
-                           idx++,
-                           payload,
-                           curr->requested_size,
-                           tier_str);
-
-        if (curr->alloc_file) {
-            offset += snprintf(report_buf + offset,
-                               max_len - offset,
-                               "  Source Location : %s:%d (function '%s')\n",
-                               curr->alloc_file,
-                               curr->alloc_line,
-                               curr->alloc_func ? curr->alloc_func : "unknown");
-        } else {
-            offset += snprintf(report_buf + offset,
-                               max_len - offset,
-                               "  Source Location : (Location tracking disabled, enable "
-                               "MP_FLAG_TRACK_LOCATIONS)\n");
+        size_t avail = (offset < max_len) ? (max_len - offset) : 0;
+        if (avail == 0) {
+            break;
         }
 
-        if (curr->backtrace_depth > 0) {
+        int written = snprintf(report_buf + offset,
+                               avail,
+                               "\n[Leak #%zu] Address: %p | Payload Size: %zu bytes | Tier: %s\n",
+                               idx++,
+                               payload,
+                               curr->requested_size,
+                               tier_str);
+        if (written > 0) {
+            offset += (size_t)written;
+        }
+
+        avail = (offset < max_len) ? (max_len - offset) : 0;
+        if (avail > 0) {
+            if (curr->alloc_file) {
+                written = snprintf(report_buf + offset,
+                                   avail,
+                                   "  Source Location : %s:%d (function '%s')\n",
+                                   curr->alloc_file,
+                                   curr->alloc_line,
+                                   curr->alloc_func ? curr->alloc_func : "unknown");
+            } else {
+                written = snprintf(report_buf + offset,
+                                   avail,
+                                   "  Source Location : (Location tracking disabled, enable "
+                                   "MP_FLAG_TRACK_LOCATIONS)\n");
+            }
+            if (written > 0) {
+                offset += (size_t)written;
+            }
+        }
+
+        if (curr->backtrace_depth > 0 && offset < max_len) {
 #ifdef CMEM_HAS_EXECINFO
             char **symbols = backtrace_symbols(curr->backtrace_addrs, curr->backtrace_depth);
 #else
             char **symbols = NULL;
 #endif
-            offset += snprintf(report_buf + offset, max_len - offset, "  Callstack Frames:\n");
+            avail = (offset < max_len) ? (max_len - offset) : 0;
+            if (avail > 0) {
+                written = snprintf(report_buf + offset, avail, "  Callstack Frames:\n");
+                if (written > 0) {
+                    offset += (size_t)written;
+                }
+            }
             for (int frame = 0; frame < curr->backtrace_depth && offset < max_len; frame++) {
-                offset += snprintf(report_buf + offset,
-                                   max_len - offset,
-                                   "    #%d %s\n",
-                                   frame,
-                                   symbols ? symbols[frame] : "unknown");
+                avail = (offset < max_len) ? (max_len - offset) : 0;
+                if (avail > 0) {
+                    written = snprintf(report_buf + offset,
+                                       avail,
+                                       "    #%d %s\n",
+                                       frame,
+                                       symbols ? symbols[frame] : "unknown");
+                    if (written > 0) {
+                        offset += (size_t)written;
+                    }
+                }
             }
             if (symbols) {
                 free((void *)symbols);

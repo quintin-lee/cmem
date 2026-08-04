@@ -30,6 +30,7 @@ typedef std::atomic<size_t> cmem_atomic_size_t; /* Atomic size counter (C++ std:
 #define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) std::atomic_fetch_sub_explicit(obj, arg, order)
 #define CMEM_ATOMIC_LOAD(obj, order) std::atomic_load_explicit(obj, order)
 #define CMEM_ATOMIC_STORE(obj, val, order) std::atomic_store_explicit(obj, val, order)
+#define CMEM_ATOMIC_EXCHANGE(obj, val, order) std::atomic_exchange_explicit(obj, val, order)
 #define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
     std::atomic_compare_exchange_weak_explicit(obj, expected, desired, succ, fail)
 #define CMEM_ATOMIC_INIT(obj, val) std::atomic_init(obj, val)
@@ -47,6 +48,8 @@ typedef volatile LONG_PTR cmem_atomic_size_t;
 #define CMEM_ATOMIC_LOAD(obj, order) InterlockedCompareExchange64((LONG64 volatile *)(obj), 0, 0)
 #define CMEM_ATOMIC_STORE(obj, val, order)                                                         \
     InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
+#define CMEM_ATOMIC_EXCHANGE(obj, val, order)                                                         \
+    InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
 #define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
     (InterlockedCompareExchange64(                                                                 \
          (LONG64 volatile *)(obj), (LONG64)(desired), (LONG64)(*expected)) == (LONG64)(*expected))
@@ -63,6 +66,7 @@ typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ATOMIC_FETCH_SUB(obj, arg, order) atomic_fetch_sub_explicit(obj, arg, order)
 #define CMEM_ATOMIC_LOAD(obj, order) atomic_load_explicit(obj, order)
 #define CMEM_ATOMIC_STORE(obj, val, order) atomic_store_explicit(obj, val, order)
+#define CMEM_ATOMIC_EXCHANGE(obj, val, order) atomic_exchange_explicit(obj, val, order)
 #define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
     atomic_compare_exchange_weak_explicit(obj, expected, desired, succ, fail)
 #define CMEM_ATOMIC_INIT(obj, val) atomic_init(obj, val)
@@ -262,6 +266,7 @@ typedef struct {
  * slab class here to avoid taking the class lock for every allocation/free.
  */
 typedef struct {
+    struct memory_pool *owner_pool;          /**< Pool owning the cached slots            */
     mp_slab_slot_t *slots[SLAB_CLASS_COUNT]; /**< Per-class cache of free slots        */
     uint16_t counts[SLAB_CLASS_COUNT];       /**< Number of cached slots per class      */
 } thread_cache_t;
@@ -573,10 +578,14 @@ extern void *mp_alloc_internal(memory_pool_t *pool, size_t size);
 extern bool slab_init(memory_pool_t *pool);
 extern mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx);
 extern void *slab_alloc(memory_pool_t *pool, uint8_t class_idx, size_t req_size);
+extern mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx);
 extern void slab_free(memory_pool_t *pool, mp_block_header_t *header);
 extern void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx);
+extern void tls_cache_flush_pool(memory_pool_t *pool);
+extern void tls_cache_validate_owner(memory_pool_t *pool);
 extern void percpu_init(memory_pool_t *pool);
 extern void percpu_destroy(memory_pool_t *pool);
+extern void percpu_flush(memory_pool_t *pool);
 extern int percpu_cpu_index(void);
 extern mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_idx);
 extern bool percpu_push(memory_pool_t *pool, int cpu, uint8_t class_idx, mp_slab_slot_t *slot);

@@ -299,9 +299,7 @@ mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-pa
 
     slab_init(pool);
 
-    if (flags & MP_FLAG_PERCPU_FREELIST) {
-        percpu_init(pool);
-    }
+    percpu_init(pool);
 
     if (initial_capacity > 0) {
         pool->tlsf_root = tlsf_create_pool_custom(pool, initial_capacity, NULL);
@@ -707,8 +705,7 @@ static memory_pool_t *g_global_pool = NULL;
 memory_pool_t *mp_get_global_pool(void)
 {
     if (!g_global_pool) {
-        g_global_pool =
-            mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE);
+        g_global_pool = mp_create(4 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
     }
     return g_global_pool;
 }

@@ -20,8 +20,43 @@
 
 /** Fixed slot sizes served by the slab tier, one class per entry. */
 const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
-MP_THREAD_LOCAL thread_cache_t tls_cache = {{0}, {0}};
+MP_THREAD_LOCAL thread_cache_t tls_cache = {NULL, {0}, {0}};
 MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
+
+void tls_cache_flush_pool(memory_pool_t *pool)
+{
+    if (tls_cache.owner_pool == pool) {
+        tls_cache.owner_pool = NULL;
+        for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+            while (tls_cache.slots[i]) {
+                mp_slab_slot_t *slot = tls_cache.slots[i];
+                if (((uintptr_t)slot & 7) != 0 || (uintptr_t)slot < 0x10000) {
+                    tls_cache.slots[i] = NULL;
+                    break;
+                }
+                tls_cache.slots[i] = slot->next;
+                mp_block_header_t *header = (mp_block_header_t *)slot;
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_type = ALLOC_TYPE_SLAB;
+                header->slab_class = (uint8_t)i;
+                header->raw_base = (void *)slot;
+                slab_free(pool, header);
+            }
+            tls_cache.counts[i] = 0;
+        }
+    }
+}
+
+void tls_cache_validate_owner(memory_pool_t *pool)
+{
+    if (tls_cache.owner_pool != pool) {
+        tls_cache.owner_pool = pool;
+        for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
+            tls_cache.slots[i] = NULL;
+            tls_cache.counts[i] = 0;
+        }
+    }
+}
 
 /**
  * @brief Initialise every slab size class for a pool.
@@ -133,21 +168,17 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
 }
 
 /**
- * @brief Allocate `req_size` bytes from the slab tier.
+ * @brief Low-level replenishment function to allocate a single raw slot from slab pages.
  *
- * Pops the first free slot off the class' partial page, creating a fresh
- * page if none has free slots. When a page runs out of slots it is moved
- * from the partial to the full list. The slot is reinterpreted as an
- * mp_block_header_t and the caller-facing payload returned just past it.
+ * Serves as the bottom-tier supplier for Thread Cache and Per-CPU Cache refills.
+ * Pops a slot from the partial page list under the class mutex, creating a new page
+ * if partial pages are exhausted.
  *
- * @param pool      Pool serving the allocation.
+ * @param pool      Pool serving the request.
  * @param class_idx Size class index for the request.
- * @param req_size  User-requested size (must fit the class slot size).
- * @return Pointer to the allocated payload, or NULL if no page can be made.
+ * @return Pointer to raw slot, or NULL on allocation failure.
  */
-void *slab_alloc(memory_pool_t *pool,
-                 uint8_t class_idx, // NOLINT(bugprone-easily-swappable-parameters)
-                 size_t req_size)
+mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx)
 {
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
@@ -196,6 +227,30 @@ void *slab_alloc(memory_pool_t *pool,
         pthread_mutex_unlock(&sc->lock);
     }
 
+    return slot;
+}
+
+/**
+ * @brief Allocate `req_size` bytes from the slab tier.
+ *
+ * Pops a slot off the class' partial page via slab_alloc_slot() and formats
+ * it as an mp_block_header_t for direct/fallback allocations.
+ *
+ * @param pool      Pool serving the allocation.
+ * @param class_idx Size class index for the request.
+ * @param req_size  User-requested size (must fit the class slot size).
+ * @return Pointer to the allocated payload, or NULL if no page can be made.
+ */
+void *slab_alloc(memory_pool_t *pool,
+                 uint8_t class_idx, // NOLINT(bugprone-easily-swappable-parameters)
+                 size_t req_size)
+{
+    mp_slab_slot_t *slot = slab_alloc_slot(pool, class_idx);
+    if (!slot) {
+        return NULL;
+    }
+
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
     mp_block_header_t *header = (mp_block_header_t *)slot;
     header->magic = MP_MAGIC_HEAD;
     header->alloc_type = ALLOC_TYPE_SLAB;
@@ -288,25 +343,62 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
  * @brief Refill the calling thread's cache for a size class.
  *
  * Bulk-allocates up to 32 slots for the class directly from the slab tier
- * and threads them onto the thread-local cache's free list, so subsequent
- * allocations are served lock-free from tls_cache until it drains again.
+ * under a single class mutex lock acquisition and threads them onto the
+ * thread-local cache's free list.
  *
  * @param pool      Pool to draw slots from.
  * @param class_idx Size class whose thread cache needs topping up.
  */
 void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
 {
-    for (int i = 0; i < 32; i++) {
-        void *ptr = slab_alloc(pool, class_idx, pool->slab_classes[class_idx].slot_size);
-        if (!ptr) {
-            break;
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+
+    int got = 0;
+    while (got < 32) {
+        mp_slab_page_t *page = sc->partial_pages;
+        if (!page) {
+            page = slab_create_page(pool, class_idx);
+            if (!page) {
+                break;
+            }
+            page->next = sc->partial_pages;
+            if (sc->partial_pages) {
+                sc->partial_pages->prev = page;
+            }
+            sc->partial_pages = page;
         }
-        mp_block_header_t *header =
-            (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
-        mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
+
+        mp_slab_slot_t *slot = page->free_list;
+        page->free_list = slot->next;
+        page->free_count--;
+
+        if (page->free_count == 0) {
+            sc->partial_pages = page->next;
+            if (page->next) {
+                page->next->prev = NULL;
+            }
+
+            page->next = sc->full_pages;
+            page->prev = NULL;
+            if (sc->full_pages) {
+                sc->full_pages->prev = page;
+            }
+            sc->full_pages = page;
+        }
+
         slot->next = tls_cache.slots[class_idx];
         tls_cache.slots[class_idx] = slot;
         tls_cache.counts[class_idx]++;
+        got++;
+    }
+
+    pool->stats.slab_allocated_bytes += (size_t)got * sc->slot_size;
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_unlock(&sc->lock);
     }
 }
 
@@ -350,11 +442,44 @@ void percpu_init(memory_pool_t *pool)
  *
  * @param pool Pool whose freelist table is released.
  */
+void percpu_flush(memory_pool_t *pool)
+{
+    if (!pool || !pool->percpu_freelists) {
+        return;
+    }
+    for (int cpu = 0; cpu < pool->num_cpus; cpu++) {
+        for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+            size_t idx = (size_t)cpu * SLAB_CLASS_COUNT + cls;
+            mp_percpu_freelist_entry_t *entry =
+                &((mp_percpu_freelist_entry_t *)pool->percpu_freelists)[idx];
+            cmem_atomic_size_t *headp = &entry->head;
+            size_t head = (size_t)CMEM_ATOMIC_EXCHANGE(headp, 0, CMEM_ORDER_RELAXED);
+            CMEM_ATOMIC_STORE(&entry->count, 0, CMEM_ORDER_RELAXED);
+
+            mp_slab_slot_t *slot = (mp_slab_slot_t *)(uintptr_t)head;
+            while (slot) {
+                if (((uintptr_t)slot & 7) != 0 || (uintptr_t)slot < 0x10000) {
+                    break;
+                }
+                mp_slab_slot_t *next = slot->next;
+                mp_block_header_t *header = (mp_block_header_t *)slot;
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_type = ALLOC_TYPE_SLAB;
+                header->slab_class = (uint8_t)cls;
+                header->raw_base = (void *)slot;
+                slab_free(pool, header);
+                slot = next;
+            }
+        }
+    }
+}
+
 void percpu_destroy(memory_pool_t *pool)
 {
     if (!pool || !pool->percpu_freelists) {
         return;
     }
+    percpu_flush(pool);
     free(pool->percpu_freelists);
     pool->percpu_freelists = NULL;
     pool->num_cpus = 0;
@@ -441,17 +566,54 @@ void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
         return;
     }
 
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+
     mp_slab_slot_t *slots[MP_PERCPU_MAX_BATCH];
     int got = 0;
-    for (int i = 0; i < MP_PERCPU_MAX_BATCH; i++) {
-        void *ptr = slab_alloc(pool, class_idx, pool->slab_classes[class_idx].slot_size);
-        if (!ptr) {
-            break;
+    while (got < MP_PERCPU_MAX_BATCH) {
+        mp_slab_page_t *page = sc->partial_pages;
+        if (!page) {
+            page = slab_create_page(pool, class_idx);
+            if (!page) {
+                break;
+            }
+            page->next = sc->partial_pages;
+            if (sc->partial_pages) {
+                sc->partial_pages->prev = page;
+            }
+            sc->partial_pages = page;
         }
-        mp_block_header_t *header =
-            (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
-        slots[got++] = (mp_slab_slot_t *)header->raw_base;
+
+        mp_slab_slot_t *slot = page->free_list;
+        page->free_list = slot->next;
+        page->free_count--;
+
+        if (page->free_count == 0) {
+            sc->partial_pages = page->next;
+            if (page->next) {
+                page->next->prev = NULL;
+            }
+
+            page->next = sc->full_pages;
+            page->prev = NULL;
+            if (sc->full_pages) {
+                sc->full_pages->prev = page;
+            }
+            sc->full_pages = page;
+        }
+
+        slots[got++] = slot;
     }
+
+    pool->stats.slab_allocated_bytes += (size_t)got * sc->slot_size;
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_unlock(&sc->lock);
+    }
+
     if (got == 0) {
         return;
     }
