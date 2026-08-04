@@ -1514,6 +1514,7 @@ void mp_reset(memory_pool_t *pool)
 
         while (page) {
             page->free_count = page->total_slots;
+            page->idle_since_ts = 0;
             uint8_t *ptr = (uint8_t *)page->page_raw_mem + sizeof(mp_slab_page_t);
             page->free_list = (mp_slab_slot_t *)ptr;
 
@@ -1550,6 +1551,140 @@ void mp_reset(memory_pool_t *pool)
 
     trigger_event(pool, MP_EVENT_RESET, NULL, 0);
     pool_unlock(pool);
+}
+
+/**
+ * @brief Configure idle page reclamation for the pool.
+ *
+ * When enabled, completely-free or long-idle slab pages are eligible for
+ * reclamation on mp_compact or mp_reclaim_idle_pages.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable, false to disable
+ * @param timeout_ms Idle timeout in milliseconds (0 = reclaim immediately when idle)
+ * @param min_pages Minimum idle pages before reclamation is allowed
+ */
+void mp_set_idle_page_reclaim(memory_pool_t *pool,
+                              bool enable,
+                              uint64_t timeout_ms,
+                              size_t min_pages)
+{
+    if (!pool) {
+        return;
+    }
+    pool_lock(pool);
+    pool->idle_reclaim_enabled = enable;
+    pool->idle_reclaim_timeout_ms = timeout_ms;
+    pool->idle_reclaim_min_pages = min_pages;
+    pool_unlock(pool);
+}
+
+/**
+ * @brief Reclaim idle slab pages that have exceeded the configured timeout.
+ *
+ * Scans partial page lists for pages that are either completely free or
+ * have been idle longer than the pool's idle_reclaim_timeout_ms.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of bytes reclaimed
+ */
+size_t mp_reclaim_idle_pages(memory_pool_t *pool)
+{
+    if (!pool || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
+        return 0;
+    }
+    pool_lock(pool);
+
+    size_t freed_bytes = 0;
+    int64_t now = cmem_now_ms();
+    size_t idle_count = 0;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
+
+        while (curr) {
+            mp_slab_page_t *next = curr->next;
+            bool should_free = false;
+
+            if (curr->free_count == curr->total_slots) {
+                should_free = true;
+            } else if (pool->idle_reclaim_enabled && curr->idle_since_ts > 0) {
+                uint64_t idle_ms = (uint64_t)(now - curr->idle_since_ts);
+                if (idle_ms >= pool->idle_reclaim_timeout_ms) {
+                    should_free = true;
+                }
+            }
+
+            if (should_free) {
+                idle_count++;
+                if (idle_count < pool->idle_reclaim_min_pages) {
+                    curr = next;
+                    continue;
+                }
+
+                if (curr->prev) {
+                    curr->prev->next = curr->next;
+                } else {
+                    sc->partial_pages = curr->next;
+                }
+                if (curr->next) {
+                    curr->next->prev = curr->prev;
+                }
+
+#ifdef _WIN32
+                cmem_aligned_free(curr->page_raw_mem);
+#else
+                cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
+                freed_bytes += SLAB_PAGE_SIZE;
+                if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
+                    pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
+                }
+            }
+            curr = next;
+        }
+    }
+
+    trigger_event(pool, MP_EVENT_COMPACT, NULL, freed_bytes);
+    pool_unlock(pool);
+    return freed_bytes;
+}
+
+/**
+ * @brief Return the number of idle (fully free or long-idle) slab pages.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of idle pages
+ */
+size_t mp_get_idle_page_count(memory_pool_t *pool)
+{
+    if (!pool) {
+        return 0;
+    }
+    pool_rdlock(pool);
+    size_t count = 0;
+    int64_t now = cmem_now_ms();
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
+        mp_slab_page_t *curr = sc->partial_pages;
+
+        while (curr) {
+            if (curr->free_count == curr->total_slots) {
+                count++;
+            } else if (pool->idle_reclaim_enabled && curr->idle_since_ts > 0) {
+                uint64_t idle_ms = (uint64_t)(now - curr->idle_since_ts);
+                if (idle_ms >= pool->idle_reclaim_timeout_ms) {
+                    count++;
+                }
+            }
+            curr = curr->next;
+        }
+    }
+
+    pool_rdunlock(pool);
+    return count;
 }
 
 /**

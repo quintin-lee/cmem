@@ -682,6 +682,9 @@ void mp_set_memory_limit(memory_pool_t *pool, size_t max_bytes)
  * free is unlinked and unmapped, shrinking the pool's committed size.
  * Static-buffer pools are skipped (their backing is not owned by cmem).
  *
+ * When idle reclamation is enabled, pages that have been fully idle longer
+ * than the configured timeout are also returned to the OS.
+ *
  * @param pool Pool to compact.
  * @return Number of bytes returned to the OS.
  */
@@ -693,6 +696,7 @@ size_t mp_compact(memory_pool_t *pool)
     pool_lock(pool);
 
     size_t freed_bytes = 0;
+    int64_t now = cmem_now_ms();
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
         mp_slab_class_t *sc = &pool->slab_classes[cls];
@@ -700,7 +704,18 @@ size_t mp_compact(memory_pool_t *pool)
 
         while (curr) {
             mp_slab_page_t *next = curr->next;
+            bool should_free = false;
+
             if (curr->free_count == curr->total_slots) {
+                should_free = true;
+            } else if (pool->idle_reclaim_enabled && curr->idle_since_ts > 0) {
+                uint64_t idle_ms = (uint64_t)(now - curr->idle_since_ts);
+                if (idle_ms >= pool->idle_reclaim_timeout_ms) {
+                    should_free = true;
+                }
+            }
+
+            if (should_free) {
                 if (curr->prev) {
                     curr->prev->next = curr->next;
                 } else {

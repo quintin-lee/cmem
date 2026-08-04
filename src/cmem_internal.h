@@ -237,6 +237,7 @@ typedef struct mp_slab_page {
     struct mp_slab_page *prev; /**< Previous sibling in the page list         */
     void *page_raw_mem;        /**< Raw page base (for munmap and hot/cold)   */
     bool is_hot;               /**< True when marked hot for TLB optimization */
+    int64_t idle_since_ts;     /**< Monotonic timestamp when page became fully idle (0 = not idle) */
 } mp_slab_page_t;
 
 /**
@@ -405,7 +406,11 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     uint32_t abi_version; /**< Pool's ABI version for version-gated behavior */
 
     bool cgroup_aware;       /**< Tracked against a cgroup memory limit      */
-    size_t cgroup_mem_limit; /**< cgroup capped memory limit (if aware)      */
+    size_t cgroup_mem_limit; /**< Cgroup capped memory limit (if aware)      */
+
+    bool idle_reclaim_enabled;         /**< Enable idle page reclamation               */
+    uint64_t idle_reclaim_timeout_ms;  /**< Idle timeout before reclaim (ms)           */
+    size_t idle_reclaim_min_pages;     /**< Min idle pages before reclaim triggers     */
 };
 
 /**
@@ -684,7 +689,16 @@ extern void mp_frame_arena_destroy(cmem_frame_arena_t *farena);
  * Shared macros
  * -------------------------------------------------------------------------
  */
+#define CMEM_MS_PER_SEC 1000           /**< Milliseconds per second                          */
+#define CMEM_NSEC_PER_MSEC 1000000     /**< Nanoseconds per millisecond                      */
 #define CMEM_MIN(a, b) ((a) < (b) ? (a) : (b)) /**< Type-generic minimum  */
 #define CMEM_MAX(a, b) ((a) > (b) ? (a) : (b)) /**< Type-generic maximum  */
+
+static inline int64_t cmem_now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * CMEM_MS_PER_SEC + (int64_t)(ts.tv_nsec / CMEM_NSEC_PER_MSEC);
+}
 
 #endif /* CMEM_INTERNAL_H */

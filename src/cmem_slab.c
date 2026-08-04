@@ -109,6 +109,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
     page->next = NULL;
     page->prev = NULL;
     page->is_hot = false;
+    page->idle_since_ts = 0;
 
     size_t usable_bytes = SLAB_PAGE_SIZE - sizeof(mp_slab_page_t);
     page->total_slots = (uint16_t)(usable_bytes / total_slot_size);
@@ -255,6 +256,10 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
     page->free_count++;
 
     pool->stats.slab_allocated_bytes -= sc->slot_size;
+
+    if (page->free_count == page->total_slots) {
+        page->idle_since_ts = cmem_now_ms();
+    }
 
     if (was_full) {
         if (page->prev) {

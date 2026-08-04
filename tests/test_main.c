@@ -251,6 +251,45 @@ void test_mp_trim()
 }
 
 /**
+ * @brief Tests idle page reclamation: mp_set_idle_page_reclaim, mp_reclaim_idle_pages,
+ * mp_get_idle_page_count.
+ */
+void test_idle_page_reclaim()
+{
+    printf("\n--- Test 37: Idle Page Reclamation ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_set_idle_page_reclaim(pool, true, 100, 1);
+
+    void *ptrs[100];
+    for (int i = 0; i < 100; i++) {
+        ptrs[i] = mp_alloc(pool, 64);
+    }
+    assert(mp_get_idle_page_count(pool) == 0);
+
+    for (int i = 0; i < 100; i++) {
+        mp_free(pool, ptrs[i]);
+    }
+
+    size_t idle = mp_get_idle_page_count(pool);
+    assert(idle > 0);
+    printf("  Idle pages after free: %zu\n", idle);
+
+    size_t reclaimed = mp_reclaim_idle_pages(pool);
+    printf("  Reclaimed via mp_reclaim_idle_pages: %zu bytes\n", reclaimed);
+    assert(reclaimed > 0);
+
+    size_t idle_after = mp_get_idle_page_count(pool);
+    assert(idle_after == 0);
+
+    mp_set_idle_page_reclaim(pool, false, 0, 0);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_idle_page_reclaim");
+}
+
+/**
  * @brief Tests arena metadata APIs: mp_set_name, mp_get_name, mp_get_parent, mp_get_child_count.
  */
 void test_arena_metadata_apis()
@@ -1499,6 +1538,7 @@ int main()
     test_security_detection();
     test_callback_interactions();
     test_reset_and_resize();
+    test_idle_page_reclaim();
     printf("\nALL CMEM UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
 }

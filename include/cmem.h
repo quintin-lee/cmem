@@ -772,11 +772,51 @@ void mp_set_watermark_callback(memory_pool_t *pool,
  * @brief Compacts the memory pool by releasing completely free Slab pages back to the OS.
  *
  * Only pages that are entirely unused are returned to the system.
+ * When idle page reclamation is enabled, long-idle pages are also returned.
  *
  * @param pool Pointer to the memory pool
  * @return Number of bytes freed back to the OS
  */
 size_t mp_compact(memory_pool_t *pool);
+
+/**
+ * @brief Configures idle page reclamation parameters.
+ *
+ * When enabled, completely-free or long-idle Slab pages are eligible for
+ * reclamation via mp_compact or mp_reclaim_idle_pages.
+ *
+ * @param pool Pointer to the memory pool
+ * @param enable true to enable idle page reclamation
+ * @param timeout_ms Idle timeout in milliseconds (0 = reclaim immediately)
+ * @param min_pages Minimum number of idle pages before reclamation triggers
+ */
+void mp_set_idle_page_reclaim(memory_pool_t *pool,
+                              bool enable,
+                              uint64_t timeout_ms,
+                              size_t min_pages);
+
+/**
+ * @brief Reclaims idle Slab pages that have exceeded the configured timeout.
+ *
+ * Scans all Slab classes for fully free or long-idle pages and returns them
+ * to the OS. This is a more aggressive variant of mp_compact that respects
+ * the idle timeout configuration.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of bytes freed back to the OS
+ */
+size_t mp_reclaim_idle_pages(memory_pool_t *pool);
+
+/**
+ * @brief Returns the number of idle Slab pages eligible for reclamation.
+ *
+ * Counts pages that are either completely free or have been idle longer than
+ * the configured timeout.
+ *
+ * @param pool Pointer to the memory pool
+ * @return Number of idle pages
+ */
+size_t mp_get_idle_page_count(memory_pool_t *pool);
 
 /**
  * @brief Purges unused Slab pages using Linux madvise MADV_DONTNEED to reduce physical RSS.
