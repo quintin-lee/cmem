@@ -370,7 +370,8 @@ jobs:
 
 ### 8.2 质量门禁
 
-- [ ] `make lib` 编译无警告
+- [ ] `make lib` 编译无警告，并生成带版本号的静态归档
+- [ ] `make lib_shared` 成功构建动态库且 SONAME 正确
 - [ ] `make test` 全量通过
 - [ ] `make test_cpp` 通过
 - [ ] 代码符合规范

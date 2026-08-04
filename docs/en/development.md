@@ -108,7 +108,8 @@ void* mp_alloc(memory_pool_t* pool, size_t size);
 ### 3.1 Makefile Targets
 
 ```bash
-make lib          # Compile static library build/libcmem.a
+make lib          # Compile static libraries build/libcmem.a and build/libcmem-<version>.a
+make lib_shared   # Compile shared library build/libcmem.so.<version> with SONAME
 make test         # Compile and run C unit tests (Debug + Sanitizers)
 make test_cpp     # Compile and run C++ tests
 make bench        # Compile and run performance benchmarks
@@ -126,13 +127,19 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
 
-# Release build
-cmake -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build_release
+# Release build with shared library (default)
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# Release build static only
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build
 
 # Install
-cmake --install build_release --prefix /usr/local
+cmake --install build --prefix /usr/local
 ```
+
+CMake enables shared library output by default (`CMEM_BUILD_SHARED=ON`). The static target also copies a versioned archive, so the build directory contains both `libcmem.a` and `libcmem-<version>.a`.
 
 **CMake toolchain notes:**
 - MSVC is auto-detected: uses `/W3 /std:c11` and defines `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`.

@@ -108,7 +108,8 @@ void* mp_alloc(memory_pool_t* pool, size_t size);
 ### 3.1 Makefile 目标
 
 ```bash
-make lib          # 编译静态库 build/libcmem.a
+make lib          # 编译静态库 build/libcmem.a 并生成带版本号的 build/libcmem-<version>.a
+make lib_shared   # 编译动态库 build/libcmem.so.<version>，并设置 SONAME
 make test         # 编译并运行 C 单元测试（Debug + Sanitizers）
 make test_cpp     # 编译并运行 C++ 测试
 make bench        # 编译并运行性能基准测试
@@ -126,13 +127,19 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
 
-# Release 构建
-cmake -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build_release
+# Release 构建（默认同时生成动态库）
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# 仅静态库构建
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build
 
 # 安装
-cmake --install build_release --prefix /usr/local
+cmake --install build --prefix /usr/local
 ```
+
+CMake 默认启用动态库输出（`CMEM_BUILD_SHARED=ON`）。静态目标还会复制一份带版本号的归档文件，因此构建目录中会同时存在 `libcmem.a` 和 `libcmem-<version>.a`。
 
 **CMake 工具链说明：**
 - 自动检测 MSVC：使用 `/W3 /std:c11` 并定义 `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`。

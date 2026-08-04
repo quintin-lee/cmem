@@ -370,7 +370,8 @@ jobs:
 
 ### 8.2 Quality Gates
 
-- [ ] `make lib` compiles without warnings
+- [ ] `make lib` compiles without warnings and produces versioned static archives
+- [ ] `make lib_shared` builds shared library with correct SONAME
 - [ ] CMake build reports no clang-tidy warnings (per `.clang-tidy` configuration)
 - [ ] `make test` passes all tests
 - [ ] `make test_cpp` passes

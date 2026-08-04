@@ -649,10 +649,20 @@ make examples
 # Build diagnostic CLI tools
 make tools
 
-# CMake build
+# Build versioned static library
+make lib
+
+# Build versioned shared library
+make lib_shared
+
+# CMake build (shared library enabled by default)
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
+
+# CMake static-only build
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build
 
 # ThreadSanitizer build (detect data races)
 make clean

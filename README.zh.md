@@ -645,10 +645,20 @@ make examples
 # 构建诊断 CLI 工具
 make tools
 
-# CMake 构建
+# 构建带版本号的静态库
+make lib
+
+# 构建带版本号的动态库
+make lib_shared
+
+# CMake 构建（默认启用动态库）
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
+
+# CMake 仅静态库构建
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build
 
 # ThreadSanitizer 构建（检测数据竞争）
 make clean

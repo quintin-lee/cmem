@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tools/cmem-analyze` — standalone offline analyzer for `.cmem_dump` binary snapshots
   - `tools/common/cmem-diag-output.c` — shared JSON/text diagnostic output helper
   - Makefile `tools` target and CMake integration for both utilities
+- Versioned library outputs:
+  - Makefile `make lib` now emits `libcmem.a` and `libcmem-<version>.a`
+  - Makefile `make lib_shared` emits `libcmem.so.<version>` with SONAME, plus `libcmem.so` and `libcmem.so.1` symlinks
+  - CMake copies a versioned static archive after build and installs it
+  - CMake optional shared library target `cmem_shared` with `VERSION`/`SOVERSION` and `OUTPUT_NAME cmem`
 
 ### Changed
 - Updated benchmark results in README with real measured values
@@ -52,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Build now defines `-D_GNU_SOURCE` (replaces per-file `_POSIX_C_SOURCE` / `_GNU_SOURCE` feature-test macros) in both CMake and Makefile
 - Fixed `make lib` to compile each source into a per-file object before archiving (multi-source `-c` with a single `-o` was rejected by GCC)
 - Eliminated all clang-tidy warnings (368) across library sources, tests, benchmarks, and examples; tuned `.clang-tidy` (magic-number ignore list, powers-of-two exemption, constant-int-expression exemption)
+- CMake enables shared library build by default via `CMEM_BUILD_SHARED=ON`
+- Makefile `test_cpp` now compiles C sources with `gcc` and links with `g++` to fix sanitizer linking
 
 ### Fixed
 - Removed redundant `pool_lock`/`pool_unlock` in `tlsf_alloc` to prevent rwlock recursion deadlock
