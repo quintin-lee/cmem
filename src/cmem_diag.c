@@ -16,6 +16,17 @@
 #include "cmem_internal.h"
 #include <inttypes.h>
 
+/* Named analysis constants (silence clang-tidy readability-magic-numbers). */
+#define CMEM_BYTES_PER_KIB 1024.0
+#define CMEM_NSEC_PER_SEC 1e9
+#define CMEM_MIN_ELAPSED_SEC 0.000001
+#define CMEM_HISTOGRAM_BAR_WIDTH 20
+#define CMEM_LEAK_WARNING_BYTES (100ul * 1024ul)
+#define CMEM_CONFIDENCE_STRONG 85u
+#define CMEM_CONFIDENCE_MEDIUM 70u
+#define CMEM_CONFIDENCE_WEAK 60u
+#define CMEM_CONFIDENCE_FALLBACK 50u
+
 /**
  * @brief Walk every live allocation and verify header/canary integrity.
  *
@@ -43,7 +54,7 @@ bool mp_audit_heap(memory_pool_t *pool)
         void *payload = (void *)((uint8_t *)curr + sizeof(mp_block_header_t));
 
         if (curr->magic != MP_MAGIC_HEAD) {
-            fprintf(
+            (void)fprintf(
                 stderr,
                 "[HEAP AUDIT ERROR] Corrupted header magic at %p! (Found: 0x%X, Expected: 0x%X)\n",
                 payload,
@@ -55,14 +66,15 @@ bool mp_audit_heap(memory_pool_t *pool)
         if (pool->flags & MP_FLAG_DEBUG_CANARY) {
             uint8_t *canary = (uint8_t *)payload + curr->requested_size;
             if (*canary != MP_CANARY_BYTE) {
-                fprintf(stderr,
-                        "[HEAP AUDIT ERROR] Redzone canary corruption at %p! (Size: %zu, Source: "
-                        "%s:%d in %s)\n",
-                        payload,
-                        curr->requested_size,
-                        curr->alloc_file ? curr->alloc_file : "unknown",
-                        curr->alloc_line,
-                        curr->alloc_func ? curr->alloc_func : "unknown");
+                (void)fprintf(
+                    stderr,
+                    "[HEAP AUDIT ERROR] Redzone canary corruption at %p! (Size: %zu, Source: "
+                    "%s:%d in %s)\n",
+                    payload,
+                    curr->requested_size,
+                    curr->alloc_file ? curr->alloc_file : "unknown",
+                    curr->alloc_line,
+                    curr->alloc_func ? curr->alloc_func : "unknown");
                 healthy = false;
             }
         }
@@ -111,10 +123,10 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
                  "  Total Leaked Payload Bytes : %zu bytes (%.2f KB)\n"
                  "============================================================================\n",
                  pool->stats.total_pool_size,
-                 pool->stats.total_pool_size / 1024.0,
+                 (double)pool->stats.total_pool_size / CMEM_BYTES_PER_KIB,
                  pool->stats.active_allocations,
                  pool->stats.active_bytes,
-                 pool->stats.active_bytes / 1024.0);
+                 (double)pool->stats.active_bytes / CMEM_BYTES_PER_KIB);
 
     if (pool->stats.active_allocations == 0) {
         offset += snprintf(report_buf + offset,
@@ -162,15 +174,15 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
             char **symbols = NULL;
 #endif
             offset += snprintf(report_buf + offset, max_len - offset, "  Callstack Frames:\n");
-            for (int f = 0; f < curr->backtrace_depth && offset < max_len; f++) {
+            for (int frame = 0; frame < curr->backtrace_depth && offset < max_len; frame++) {
                 offset += snprintf(report_buf + offset,
                                    max_len - offset,
                                    "    #%d %s\n",
-                                   f,
-                                   symbols ? symbols[f] : "unknown");
+                                   frame,
+                                   symbols ? symbols[frame] : "unknown");
             }
             if (symbols) {
-                free(symbols);
+                free((void *)symbols);
             }
         }
 
@@ -199,13 +211,13 @@ bool mp_export_leak_report(memory_pool_t *pool, const char *filepath)
     char buffer[16384];
     size_t report_len = mp_analyze_leaks(pool, buffer, sizeof(buffer));
 
-    FILE *f = fopen(filepath, "w");
-    if (!f) {
+    FILE *fp = fopen(filepath, "w");
+    if (!fp) {
         return false;
     }
 
-    fwrite(buffer, 1, report_len, f);
-    fclose(f);
+    (void)fwrite(buffer, 1, report_len, fp);
+    (void)fclose(fp);
     printf("[CMEM DIAGNOSTICS] Detailed memory leak report exported to: %s\n", filepath);
     return true;
 }
@@ -225,16 +237,16 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
     if (!pool || !filepath) {
         return false;
     }
-    FILE *f = fopen(filepath, "w");
-    if (!f) {
+    FILE *fp = fopen(filepath, "w");
+    if (!fp) {
         return false;
     }
 
     mp_stats_t stats;
     mp_get_stats(pool, &stats);
 
-    fprintf(
-        f,
+    (void)fprintf(
+        fp,
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
         "<meta charset=\"UTF-8\">\n"
         "<title>cmem Profile & Leak Analysis Dashboard</title>\n"
@@ -278,39 +290,41 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
         "    <div class=\"card\"><h3>Active Blocks</h3><div class=\"val\">%zu</div></div>\n"
         "    <div class=\"card\"><h3>Fragmentation</h3><div class=\"val\">%.1f%%</div></div>\n"
         "  </div>\n",
-        stats.total_pool_size / 1024.0,
-        stats.active_bytes / 1024.0,
+        (double)stats.total_pool_size / CMEM_BYTES_PER_KIB,
+        (double)stats.active_bytes / CMEM_BYTES_PER_KIB,
         stats.active_allocations,
         stats.fragmentation_ratio * 100.0);
 
     size_t total_alloc =
         stats.slab_allocated_bytes + stats.tlsf_allocated_bytes + stats.os_allocated_bytes;
-    size_t tot = (total_alloc > 0) ? total_alloc : 1;
-    double p_slab = (stats.slab_allocated_bytes * 100.0) / tot;
-    double p_tlsf = (stats.tlsf_allocated_bytes * 100.0) / tot;
-    double p_os = (stats.os_allocated_bytes * 100.0) / tot;
 
-    fprintf(f,
-            "  <h2>Allocation Tier Distribution</h2>\n"
-            "  <div class=\"progress-bar\">\n"
-            "    <div class=\"bar-slab\" style=\"width: %.1f%%;\">Slab (%.1f%%)</div>\n"
-            "    <div class=\"bar-tlsf\" style=\"width: %.1f%%;\">TLSF (%.1f%%)</div>\n"
-            "    <div class=\"bar-os\" style=\"width: %.1f%%;\">OS (%.1f%%)</div>\n"
-            "  </div>\n",
-            p_slab,
-            p_slab,
-            p_tlsf,
-            p_tlsf,
-            p_os,
-            p_os);
+    size_t tot    = (total_alloc > 0) ? total_alloc : 1;
+    double p_slab = ((double)stats.slab_allocated_bytes * 100.0) / (double)tot;
+    double p_tlsf = ((double)stats.tlsf_allocated_bytes * 100.0) / (double)tot;
+    double p_os   = ((double)stats.os_allocated_bytes * 100.0) / (double)tot;
 
-    fprintf(f,
-            "  <h2>Active Memory Allocations & Leak Inventory (%zu Blocks)</h2>\n"
-            "  <table>\n"
-            "    <thead><tr><th>#</th><th>Address</th><th>Size</th><th>Tier</th><th>Source "
-            "Location</th><th>Function</th></tr></thead>\n"
-            "    <tbody>\n",
-            stats.active_allocations);
+
+    (void)fprintf(fp,
+                  "  <h2>Allocation Tier Distribution</h2>\n"
+                  "  <div class=\"progress-bar\">\n"
+                  "    <div class=\"bar-slab\" style=\"width: %.1f%%;\">Slab (%.1f%%)</div>\n"
+                  "    <div class=\"bar-tlsf\" style=\"width: %.1f%%;\">TLSF (%.1f%%)</div>\n"
+                  "    <div class=\"bar-os\" style=\"width: %.1f%%;\">OS (%.1f%%)</div>\n"
+                  "  </div>\n",
+                  p_slab,
+                  p_slab,
+                  p_tlsf,
+                  p_tlsf,
+                  p_os,
+                  p_os);
+
+    (void)fprintf(fp,
+                  "  <h2>Active Memory Allocations & Leak Inventory (%zu Blocks)</h2>\n"
+                  "  <table>\n"
+                  "    <thead><tr><th>#</th><th>Address</th><th>Size</th><th>Tier</th><th>Source "
+                  "Location</th><th>Function</th></tr></thead>\n"
+                  "    <tbody>\n",
+                  stats.active_allocations);
 
     pool_lock(pool);
     mp_block_header_t *curr = pool->active_head;
@@ -326,24 +340,24 @@ bool mp_export_html_report(memory_pool_t *pool, const char *filepath)
                                     ? "SLAB"
                                     : ((curr->alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "OS");
 
-        fprintf(f,
-                "      <tr><td>%zu</td><td><code>%p</code></td><td>%zu B</td>"
-                "<td><span class=\"badge "
-                "%s\">%s</span></td><td>%s:%d</td><td><code>%s</code></td></tr>\n",
-                idx++,
-                payload,
-                curr->requested_size,
-                badge_cls,
-                tier_name,
-                curr->alloc_file ? curr->alloc_file : "-",
-                curr->alloc_line,
-                curr->alloc_func ? curr->alloc_func : "-");
+        (void)fprintf(fp,
+                      "      <tr><td>%zu</td><td><code>%p</code></td><td>%zu B</td>"
+                      "<td><span class=\"badge "
+                      "%s\">%s</span></td><td>%s:%d</td><td><code>%s</code></td></tr>\n",
+                      idx++,
+                      payload,
+                      curr->requested_size,
+                      badge_cls,
+                      tier_name,
+                      curr->alloc_file ? curr->alloc_file : "-",
+                      curr->alloc_line,
+                      curr->alloc_func ? curr->alloc_func : "-");
         curr = curr->next;
     }
     pool_unlock(pool);
 
-    fprintf(f, "    </tbody>\n  </table>\n</div>\n</body>\n</html>\n");
-    fclose(f);
+    (void)fprintf(fp, "    </tbody>\n  </table>\n</div>\n</body>\n</html>\n");
+    (void)fclose(fp);
 
     printf("[CMEM DIAGNOSTICS] Interactive HTML Profiler Report exported to: %s\n", filepath);
     return true;
@@ -366,21 +380,23 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
     if (!pool || !filepath) {
         return false;
     }
-    FILE *f = fopen(filepath, "wb");
-    if (!f) {
+    FILE *fp = fopen(filepath, "wb");
+    if (!fp) {
         return false;
     }
 
     pool_lock(pool);
 
     cmem_snapshot_header_t hdr;
-    hdr.magic = 0x434D454D;
-    hdr.version = 1;
-    hdr.total_pool_size = (uint64_t)pool->stats.total_pool_size;
-    hdr.active_bytes = (uint64_t)pool->stats.active_bytes;
+
+    hdr.magic              = CMEM_SNAPSHOT_MAGIC;
+    hdr.version            = 1;
+    hdr.total_pool_size    = (uint64_t)pool->stats.total_pool_size;
+    hdr.active_bytes       = (uint64_t)pool->stats.active_bytes;
+
     hdr.active_allocations = (uint64_t)pool->stats.active_allocations;
 
-    fwrite(&hdr, sizeof(hdr), 1, f);
+    (void)fwrite(&hdr, sizeof(hdr), 1, fp);
 
     mp_block_header_t *curr = pool->active_head;
     while (curr) {
@@ -391,18 +407,18 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
         rec.alloc_type = curr->alloc_type;
         rec.alloc_line = (uint32_t)curr->alloc_line;
         if (curr->alloc_file) {
-            snprintf(rec.alloc_file, sizeof(rec.alloc_file), "%s", curr->alloc_file);
+            (void)snprintf(rec.alloc_file, sizeof(rec.alloc_file), "%s", curr->alloc_file);
         }
         if (curr->alloc_func) {
-            snprintf(rec.alloc_func, sizeof(rec.alloc_func), "%s", curr->alloc_func);
+            (void)snprintf(rec.alloc_func, sizeof(rec.alloc_func), "%s", curr->alloc_func);
         }
 
-        fwrite(&rec, sizeof(rec), 1, f);
+        (void)fwrite(&rec, sizeof(rec), 1, fp);
         curr = curr->next;
     }
 
     pool_unlock(pool);
-    fclose(f);
+    (void)fclose(fp);
 
     printf("[CMEM DIAGNOSTICS] Binary Crash Snapshot Dump exported to: %s\n", filepath);
     return true;
@@ -427,14 +443,14 @@ bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max
     if (!filepath || !out_report || max_len == 0) {
         return false;
     }
-    FILE *f = fopen(filepath, "rb");
-    if (!f) {
+    FILE *fp = fopen(filepath, "rb");
+    if (!fp) {
         return false;
     }
 
     cmem_snapshot_header_t hdr;
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1 || hdr.magic != 0x434D454D) {
-        fclose(f);
+    if (fread(&hdr, sizeof(hdr), 1, fp) != 1 || hdr.magic != CMEM_SNAPSHOT_MAGIC) {
+        (void)fclose(fp);
         return false;
     }
 
@@ -455,7 +471,7 @@ bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max
     cmem_snapshot_record_t rec;
     size_t idx = 1;
 
-    while (fread(&rec, sizeof(rec), 1, f) == 1 && offset < max_len) {
+    while (fread(&rec, sizeof(rec), 1, fp) == 1 && offset < max_len) {
         const char *tier_str = (rec.alloc_type == ALLOC_TYPE_SLAB)
                                    ? "SLAB"
                                    : ((rec.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
@@ -472,7 +488,7 @@ bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max
                            rec.alloc_func[0] ? rec.alloc_func : "unknown");
     }
 
-    fclose(f);
+    (void)fclose(fp);
     return true;
 }
 
@@ -502,16 +518,19 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
     if (pool->window_start_time.tv_sec == 0) {
         pool->window_start_time = now;
     }
-    double elapsed = (now.tv_sec - pool->window_start_time.tv_sec) +
-                     (now.tv_nsec - pool->window_start_time.tv_nsec) / 1e9;
-    size_t ops = pool->stats.total_alloc_ops;
-    size_t active = pool->stats.active_bytes;
-    if (elapsed > 0.000001 && ops > 0) {
+
+    double elapsed = (double)(now.tv_sec - pool->window_start_time.tv_sec) +
+                     (double)(now.tv_nsec - pool->window_start_time.tv_nsec) / CMEM_NSEC_PER_SEC;
+    size_t ops     = pool->stats.total_alloc_ops;
+    size_t active  = pool->stats.active_bytes;
+    if (elapsed > CMEM_MIN_ELAPSED_SEC && ops > 0) {
         stats->alloc_qps = (double)ops / elapsed;
-        stats->bandwidth_mbps = ((double)active / (1024.0 * 1024.0)) / elapsed;
+        stats->bandwidth_mbps =
+            ((double)active / (CMEM_BYTES_PER_KIB * CMEM_BYTES_PER_KIB)) / elapsed;
     } else {
-        stats->alloc_qps = (double)ops;
-        stats->bandwidth_mbps = (double)active / (1024.0 * 1024.0);
+        stats->alloc_qps      = (double)ops;
+        stats->bandwidth_mbps = (double)active / (CMEM_BYTES_PER_KIB * CMEM_BYTES_PER_KIB);
+
     }
     pool_rdunlock(pool);
 }
@@ -536,14 +555,14 @@ void mp_dump_info(memory_pool_t *pool)
     printf("\n================ CMEM DIAGNOSTICS DUMP [%s] ================\n", pool->arena_name);
     printf("  Total System Reserved Memory: %zu bytes (%.2f KB)\n",
            stats.total_pool_size,
-           stats.total_pool_size / 1024.0);
+           (double)stats.total_pool_size / CMEM_BYTES_PER_KIB);
     printf("  Current Active Allocations  : %zu blocks, %zu bytes (%.2f KB)\n",
            stats.active_allocations,
            stats.active_bytes,
-           stats.active_bytes / 1024.0);
+           (double)stats.active_bytes / CMEM_BYTES_PER_KIB);
     printf("  Peak Memory Allocation      : %zu bytes (%.2f KB)\n",
            stats.peak_bytes,
-           stats.peak_bytes / 1024.0);
+           (double)stats.peak_bytes / CMEM_BYTES_PER_KIB);
     printf("  Max Memory Budget Limit     : %zu bytes (%s)\n",
            stats.max_memory_limit,
            stats.max_memory_limit > 0 ? "Enforced" : "Unlimited");
@@ -607,9 +626,13 @@ void mp_dump_histogram(memory_pool_t *pool)
         if (stats.size_histogram[i] == 0) {
             continue;
         }
-        int bar_len = (max_count > 0) ? (int)((stats.size_histogram[i] * 20) / max_count) : 0;
-        char bar_str[21];
-        memset(bar_str, '*', bar_len);
+
+        int  bar_len = (max_count > 0)
+                           ? (int)((stats.size_histogram[i] * CMEM_HISTOGRAM_BAR_WIDTH) / max_count)
+                           : 0;
+        char bar_str[CMEM_HISTOGRAM_BAR_WIDTH + 1];
+        memset(bar_str, '*', (size_t)bar_len);
+
         bar_str[bar_len] = '\0';
 
         printf(
@@ -803,7 +826,7 @@ bool mp_check_leaks(memory_pool_t *pool)
         char report[4096];
         pool_unlock(pool);
         mp_analyze_leaks(pool, report, sizeof(report));
-        fprintf(stderr, "%s\n", report);
+        (void)fprintf(stderr, "%s\n", report);
         return false;
     }
 
@@ -834,7 +857,7 @@ mp_leak_severity_t mp_get_leak_severity(const mp_allocation_info_t *info)
     }
 
     // Warning: >= 100KB
-    if (info->requested_size >= 100 * 1024) {
+    if (info->requested_size >= CMEM_LEAK_WARNING_BYTES) {
         return MP_LEAK_SEVERITY_WARNING;
     }
 
@@ -856,7 +879,7 @@ mp_leak_severity_t mp_get_leak_severity(const mp_allocation_info_t *info)
  */
 mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
 {
-    mp_leak_pattern_t result = {0};
+    mp_leak_pattern_t result;
 
     if (!info) {
         result.pattern_name = "unknown";
@@ -868,30 +891,38 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info)
     // Pattern 1: Large single allocation (likely buffer leak)
     if (info->requested_size > 64 * 1024) {
         result.pattern_name = "large_buffer_leak";
-        result.confidence = 85;
-        result.suggestion = "Check for missing free() on large allocations";
+
+        result.confidence   = CMEM_CONFIDENCE_STRONG;
+        result.suggestion   = "Check for missing free() on large allocations";
+
         return result;
     }
 
     // Pattern 2: Repeated small allocation (likely loop leak)
     if (info->requested_size < 256 && info->slab_class > 0) {
         result.pattern_name = "repeated_small_leak";
-        result.confidence = 70;
-        result.suggestion = "Check for allocations in loops without corresponding free()";
+
+        result.confidence   = CMEM_CONFIDENCE_MEDIUM;
+        result.suggestion   = "Check for allocations in loops without corresponding free()";
+
         return result;
     }
 
     // Pattern 3: String allocation (likely strdup leak)
     if (info->alloc_file && info->alloc_func) {
         result.pattern_name = "string_allocation_leak";
-        result.confidence = 60;
-        result.suggestion = "Check mp_strdup/mp_memdup calls for missing free()";
+
+        result.confidence   = CMEM_CONFIDENCE_WEAK;
+        result.suggestion   = "Check mp_strdup/mp_memdup calls for missing free()";
+
         return result;
     }
 
     // Default: generic leak
     result.pattern_name = "generic_leak";
-    result.confidence = 50;
-    result.suggestion = "Review allocation";
+
+    result.confidence   = CMEM_CONFIDENCE_FALLBACK;
+    result.suggestion   = "Review allocation";
+
     return result;
 }

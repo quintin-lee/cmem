@@ -4,10 +4,6 @@
  * Diagnostics).
  */
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
 #ifdef __APPLE__
 #define _DARWIN_C_SOURCE 1
 #endif
@@ -135,9 +131,6 @@
 /* --- Slab Allocator Implementation --- */
 
 /* --- Per-CPU Lock-Free Freelist Implementation --- */
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 #include <sched.h>
 
 #define MP_PERCPU_MAX_BATCH 16
@@ -265,9 +258,9 @@ memory_pool_t *mp_create_child(memory_pool_t *parent,
 
     child->parent = parent;
     if (arena_name) {
-        snprintf(child->arena_name, sizeof(child->arena_name), "%s", arena_name);
+        (void)snprintf(child->arena_name, sizeof(child->arena_name), "%s", arena_name);
     } else {
-        snprintf(child->arena_name, sizeof(child->arena_name), "ChildArena");
+        (void)snprintf(child->arena_name, sizeof(child->arena_name), "ChildArena");
     }
 
     if (parent) {
@@ -287,7 +280,9 @@ memory_pool_t *mp_create_child(memory_pool_t *parent,
  * @return Pointer to the new memory pool, or NULL on failure
  */
 memory_pool_t *
-mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t *sys_allocator)
+mp_create_custom(size_t     initial_capacity, // NOLINT(bugprone-easily-swappable-parameters)
+                 mp_flags_t flags,
+                 const mp_sys_allocator_t *sys_allocator)
 {
     flags = mp_parse_env_flags(flags);
 
@@ -297,7 +292,7 @@ mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocat
     }
 
     pool->flags = flags;
-    snprintf(pool->arena_name, sizeof(pool->arena_name), "RootArena");
+    (void)snprintf(pool->arena_name, sizeof(pool->arena_name), "RootArena");
     clock_gettime(CLOCK_MONOTONIC, &pool->window_start_time);
     if (sys_allocator) {
         pool->has_custom_sys_alloc = true;
@@ -340,8 +335,10 @@ mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocat
  * @param fragmentation_threshold Fragmentation ratio (0.0-1.0) above which compaction is triggered
  */
 void mp_set_auto_compact(memory_pool_t *pool,
-                         bool enable,
-                         double pressure_threshold,
+
+                         bool           enable,
+                         double pressure_threshold, // NOLINT(bugprone-easily-swappable-parameters)
+
                          double fragmentation_threshold)
 {
     if (!pool) {
@@ -392,7 +389,9 @@ void mp_set_arena_quota(memory_pool_t *pool,
  * @param user_data Optional user data passed to the callback
  */
 void mp_set_watermark_callback(memory_pool_t *pool,
-                               double high_ratio,
+
+                               double high_ratio, // NOLINT(bugprone-easily-swappable-parameters)
+
                                double low_ratio,
                                mp_watermark_callback_t cb,
                                void *user_data)
@@ -502,8 +501,11 @@ void *mp_reallocarray_loc(memory_pool_t *pool,
  * @param func Source function name
  * @return Pointer to the duplicated string, or NULL on failure
  */
-char *
-mp_strdup_loc(memory_pool_t *pool, const char *str, const char *file, int line, const char *func)
+char *mp_strdup_loc(memory_pool_t *pool,
+                    const char    *str, // NOLINT(bugprone-easily-swappable-parameters)
+                    const char    *file,
+                    int            line,
+                    const char    *func)
 {
     if (!str) {
         return NULL;
@@ -548,8 +550,12 @@ void *mp_memdup_loc(
  * @param fmt Printf-style format string
  * @return Pointer to the formatted string, or NULL on failure
  */
-char *mp_asprintf_loc(
-    memory_pool_t *pool, const char *file, int line, const char *func, const char *fmt, ...)
+char *mp_asprintf_loc(memory_pool_t *pool,
+                      const char    *file,
+                      int            line,
+                      const char    *func, // NOLINT(bugprone-easily-swappable-parameters)
+                      const char    *fmt,
+                      ...)
 {
     if (!fmt) {
         return NULL;
@@ -568,7 +574,7 @@ char *mp_asprintf_loc(
 
     char *buf = (char *)mp_alloc_loc(pool, (size_t)len + 1, file, line, func);
     if (buf) {
-        vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
+        (void)vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
     }
     va_end(args_copy);
     return buf;
@@ -597,25 +603,31 @@ bool mp_diff_snapshots(const char *snapshot_a_path,
     FILE *fb = fopen(snapshot_b_path, "rb");
     if (!fa || !fb) {
         if (fa) {
-            fclose(fa);
+            (void)fclose(fa);
         }
         if (fb) {
-            fclose(fb);
+            (void)fclose(fb);
         }
         return false;
     }
 
     cmem_snapshot_header_t hdra, hdrb;
-    if (fread(&hdra, sizeof(hdra), 1, fa) != 1 || hdra.magic != 0x434D454D ||
-        fread(&hdrb, sizeof(hdrb), 1, fb) != 1 || hdrb.magic != 0x434D454D) {
-        fclose(fa);
-        fclose(fb);
+    if (fread(&hdra, sizeof(hdra), 1, fa) != 1 || hdra.magic != CMEM_SNAPSHOT_MAGIC ||
+        fread(&hdrb, sizeof(hdrb), 1, fb) != 1 || hdrb.magic != CMEM_SNAPSHOT_MAGIC) {
+        (void)fclose(fa);
+        (void)fclose(fb);
         return false;
     }
 
-    size_t count_a = (size_t)hdra.active_allocations;
-    cmem_snapshot_record_t *recs_a = NULL;
+
+    size_t                  count_a = (size_t)hdra.active_allocations;
+    cmem_snapshot_record_t *recs_a  = NULL;
+    if (count_a > CMEM_MAX_SNAPSHOT_RECORDS) {
+        count_a = 0;
+    }
+
     if (count_a > 0) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.taint.TaintedAlloc)
         recs_a = (cmem_snapshot_record_t *)calloc(count_a, sizeof(cmem_snapshot_record_t));
         if (recs_a) {
             if (fread(recs_a, sizeof(cmem_snapshot_record_t), count_a, fa) != count_a) {
@@ -625,23 +637,23 @@ bool mp_diff_snapshots(const char *snapshot_a_path,
             }
         }
     }
-    fclose(fa);
+    (void)fclose(fa);
 
     size_t offset = 0;
     size_t diff_count = 0;
     size_t diff_bytes = 0;
 
-    offset +=
-        snprintf(out_report + offset,
-                 max_len - offset,
-                 "=================== CMEM INCREMENTAL SNAPSHOT DIFF REPORT ===================\n"
-                 "  Baseline Snapshot A : %s (%u blocks)\n"
-                 "  Target Snapshot B   : %s (%u blocks)\n"
-                 "=============================================================================\n",
-                 snapshot_a_path,
-                 (unsigned)hdra.active_allocations,
-                 snapshot_b_path,
-                 (unsigned)hdrb.active_allocations);
+    offset += (size_t)snprintf(
+        out_report + offset,
+        max_len - offset,
+        "=================== CMEM INCREMENTAL SNAPSHOT DIFF REPORT ===================\n"
+        "  Baseline Snapshot A : %s (%u blocks)\n"
+        "  Target Snapshot B   : %s (%u blocks)\n"
+        "=============================================================================\n",
+        snapshot_a_path,
+        (unsigned)hdra.active_allocations,
+        snapshot_b_path,
+        (unsigned)hdrb.active_allocations);
 
     cmem_snapshot_record_t recb;
     while (fread(&recb, sizeof(recb), 1, fb) == 1) {
@@ -661,28 +673,29 @@ bool mp_diff_snapshots(const char *snapshot_a_path,
                     (recb.alloc_type == ALLOC_TYPE_SLAB)
                         ? "SLAB"
                         : ((recb.alloc_type == ALLOC_TYPE_TLSF) ? "TLSF" : "DIRECT OS");
-                offset += snprintf(out_report + offset,
-                                   max_len - offset,
-                                   "[Incremental Leak #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64
-                                   " B | Tier: %s | Location: %s:%u (%s)\n",
-                                   diff_count,
-                                   recb.address,
-                                   recb.requested_size,
-                                   tier_str,
-                                   recb.alloc_file[0] ? recb.alloc_file : "unknown",
-                                   recb.alloc_line,
-                                   recb.alloc_func[0] ? recb.alloc_func : "unknown");
+                offset +=
+                    (size_t)snprintf(out_report + offset,
+                                     max_len - offset,
+                                     "[Incremental Leak #%zu] Addr: 0x%" PRIx64 " | Size: %" PRIu64
+                                     " B | Tier: %s | Location: %s:%u (%s)\n",
+                                     diff_count,
+                                     recb.address,
+                                     recb.requested_size,
+                                     tier_str,
+                                     recb.alloc_file[0] ? recb.alloc_file : "unknown",
+                                     recb.alloc_line,
+                                     recb.alloc_func[0] ? recb.alloc_func : "unknown");
             }
         }
     }
 
-    fclose(fb);
+    (void)fclose(fb);
     if (recs_a) {
         free(recs_a);
     }
 
     if (offset < max_len) {
-        offset += snprintf(
+        (void)snprintf(
             out_report + offset,
             max_len - offset,
             "-----------------------------------------------------------------------------\n"

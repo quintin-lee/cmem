@@ -131,9 +131,14 @@ typedef struct {
  * Shared constants
  * -------------------------------------------------------------------------
  */
-#define MP_MAGIC_HEAD 0x4D504F4F /* Magic value ("MPOO") stamped on block headers          */
-#define MP_CANARY_BYTE 0xDE      /* Fill byte for canary regions (buffer-overflow guard)  */
-#define MP_POISON_BYTE 0xDD      /* Fill byte for freed payloads (use-after-free guard)   */
+#define MP_MAGIC_HEAD 0x4D504F4F       /* Magic value ("MPOO") stamped on block headers          */
+#define MP_CANARY_BYTE 0xDE            /* Fill byte for canary regions (buffer-overflow guard)  */
+#define MP_POISON_BYTE 0xDD            /* Fill byte for freed payloads (use-after-free guard)   */
+#define CMEM_FREED_MAGIC 0xDEADBEEFu   /* Magic stamped on a block header once it is freed      */
+#define CMEM_SNAPSHOT_MAGIC 0x434D454D /* Magic bytes ("CMEM") in binary snapshot header  */
+/* Upper bound on allocation records accepted from a binary snapshot file.  Guards an
+ * untrusted file from forcing an oversized calloc() and keeps validation realistic. */
+#define CMEM_MAX_SNAPSHOT_RECORDS (8ul * 1024ul * 1024ul)
 
 /* Slab allocator tuning. Small allocations (<= SLAB_MAX_SIZE) are served from
  * SLAB_CLASS_COUNT fixed bucket sizes carved out of SLAB_PAGE_SIZE pages. */
@@ -306,7 +311,7 @@ typedef struct mp_typed_pool {
  * backend state, child arena tree links, and all the feature toggles
  * (quotas, circuit breaker, hot/cold, ASAN integration, etc.).
  */
-struct memory_pool {
+struct memory_pool {                 // NOLINT(clang-analyzer-optin.performance.Padding)
     mp_flags_t       flags;          /**< Configuration flags from mp_create()      */
     pthread_rwlock_t rwlock;         /**< RW lock guarding reads vs structural writes */
     pthread_mutex_t  lock;           /**< Mutex for the main allocation path           */
@@ -520,10 +525,10 @@ static inline uint8_t get_slab_class_index(memory_pool_t *pool, size_t size)
         return 4;
     }
     if (size <= 256) {
-        return 5;
+        return 5; // NOLINT(readability-magic-numbers)
     }
     if (size <= 512) {
-        return 6;
+        return 6; // NOLINT(readability-magic-numbers)
     }
     return SLAB_CLASS_COUNT;
 }

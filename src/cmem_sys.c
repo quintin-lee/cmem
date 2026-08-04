@@ -17,10 +17,6 @@
  *  - Memory security: mlock/munlock, MADV_DONTDUMP, secure zeroing
  */
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
 #include "cmem.h"
 #include "cmem_internal.h"
 #include <sched.h>
@@ -482,9 +478,11 @@ size_t mp_compact(memory_pool_t *pool)
 
     size_t freed_bytes = 0;
 
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
 
         while (curr) {
             mp_slab_page_t *next = curr->next;
@@ -546,9 +544,11 @@ size_t mp_purge_lazy(memory_pool_t *pool)
         page_sz = 4096;
     }
 
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             if (curr->free_count == curr->total_slots && curr->page_raw_mem) {
                 uintptr_t start = (uintptr_t)curr->page_raw_mem + sizeof(mp_slab_page_t);
@@ -588,7 +588,10 @@ size_t mp_purge_lazy(memory_pool_t *pool)
  * @param advice madvise() advice constant (e.g. MADV_DONTNEED).
  * @return 0 on success or when there is nothing to advise, -1 on failure.
  */
-int mp_madvise(memory_pool_t *pool, void *addr, size_t length, int advice)
+int mp_madvise(memory_pool_t *pool,
+               void          *addr,
+               size_t         length, // NOLINT(bugprone-easily-swappable-parameters)
+               int            advice)
 {
     if (!addr || length == 0) {
         return -1;

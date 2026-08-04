@@ -27,6 +27,12 @@
 #include "cmem_internal.h"
 #include <string.h>
 
+/* TLSF block sizes are kept at 8-byte granularity (low 3 bits of a size are
+ * always zero), so a size can be rounded up by masking with this value. */
+#define TLSF_ALIGN_MASK 7u
+/* Index of the highest bit of the 32-bit first-level (fl) bitmap. */
+#define TLSF_HIGH_BIT_INDEX 31
+
 /**
  * @brief Find the index of the highest set bit (floor of log2).
  *
@@ -41,7 +47,7 @@ static inline int tlsf_fls(size_t val)
     if (val == 0) {
         return -1;
     }
-    return 31 - __builtin_clz((uint32_t)val);
+    return TLSF_HIGH_BIT_INDEX - __builtin_clz((uint32_t)val);
 }
 
 /**
@@ -119,7 +125,9 @@ void tlsf_mapping_search(size_t size, int *fl, int *sl)
  */
 tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *custom_mem)
 {
-    size = (size + 7) & ~7;
+
+    size          = (size + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+
     void *raw_mem = custom_mem;
     if (!raw_mem) {
         raw_mem = sys_mem_alloc(pool, sizeof(tlsf_pool_t) + size, 8);
@@ -268,7 +276,9 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
 {
     size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + req_size +
                           ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-    total_needed = (total_needed + 7) & ~7;
+
+    total_needed        = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+
     if (total_needed < TLSF_MIN_BLOCK_SIZE) {
         total_needed = TLSF_MIN_BLOCK_SIZE;
     }
@@ -451,9 +461,11 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
     }
 
     size_t current_block_size = block->size_and_flags & BLOCK_SIZE_MASK;
-    size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + new_size +
-                          ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-    total_needed = (total_needed + 7) & ~7;
+
+    size_t total_needed       = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + new_size +
+                                ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+    total_needed              = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+
     if (total_needed < TLSF_MIN_BLOCK_SIZE) {
         total_needed = TLSF_MIN_BLOCK_SIZE;
     }

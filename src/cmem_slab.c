@@ -14,6 +14,10 @@
 #include "cmem.h"
 #include "cmem_internal.h"
 
+/* Slab page slot layout keeps 8-byte alignment; sizes are rounded up by
+ * masking with this value. */
+#define CMEM_SLAB_ALIGN_MASK 7u
+
 /** Fixed slot sizes served by the slab tier, one class per entry. */
 const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
 MP_THREAD_LOCAL thread_cache_t tls_cache = {{0}, {0}};
@@ -31,8 +35,11 @@ MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
 bool slab_init(memory_pool_t *pool)
 {
     for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
-        pool->slab_classes[i].slot_size =
-            pool->use_custom_slab_sizes ? pool->custom_slab_sizes[i] : kSlabSizes[i];
+        if (pool->use_custom_slab_sizes) {
+            pool->slab_classes[i].slot_size = pool->custom_slab_sizes[i];
+        } else {
+            pool->slab_classes[i].slot_size = kSlabSizes[i];
+        }
         pthread_mutex_init(&pool->slab_classes[i].lock, NULL);
         pool->slab_classes[i].partial_pages = NULL;
         pool->slab_classes[i].full_pages = NULL;
@@ -59,7 +66,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
     size_t header_overhead = sizeof(mp_block_header_t);
     size_t total_slot_size =
         header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-    total_slot_size = (total_slot_size + 7) & ~7;
+    total_slot_size = (total_slot_size + CMEM_SLAB_ALIGN_MASK) & ~(size_t)CMEM_SLAB_ALIGN_MASK;
 
 #ifdef _WIN32
     void *raw_mem = cmem_aligned_malloc(SLAB_PAGE_SIZE, SLAB_PAGE_SIZE);
@@ -137,7 +144,9 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
  * @param req_size  User-requested size (must fit the class slot size).
  * @return Pointer to the allocated payload, or NULL if no page can be made.
  */
-void *slab_alloc(memory_pool_t *pool, uint8_t class_idx, size_t req_size)
+void *slab_alloc(memory_pool_t *pool,
+                 uint8_t        class_idx, // NOLINT(bugprone-easily-swappable-parameters)
+                 size_t         req_size)
 {
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
@@ -491,8 +500,11 @@ bool mp_get_percpu_freelist(memory_pool_t *pool)
     if (!pool) {
         return false;
     }
+    bool enabled = false;
     pool_rdlock(pool);
-    bool enabled = (pool->flags & MP_FLAG_PERCPU_FREELIST) != 0 && pool->percpu_freelists != NULL;
+    if ((pool->flags & MP_FLAG_PERCPU_FREELIST) != 0 && pool->percpu_freelists != NULL) {
+        enabled = true;
+    }
     pool_rdunlock(pool);
     return enabled;
 }
@@ -532,9 +544,11 @@ bool mp_mark_page_hot(memory_pool_t *pool, void *page_raw_mem)
     }
     bool found = false;
     pool_lock(pool);
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             if (curr->page_raw_mem == page_raw_mem) {
                 curr->is_hot = true;
@@ -580,9 +594,11 @@ bool mp_mark_page_cold(memory_pool_t *pool, void *page_raw_mem)
     }
     bool found = false;
     pool_lock(pool);
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             if (curr->page_raw_mem == page_raw_mem) {
                 curr->is_hot = false;
@@ -624,9 +640,11 @@ size_t mp_get_hot_page_count(memory_pool_t *pool)
     }
     size_t count = 0;
     pool_rdlock(pool);
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             if (curr->is_hot) {
                 count++;
@@ -662,9 +680,11 @@ size_t mp_get_cold_page_count(memory_pool_t *pool)
     size_t total = 0;
     size_t hot = 0;
     pool_rdlock(pool);
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             total++;
             if (curr->is_hot) {
@@ -705,9 +725,11 @@ size_t mp_separate_hot_cold_pages(memory_pool_t *pool)
     }
     size_t separated = 0;
     pool_lock(pool);
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             if (!curr->is_hot) {
                 separated++;

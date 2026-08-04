@@ -16,6 +16,15 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
+
+/* Named constants for readability- and performance-sensitive literals. */
+#define CMEM_ALIGN_MASK 7u                   /* Round-up mask for 8-byte alignment      */
+#define CMEM_DECIMAL_BASE 10                 /* Radix used by strtoull for plain base-10 */
+#define CMEM_SHM_OPEN_MODE 0666              /* Permission bits for created shm segments */
+#define CMEM_NSEC_PER_SEC_U64 1000000000ULL  /* Nanoseconds per second                  */
+#define CMEM_LATENCY_HISTOGRAM_MAX_INDEX 31u /* Highest valid latency histogram bucket  */
+#define CMEM_LATENCY_P99_NUMERATOR 99u       /* Numerator of the P99 latency target      */
+#define CMEM_LATENCY_P99_DENOMINATOR 100u    /* Denominator of the P99 latency target    */
 /**
  * @brief Mark a memory pool corrupted/dirty and emit a MP_EVENT_DIRTY event.
  * Sets pool->is_dirty under the pool lock and notifies the event sink.
@@ -85,7 +94,7 @@ bool mp_isolate_bad_block(memory_pool_t *pool, void *ptr)
     pool->stats.active_bytes -= header->requested_size;
     pool->stats.active_allocations--;
     pool->stats.total_free_ops++;
-    header->magic = 0xDEADBEEF;
+    header->magic = CMEM_FREED_MAGIC;
     pool_unlock(pool);
 
     trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
@@ -191,20 +200,22 @@ void mp_set_cgroup_aware(memory_pool_t *pool, bool enable)
     pool_lock(pool);
     pool->cgroup_aware = enable;
     if (enable) {
-        FILE *f = fopen("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r");
-        if (!f) {
-            f = fopen("/sys/fs/cgroup/memory.max", "r");
+        FILE *fp = fopen("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r");
+        if (!fp) {
+            fp = fopen("/sys/fs/cgroup/memory.max", "r");
         }
-        if (f) {
+        if (fp) {
             char buf[64] = {0};
-            if (fgets(buf, sizeof(buf), f) != NULL) {
-                char *endptr = NULL;
-                unsigned long long limit = strtoull(buf, &endptr, 10);
+
+            if (fgets(buf, sizeof(buf), fp) != NULL) {
+                char              *endptr = NULL;
+                unsigned long long limit  = strtoull(buf, &endptr, CMEM_DECIMAL_BASE);
+
                 if (endptr != buf && limit > 0) {
                     pool->cgroup_mem_limit = (size_t)limit;
                 }
             }
-            fclose(f);
+            (void)fclose(fp);
         }
     }
     pool_unlock(pool);
@@ -254,11 +265,11 @@ void mp_asan_report_error(memory_pool_t *pool, void *ptr, size_t size, bool is_w
     (void)size;
     (void)is_write;
 #ifdef __SANITIZE_ADDRESS__
-    fprintf(stderr,
-            "[CMEM ASan] Memory error detected at %p (size=%zu, write=%d)\n",
-            ptr,
-            size,
-            is_write ? 1 : 0);
+    (void)fprintf(stderr,
+                  "[CMEM ASan] Memory error detected at %p (size=%zu, write=%d)\n",
+                  ptr,
+                  size,
+                  is_write ? 1 : 0);
     if (pool && pool->error_recovery_cb) {
         pool->error_recovery_cb(pool,
                                 true,
@@ -354,7 +365,8 @@ cmem_ring_buffer_t *mp_ring_create(size_t slot_size, size_t capacity)
     if (posix_memalign(&ring->buffer, 64, total_buf) != 0)
 #endif
     {
-        free(ring->slots);
+        free((void *)ring->slots);
+        free((void *)ring->buffer);
         free(ring);
         return NULL;
     }
@@ -413,7 +425,7 @@ void mp_ring_destroy(cmem_ring_buffer_t *ring)
         return;
     }
     if (ring->slots) {
-        free(ring->slots);
+        free((void *)ring->slots);
     }
     if (ring->buffer) {
 #ifdef _WIN32
@@ -484,10 +496,12 @@ bool mp_event_log_record(mp_event_log_t *log, mp_event_type_t event_type, void *
 
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    entry->timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-    entry->event_type = event_type;
-    entry->size = size;
-    entry->ptr = (uintptr_t)ptr;
+
+    entry->timestamp_ns = (uint64_t)ts.tv_sec * CMEM_NSEC_PER_SEC_U64 + (uint64_t)ts.tv_nsec;
+    entry->event_type   = event_type;
+    entry->size         = size;
+    entry->ptr          = (uintptr_t)ptr;
+
 
     CMEM_ATOMIC_FETCH_ADD(&log->count, 1, CMEM_ORDER_RELAXED);
     return true;
@@ -561,26 +575,26 @@ size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len)
     size_t active_bytes = pool->stats.active_bytes;
     size_t peak_bytes = pool->stats.peak_bytes;
 
-    int n = snprintf(out_buf,
-                     max_len,
-                     "heap: %zu %zu\n"
-                     "alloc_objects: total %zu\n"
-                     "alloc_space: total %zu\n"
-                     "inuse_objects: %zu\n"
-                     "inuse_space: %zu\n"
-                     "peak_space: %zu\n",
-                     active_bytes,
-                     active,
-                     total_alloc,
-                     total_alloc > 0 ? pool->stats.total_alloc_ops * sizeof(void *) : 0,
-                     active,
-                     active_bytes,
-                     peak_bytes);
+    int written = snprintf(out_buf,
+                           max_len,
+                           "heap: %zu %zu\n"
+                           "alloc_objects: total %zu\n"
+                           "alloc_space: total %zu\n"
+                           "inuse_objects: %zu\n"
+                           "inuse_space: %zu\n"
+                           "peak_space: %zu\n",
+                           active_bytes,
+                           active,
+                           total_alloc,
+                           total_alloc > 0 ? pool->stats.total_alloc_ops * sizeof(void *) : 0,
+                           active,
+                           active_bytes,
+                           peak_bytes);
 
-    if (n < 0 || (size_t)n >= max_len) {
-        return (size_t)n < 0 ? 0 : max_len;
+    if (written < 0 || (size_t)written >= max_len) {
+        return (size_t)written < 0 ? 0 : max_len;
     }
-    return (size_t)n;
+    return (size_t)written;
 }
 
 /**
@@ -597,7 +611,9 @@ mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity)
         return NULL;
     }
     size_t real_elem_sz = (elem_size < sizeof(void *)) ? sizeof(void *) : elem_size;
-    real_elem_sz = (real_elem_sz + 7) & ~((size_t)7);
+
+    real_elem_sz        = (real_elem_sz + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
+
 
     mp_typed_pool_t *tpool = (mp_typed_pool_t *)calloc(1, sizeof(mp_typed_pool_t));
     if (!tpool) {
@@ -721,12 +737,12 @@ memory_pool_t *mp_create_shared(const char *shm_name, size_t capacity, mp_flags_
         capacity = 1024 * 1024;
     }
 
-    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, CMEM_SHM_OPEN_MODE);
     if (shm_fd == -1) {
         return NULL;
     }
 
-    if (ftruncate(shm_fd, capacity) == -1) {
+    if (ftruncate(shm_fd, (off_t)capacity) == -1) {
         close(shm_fd);
         return NULL;
     }
@@ -741,7 +757,7 @@ memory_pool_t *mp_create_shared(const char *shm_name, size_t capacity, mp_flags_
     memory_pool_t *pool =
         mp_create_from_buffer(shm_ptr, capacity, (mp_flags_t)(flags | MP_FLAG_SHARED_MEMORY));
     if (pool) {
-        snprintf(pool->arena_name, sizeof(pool->arena_name), "SharedIPC[%s]", shm_name);
+        (void)snprintf(pool->arena_name, sizeof(pool->arena_name), "SharedIPC[%s]", shm_name);
         if (flags & MP_FLAG_THREAD_SAFE) {
             pthread_mutexattr_t mattr;
             pthread_mutexattr_init(&mattr);
@@ -832,16 +848,21 @@ mp_flags_t mp_parse_env_flags(mp_flags_t default_flags)
  * @param flags       Configuration bit flags.
  * @return A pool object laid out inside the buffer, or NULL if under-sized.
  */
-memory_pool_t *mp_create_from_buffer(void *buffer, size_t buffer_size, mp_flags_t flags)
+memory_pool_t *
+mp_create_from_buffer(void      *buffer,
+                      size_t     buffer_size, // NOLINT(bugprone-easily-swappable-parameters)
+                      mp_flags_t flags)
 {
     if (!buffer ||
         buffer_size < sizeof(memory_pool_t) + sizeof(tlsf_pool_t) + TLSF_MIN_BLOCK_SIZE) {
         return NULL;
     }
 
-    uintptr_t buf_addr = (uintptr_t)buffer;
-    uintptr_t aligned_addr = (buf_addr + 7) & ~7;
-    size_t align_offset = aligned_addr - buf_addr;
+
+    uintptr_t buf_addr     = (uintptr_t)buffer;
+    uintptr_t aligned_addr = (buf_addr + CMEM_ALIGN_MASK) & ~(uintptr_t)CMEM_ALIGN_MASK;
+    size_t    align_offset = aligned_addr - buf_addr;
+
 
     if (buffer_size <=
         align_offset + sizeof(memory_pool_t) + sizeof(tlsf_pool_t) + TLSF_MIN_BLOCK_SIZE) {
@@ -851,7 +872,7 @@ memory_pool_t *mp_create_from_buffer(void *buffer, size_t buffer_size, mp_flags_
     memory_pool_t *pool = (memory_pool_t *)aligned_addr;
     memset(pool, 0, sizeof(memory_pool_t));
     pool->flags = (mp_flags_t)(flags | MP_FLAG_STATIC_BUFFER);
-    snprintf(pool->arena_name, sizeof(pool->arena_name), "StaticBufferArena");
+    (void)snprintf(pool->arena_name, sizeof(pool->arena_name), "StaticBufferArena");
 
     slab_init(pool);
 
@@ -882,7 +903,7 @@ void mp_set_name(memory_pool_t *pool, const char *name)
         return;
     }
     pool_lock(pool);
-    snprintf(pool->arena_name, sizeof(pool->arena_name), "%s", name);
+    (void)snprintf(pool->arena_name, sizeof(pool->arena_name), "%s", name);
     pool_unlock(pool);
 }
 
@@ -973,9 +994,11 @@ size_t mp_freeable(memory_pool_t *pool)
     pool_rdlock(pool);
     size_t freeable_bytes = 0;
 
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
+
         while (curr) {
             if (curr->free_count == curr->total_slots) {
                 freeable_bytes += SLAB_PAGE_SIZE;
@@ -1154,10 +1177,12 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
     pool->alloc_latency_sum_ns += latency_ns;
     pool->alloc_latency_count++;
 
-    size_t idx = 0;
-    uint64_t v = latency_ns;
-    while (v >= 1024 && idx < 31) {
-        v >>= 1;
+
+    size_t   idx = 0;
+    uint64_t val = latency_ns;
+    while (val >= 1024 && idx < CMEM_LATENCY_HISTOGRAM_MAX_INDEX) {
+        val >>= 1;
+
         idx++;
     }
     pool->alloc_latency_histogram[idx]++;
@@ -1175,9 +1200,11 @@ uint64_t mp_get_latency_p99(memory_pool_t *pool)
         return 0;
     }
     pool_rdlock(pool);
-    size_t total = pool->alloc_latency_count;
-    size_t target = (total * 99) / 100;
-    size_t cum = 0;
+
+    size_t   total  = pool->alloc_latency_count;
+    size_t   target = (total * CMEM_LATENCY_P99_NUMERATOR) / CMEM_LATENCY_P99_DENOMINATOR;
+    size_t   cum    = 0;
+
     uint64_t p99_ns = 0;
     for (int i = 0; i < 32; i++) {
         cum += pool->alloc_latency_histogram[i];
@@ -1264,7 +1291,7 @@ size_t mp_preferred_size(size_t size)
             }
         }
     }
-    return (size + 7) & ~7;
+    return (size + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
 }
 
 /**
@@ -1289,7 +1316,7 @@ size_t mp_preferred_size_for_pool(memory_pool_t *pool, size_t size)
         }
     }
     pool_rdunlock(pool);
-    return (size + 7) & ~7;
+    return (size + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
 }
 
 /**
@@ -1467,27 +1494,30 @@ void mp_reset(memory_pool_t *pool)
     pool->stats.os_allocated_bytes = 0;
     pool->active_head = NULL;
 
-    for (int c = 0; c < SLAB_CLASS_COUNT; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *page = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
+        mp_slab_class_t *sc = &pool->slab_classes[cls];
 
         while (sc->full_pages) {
-            mp_slab_page_t *p = sc->full_pages;
-            sc->full_pages = p->next;
-            p->next = sc->partial_pages;
+            mp_slab_page_t *node = sc->full_pages;
+            sc->full_pages       = node->next;
+            node->next           = sc->partial_pages;
+
             if (sc->partial_pages) {
-                sc->partial_pages->prev = p;
+                sc->partial_pages->prev = node;
             }
-            p->prev = NULL;
-            sc->partial_pages = p;
+
+            node->prev        = NULL;
+            sc->partial_pages = node;
         }
 
-        page = sc->partial_pages;
-        size_t slot_payload_size = pool->slab_classes[c].slot_size;
-        size_t header_overhead = sizeof(mp_block_header_t);
-        size_t total_slot_size =
+        mp_slab_page_t *page              = sc->partial_pages;
+        size_t          slot_payload_size = pool->slab_classes[cls].slot_size;
+        size_t          header_overhead   = sizeof(mp_block_header_t);
+        size_t          total_slot_size =
+
             header_overhead + slot_payload_size + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
-        total_slot_size = (total_slot_size + 7) & ~7;
+        total_slot_size = (total_slot_size + CMEM_ALIGN_MASK) & ~(size_t)CMEM_ALIGN_MASK;
 
         while (page) {
             page->free_count = page->total_slots;
@@ -1612,13 +1642,13 @@ inline void check_watermark_after_change(memory_pool_t *pool)
     size_t active = pool->stats.active_bytes;
 
     if (!pool->in_high_watermark_state && pool->high_watermark_ratio > 0.0) {
-        size_t high_thresh = (size_t)(pool->high_watermark_ratio * limit);
+        size_t high_thresh = (size_t)(pool->high_watermark_ratio * (double)limit);
         if (active >= high_thresh) {
             pool->in_high_watermark_state = true;
             pool->watermark_cb(pool, true, active, limit, pool->watermark_user_data);
         }
     } else if (pool->in_high_watermark_state && pool->low_watermark_ratio > 0.0) {
-        size_t low_thresh = (size_t)(pool->low_watermark_ratio * limit);
+        size_t low_thresh = (size_t)(pool->low_watermark_ratio * (double)limit);
         if (active <= low_thresh) {
             pool->in_high_watermark_state = false;
             pool->watermark_cb(pool, false, active, limit, pool->watermark_user_data);
@@ -1825,10 +1855,10 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         if (pool->emergency_buf && (pool->emergency_used + emerg_total) <= pool->emergency_size) {
             if (!pool->in_emergency_state) {
                 pool->in_emergency_state = true;
-                fprintf(stderr,
-                        "[CMEM CRITICAL] System OOM limit reached! Activating emergency fallback "
-                        "memory reserve buffer (%zu bytes)\n",
-                        pool->emergency_size);
+                (void)fprintf(stderr,
+                              "[CMEM CRITICAL] System OOM limit reached! Activating emergency "
+                              "fallback memory reserve buffer (%zu bytes)\n",
+                              pool->emergency_size);
             }
             uint8_t *raw = (uint8_t *)pool->emergency_buf + pool->emergency_used;
             pool->emergency_used += emerg_total;
@@ -2087,7 +2117,8 @@ void mp_free(memory_pool_t *pool, void *ptr)
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
 
     if (header->magic != MP_MAGIC_HEAD) {
-        fprintf(stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
+        (void)fprintf(
+            stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
         trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
         mp_mark_pool_dirty(pool);
         if (pool->error_recovery_cb) {
@@ -2162,7 +2193,8 @@ void mp_free(memory_pool_t *pool, void *ptr)
     if (pool->flags & MP_FLAG_DEBUG_CANARY) {
         uint8_t *canary = (uint8_t *)ptr + header->requested_size;
         if (*canary != MP_CANARY_BYTE) {
-            fprintf(stderr, "[MEMORY_POOL BUG] Buffer overflow detected at pointer %p!\n", ptr);
+            (void)fprintf(
+                stderr, "[MEMORY_POOL BUG] Buffer overflow detected at pointer %p!\n", ptr);
             trigger_event(pool, MP_EVENT_CANARY_CORRUPTION, ptr, header->requested_size);
             mp_mark_pool_dirty(pool);
             if (pool->error_recovery_cb) {
@@ -2310,7 +2342,7 @@ char *mp_asprintf(memory_pool_t *pool, const char *fmt, ...)
 
     char *buf = (char *)mp_alloc(pool, (size_t)len + 1);
     if (buf) {
-        vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
+        (void)vsnprintf(buf, (size_t)len + 1, fmt, args_copy);
     }
     va_end(args_copy);
     return buf;
@@ -2513,25 +2545,29 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
     pool_rdlock(pool);
     size_t count = 0;
 
-    for (int c = 0; c < SLAB_CLASS_COUNT && count < max_regions; c++) {
-        mp_slab_class_t *sc = &pool->slab_classes[c];
-        mp_slab_page_t *curr = sc->partial_pages;
+
+    for (int cls = 0; cls < SLAB_CLASS_COUNT && count < max_regions; cls++) {
+        mp_slab_class_t *sc   = &pool->slab_classes[cls];
+        mp_slab_page_t  *curr = sc->partial_pages;
         while (curr && count < max_regions) {
-            regions[count].base = curr->page_raw_mem;
-            regions[count].size = SLAB_PAGE_SIZE;
-            regions[count].type = ALLOC_TYPE_SLAB;
-            regions[count].slab_class = c;
-            regions[count].is_hot = curr->is_hot;
+            regions[count].base       = curr->page_raw_mem;
+            regions[count].size       = SLAB_PAGE_SIZE;
+            regions[count].type       = ALLOC_TYPE_SLAB;
+            regions[count].slab_class = cls;
+            regions[count].is_hot     = curr->is_hot;
+
             count++;
             curr = curr->next;
         }
         curr = sc->full_pages;
         while (curr && count < max_regions) {
-            regions[count].base = curr->page_raw_mem;
-            regions[count].size = SLAB_PAGE_SIZE;
-            regions[count].type = ALLOC_TYPE_SLAB;
-            regions[count].slab_class = c;
-            regions[count].is_hot = curr->is_hot;
+
+            regions[count].base       = curr->page_raw_mem;
+            regions[count].size       = SLAB_PAGE_SIZE;
+            regions[count].type       = ALLOC_TYPE_SLAB;
+            regions[count].slab_class = cls;
+            regions[count].is_hot     = curr->is_hot;
+
             count++;
             curr = curr->next;
         }
