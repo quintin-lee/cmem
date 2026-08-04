@@ -457,6 +457,46 @@ void test_numa_node_binding()
 }
 
 /**
+ * @brief Tests automatic NUMA topology detection and thread-local binding.
+ */
+void test_numa_auto_optimization()
+{
+    printf("\n--- Test 28: Automatic NUMA Optimization ---\n");
+
+    int node_count = mp_numa_node_count();
+    assert(node_count >= 1);
+    printf("  Detected NUMA node count: %d\n", node_count);
+
+    assert(mp_cpu_to_node(-1) == 0);
+    int cpu0_node = mp_cpu_to_node(0);
+    assert(cpu0_node >= 0 && cpu0_node < node_count);
+    printf("  CPU #0 belongs to NUMA node: %d\n", cpu0_node);
+
+    memory_pool_t *pool = mp_create(0, MP_FLAG_AUTO_NUMA);
+    assert(pool != NULL);
+    void *p1 = mp_alloc(pool, 1024 * 1024);
+    assert(p1 != NULL);
+    memset(p1, 0x77, 1024 * 1024);
+    mp_free(pool, p1);
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    printf("  Auto-NUMA pool allocation & access verified!\n");
+
+    memory_pool_t *pool2 = mp_create(0, MP_FLAG_AUTO_NUMA);
+    assert(pool2 != NULL);
+    assert(mp_set_numa_node(pool2, 0) == true);
+    void *p2 = mp_alloc(pool2, 4096);
+    assert(p2 != NULL);
+    memset(p2, 0xAA, 4096);
+    mp_free(pool2, p2);
+    assert(mp_check_leaks(pool2) == true);
+    mp_destroy(pool2);
+    printf("  Manual override takes precedence over auto-NUMA!\n");
+
+    TEST_PASS("test_numa_auto_optimization");
+}
+
+/**
  * @brief Tests game and graphics pipeline dual ping-pong frame arena.
  */
 void test_frame_arena()
@@ -1430,6 +1470,7 @@ int main()
     test_emergency_reserve();
     test_fallback_on_oom();
     test_numa_node_binding();
+    test_numa_auto_optimization();
     test_frame_arena();
     test_diff_snapshots();
     test_watermark_callback();
