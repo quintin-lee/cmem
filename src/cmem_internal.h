@@ -255,6 +255,9 @@ typedef struct {
     pthread_mutex_t lock;          /**< Guards the class page lists (fine-grained)   */
     mp_slab_page_t *partial_pages; /**< Pages with free slots (next refill source)  */
     mp_slab_page_t *full_pages;    /**< Completely full pages                         */
+    mp_slab_page_t *empty_pages;   /**< Completely empty pages (reclaim candidates)   */
+    size_t empty_page_count;       /**< Number of fully empty pages in list           */
+    size_t max_empty_pages;        /**< Max empty pages before returning to OS        */
     mp_slab_page_t *hot_pages;     /**< Pages marked hot                              */
     mp_slab_page_t *cold_pages;    /**< Pages marked cold                             */
 } mp_slab_class_t;
@@ -371,6 +374,7 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     struct timespec window_start_time; /**< Start of the sampling window          */
 
     mp_slab_class_t slab_classes[SLAB_CLASS_COUNT]; /**< One class per size bucket     */
+    cmem_atomic_size_t remote_free_queue[SLAB_CLASS_COUNT]; /**< Lock-free cross-thread remote free queues */
     bool use_custom_slab_sizes;                     /**< Custom class table in effect */
     size_t custom_slab_sizes[SLAB_CLASS_COUNT];     /**< Custom class sizes        */
 
@@ -586,6 +590,8 @@ extern void tls_cache_validate_owner(memory_pool_t *pool);
 extern void percpu_init(memory_pool_t *pool);
 extern void percpu_destroy(memory_pool_t *pool);
 extern void percpu_flush(memory_pool_t *pool);
+extern void remote_free_push(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *slot);
+extern void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx);
 extern int percpu_cpu_index(void);
 extern mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_idx);
 extern bool percpu_push(memory_pool_t *pool, int cpu, uint8_t class_idx, mp_slab_slot_t *slot);

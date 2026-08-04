@@ -1622,8 +1622,29 @@ size_t mp_reclaim_idle_pages(memory_pool_t *pool)
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
         mp_slab_class_t *sc = &pool->slab_classes[cls];
-        mp_slab_page_t *curr = sc->partial_pages;
 
+        while (sc->empty_pages) {
+            mp_slab_page_t *curr = sc->empty_pages;
+            sc->empty_pages = curr->next;
+            if (sc->empty_pages) {
+                sc->empty_pages->prev = NULL;
+            }
+            if (sc->empty_page_count > 0) {
+                sc->empty_page_count--;
+            }
+
+#ifdef _WIN32
+            cmem_aligned_free(curr->page_raw_mem);
+#else
+            cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
+            freed_bytes += SLAB_PAGE_SIZE;
+            if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
+                pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
+            }
+        }
+
+        mp_slab_page_t *curr = sc->partial_pages;
         while (curr) {
             mp_slab_page_t *next = curr->next;
             bool should_free = false;
@@ -1691,6 +1712,7 @@ size_t mp_get_idle_page_count(memory_pool_t *pool)
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
         mp_slab_class_t *sc = &pool->slab_classes[cls];
+        count += sc->empty_page_count;
         mp_slab_page_t *curr = sc->partial_pages;
 
         while (curr) {
@@ -2268,6 +2290,21 @@ void mp_free(memory_pool_t *pool, void *ptr)
                 }
                 return;
             }
+        }
+
+        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            pool_lock(pool);
+            active_list_remove(pool, header);
+            pool->stats.active_bytes -= header->requested_size;
+            pool->stats.active_allocations--;
+            pool->stats.total_free_ops++;
+            pool_unlock(pool);
+            if (pool->event_cb) {
+                trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+            }
+            mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
+            remote_free_push(pool, class_idx, slot);
+            return;
         }
     }
 

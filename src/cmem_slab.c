@@ -78,8 +78,48 @@ bool slab_init(memory_pool_t *pool)
         pthread_mutex_init(&pool->slab_classes[i].lock, NULL);
         pool->slab_classes[i].partial_pages = NULL;
         pool->slab_classes[i].full_pages = NULL;
+        pool->slab_classes[i].empty_pages = NULL;
+        pool->slab_classes[i].empty_page_count = 0;
+        pool->slab_classes[i].max_empty_pages = 2;
+        CMEM_ATOMIC_INIT(&pool->remote_free_queue[i], 0);
     }
     return true;
+}
+
+void remote_free_push(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *slot)
+{
+    if (!pool || class_idx >= SLAB_CLASS_COUNT || !slot) {
+        return;
+    }
+    cmem_atomic_size_t *headp = &pool->remote_free_queue[class_idx];
+    size_t old_head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
+    do {
+        slot->next = (mp_slab_slot_t *)(uintptr_t)old_head;
+    } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(
+        headp, &old_head, (size_t)(uintptr_t)slot, CMEM_ORDER_RELEASE, CMEM_ORDER_RELAXED));
+}
+
+void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
+{
+    if (!pool || class_idx >= SLAB_CLASS_COUNT) {
+        return;
+    }
+    cmem_atomic_size_t *headp = &pool->remote_free_queue[class_idx];
+    size_t head = (size_t)CMEM_ATOMIC_EXCHANGE(headp, 0, CMEM_ORDER_RELAXED);
+    mp_slab_slot_t *slot = (mp_slab_slot_t *)(uintptr_t)head;
+    while (slot) {
+        if (((uintptr_t)slot & 7) != 0 || (uintptr_t)slot < 0x10000) {
+            break;
+        }
+        mp_slab_slot_t *next = slot->next;
+        mp_block_header_t *header = (mp_block_header_t *)slot;
+        header->magic = MP_MAGIC_HEAD;
+        header->alloc_type = ALLOC_TYPE_SLAB;
+        header->slab_class = class_idx;
+        header->raw_base = (void *)slot;
+        slab_free(pool, header);
+        slot = next;
+    }
 }
 
 /**
@@ -185,22 +225,41 @@ mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx)
         pthread_mutex_lock(&sc->lock);
     }
 
+    remote_free_harvest(pool, class_idx);
+
     mp_slab_page_t *page = sc->partial_pages;
 
     if (!page) {
-        page = slab_create_page(pool, class_idx);
-        if (!page) {
-            if (pool->flags & MP_FLAG_THREAD_SAFE) {
-                pthread_mutex_unlock(&sc->lock);
+        if (sc->empty_pages) {
+            page = sc->empty_pages;
+            sc->empty_pages = page->next;
+            if (sc->empty_pages) {
+                sc->empty_pages->prev = NULL;
             }
-            return NULL;
-        }
+            sc->empty_page_count--;
 
-        page->next = sc->partial_pages;
-        if (sc->partial_pages) {
-            sc->partial_pages->prev = page;
+            page->next = sc->partial_pages;
+            page->prev = NULL;
+            if (sc->partial_pages) {
+                sc->partial_pages->prev = page;
+            }
+            sc->partial_pages = page;
+        } else {
+            page = slab_create_page(pool, class_idx);
+            if (!page) {
+                if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                    pthread_mutex_unlock(&sc->lock);
+                }
+                return NULL;
+            }
+
+            page->next = sc->partial_pages;
+            page->prev = NULL;
+            if (sc->partial_pages) {
+                sc->partial_pages->prev = page;
+            }
+            sc->partial_pages = page;
         }
-        sc->partial_pages = page;
     }
 
     mp_slab_slot_t *slot = page->free_list;
@@ -310,10 +369,10 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
     page->free_list = slot;
     page->free_count++;
 
-    pool->stats.slab_allocated_bytes -= sc->slot_size;
-
-    if (page->free_count == page->total_slots) {
-        page->idle_since_ts = cmem_now_ms();
+    if (pool->stats.slab_allocated_bytes >= sc->slot_size) {
+        pool->stats.slab_allocated_bytes -= sc->slot_size;
+    } else {
+        pool->stats.slab_allocated_bytes = 0;
     }
 
     if (was_full) {
@@ -332,6 +391,48 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
             sc->partial_pages->prev = page;
         }
         sc->partial_pages = page;
+    }
+
+    if (page->free_count == page->total_slots) {
+        page->idle_since_ts = cmem_now_ms();
+
+        /* Move page from partial_pages to empty_pages */
+        if (page->prev) {
+            page->prev->next = page->next;
+        } else {
+            sc->partial_pages = page->next;
+        }
+        if (page->next) {
+            page->next->prev = page->prev;
+        }
+
+        page->next = sc->empty_pages;
+        page->prev = NULL;
+        if (sc->empty_pages) {
+            sc->empty_pages->prev = page;
+        }
+        sc->empty_pages = page;
+        sc->empty_page_count++;
+
+        /* Threshold check: if empty_page_count > max_empty_pages, unmap extra empty page
+         * immediately */
+        if (sc->empty_page_count > sc->max_empty_pages) {
+            mp_slab_page_t *unmap_page = sc->empty_pages;
+            sc->empty_pages = unmap_page->next;
+            if (sc->empty_pages) {
+                sc->empty_pages->prev = NULL;
+            }
+            sc->empty_page_count--;
+
+#ifdef _WIN32
+            cmem_aligned_free(unmap_page->page_raw_mem);
+#else
+            cmem_munmap(unmap_page->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
+            if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
+                pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
+            }
+        }
     }
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
@@ -356,19 +457,38 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
         pthread_mutex_lock(&sc->lock);
     }
 
+    remote_free_harvest(pool, class_idx);
+
     int got = 0;
     while (got < 32) {
         mp_slab_page_t *page = sc->partial_pages;
         if (!page) {
-            page = slab_create_page(pool, class_idx);
-            if (!page) {
-                break;
+            if (sc->empty_pages) {
+                page = sc->empty_pages;
+                sc->empty_pages = page->next;
+                if (sc->empty_pages) {
+                    sc->empty_pages->prev = NULL;
+                }
+                sc->empty_page_count--;
+
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            } else {
+                page = slab_create_page(pool, class_idx);
+                if (!page) {
+                    break;
+                }
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
             }
-            page->next = sc->partial_pages;
-            if (sc->partial_pages) {
-                sc->partial_pages->prev = page;
-            }
-            sc->partial_pages = page;
         }
 
         mp_slab_slot_t *slot = page->free_list;
@@ -571,20 +691,39 @@ void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
         pthread_mutex_lock(&sc->lock);
     }
 
+    remote_free_harvest(pool, class_idx);
+
     mp_slab_slot_t *slots[MP_PERCPU_MAX_BATCH];
     int got = 0;
     while (got < MP_PERCPU_MAX_BATCH) {
         mp_slab_page_t *page = sc->partial_pages;
         if (!page) {
-            page = slab_create_page(pool, class_idx);
-            if (!page) {
-                break;
+            if (sc->empty_pages) {
+                page = sc->empty_pages;
+                sc->empty_pages = page->next;
+                if (sc->empty_pages) {
+                    sc->empty_pages->prev = NULL;
+                }
+                sc->empty_page_count--;
+
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            } else {
+                page = slab_create_page(pool, class_idx);
+                if (!page) {
+                    break;
+                }
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
             }
-            page->next = sc->partial_pages;
-            if (sc->partial_pages) {
-                sc->partial_pages->prev = page;
-            }
-            sc->partial_pages = page;
         }
 
         mp_slab_slot_t *slot = page->free_list;
