@@ -279,6 +279,29 @@ for (int node = 0; node < numa_max_node(); node++) {
 }
 ```
 
+### 7.4 Auto-NUMA (Thread-Local First)
+
+Set `MP_FLAG_AUTO_NUMA` when creating a pool and allocations are bound to
+the NUMA node of the calling thread, so each thread's memory lands on its
+local node without manual setup:
+
+```c
+// Each thread's allocations stay on its local node automatically
+memory_pool_t* pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_AUTO_NUMA);
+```
+
+The topology is detected lazily on first use by reading sysfs
+(`/sys/devices/system/node/online`, per-node `cpulist`). An explicit
+`mp_set_numa_node(pool, node)` call always takes precedence over the
+automatic policy.
+
+```c
+int nodes = mp_numa_node_count();   // >= 1, 1 when unsupported or single node
+int node  = mp_cpu_to_node(0);      // NUMA node owning CPU #0 (0 when unknown)
+```
+
+`MP_FLAG_AUTO_NUMA` is a no-op on non-Linux platforms.
+
 ---
 
 ## 8. HugePages Optimization

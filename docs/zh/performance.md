@@ -279,6 +279,27 @@ for (int node = 0; node < numa_max_node(); node++) {
 }
 ```
 
+### 7.4 自动 NUMA(线程本地优先)
+
+创建池时设置 `MP_FLAG_AUTO_NUMA`,分配将绑定到调用线程所在的 NUMA 节点,
+使每个线程的内存自动落在其本地节点上,无需手动配置:
+
+```c
+// 每个线程的分配自动停留在其本地节点
+memory_pool_t* pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_AUTO_NUMA);
+```
+
+拓扑信息在首次使用时通过读取 sysfs 懒加载
+(`/sys/devices/system/node/online`、各节点的 `cpulist`)。显式调用
+`mp_set_numa_node(pool, node)` 始终优先于自动策略。
+
+```c
+int nodes = mp_numa_node_count();   // >= 1,不支持或单节点时为 1
+int node  = mp_cpu_to_node(0);      // 拥有 CPU #0 的 NUMA 节点(未知时为 0)
+```
+
+`MP_FLAG_AUTO_NUMA` 在非 Linux 平台上是空操作。
+
 ---
 
 ## 8. HugePages 优化
