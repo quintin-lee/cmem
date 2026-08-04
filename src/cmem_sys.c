@@ -48,6 +48,7 @@ int cmem_sched_getcpu(void)
 
 #define CMEM_MAX_NUMA_NODES 64
 #define CMEM_MAX_CPUS 1024
+#define CMEM_DECIMAL_BASE 10
 
 static cmem_numa_topology_t g_numa_topo;
 static atomic_flag g_numa_topo_init = ATOMIC_FLAG_INIT;
@@ -66,14 +67,14 @@ static int cmem_parse_idlist(const char *list, int *ids, int max_ids)
     const char *cursor = list;
     while (*cursor != '\0' && count < max_ids) {
         char *end = NULL;
-        long first = strtol(cursor, &end, 10);
+        long first = strtol(cursor, &end, CMEM_DECIMAL_BASE);
         if (end == cursor) {
             return -1;
         }
         long last = first;
         if (*end == '-') {
             cursor = end + 1;
-            last = strtol(cursor, &end, 10);
+            last = strtol(cursor, &end, CMEM_DECIMAL_BASE);
             if (end == cursor) {
                 return -1;
             }
@@ -166,12 +167,12 @@ static void cmem_numa_probe(void)
         cpu_to_node[i] = 0;
     }
 
-    for (int n = 0; n < node_count; n++) {
+    for (int node_idx = 0; node_idx < node_count; node_idx++) {
         char cpulist_path[64];
         int written = snprintf(cpulist_path,
                                sizeof(cpulist_path),
                                "/sys/devices/system/node/node%d/cpulist",
-                               node_ids[n]);
+                               node_ids[node_idx]);
         if (written <= 0 || (size_t)written >= sizeof(cpulist_path)) {
             continue;
         }
@@ -187,10 +188,10 @@ static void cmem_numa_probe(void)
         (void)fclose(list_file);
         int node_cpus[CMEM_MAX_CPUS];
         int node_cpu_count = cmem_parse_idlist(line, node_cpus, CMEM_MAX_CPUS);
-        for (int c = 0; c < node_cpu_count; c++) {
-            int cpu = node_cpus[c];
+        for (int cpu_idx = 0; cpu_idx < node_cpu_count; cpu_idx++) {
+            int cpu = node_cpus[cpu_idx];
             if (cpu >= 0 && cpu < cpu_count) {
-                cpu_to_node[cpu] = node_ids[n];
+                cpu_to_node[cpu] = node_ids[node_idx];
             }
         }
     }
