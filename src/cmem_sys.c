@@ -390,9 +390,15 @@ void *sys_mem_alloc(memory_pool_t *pool, size_t size, size_t alignment)
     }
 
 #if defined(__linux__) && defined(SYS_mbind)
-    if (pool && pool->numa_node >= 0 && ptr) {
-        unsigned long nodemask = (1UL << pool->numa_node);
-        syscall(SYS_mbind, ptr, size, CMEM_MPOL_BIND, &nodemask, sizeof(nodemask) * 8, 0);
+    if (pool && ptr) {
+        int numa_node = pool->numa_node; /* Explicit manual binding wins. */
+        if (numa_node < 0 && (pool->flags & MP_FLAG_AUTO_NUMA)) {
+            numa_node = cmem_numa_current_node();
+        }
+        if (numa_node >= 0) {
+            unsigned long nodemask = (1UL << numa_node);
+            syscall(SYS_mbind, ptr, size, CMEM_MPOL_BIND, &nodemask, sizeof(nodemask) * 8, 0);
+        }
     }
 #endif
 #endif
