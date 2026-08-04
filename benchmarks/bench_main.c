@@ -3,9 +3,6 @@
  * @brief High-Throughput Performance Benchmark comparing system malloc vs cmem.
  */
 
-#define _POSIX_C_SOURCE 200809L
-#define _GNU_SOURCE
-
 #include "cmem.h"
 #include <assert.h>
 #include <pthread.h>
@@ -15,6 +12,12 @@
 
 #define SMALL_ALLOC_COUNT 1000000
 #define MEDIUM_ALLOC_COUNT 100000
+#define SMALL_ALLOC_SPREAD 224
+#define MEDIUM_ALLOC_SPREAD 63488
+#define ARENA_RESET_ALLOCS 500
+#define ARENA_RESET_ROUNDS 1000
+#define NSEC_PER_SEC 1e9
+#define MILLION_OPS 1e6
 
 /**
  * @brief Retrieves the current monotonic time in seconds.
@@ -24,7 +27,7 @@ static double get_time_sec()
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return (double)ts.tv_sec + (double)ts.tv_nsec / NSEC_PER_SEC;
 }
 
 /**
@@ -39,8 +42,10 @@ void bench_small_allocs()
     // 1. System Malloc Benchmark
     double start_sys = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
-        size_t sz = 32 + (i % 224);
-        ptrs[i] = malloc(sz);
+
+        size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
+        ptrs[i]   = malloc(sz);
+
     }
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         free(ptrs[i]);
@@ -51,8 +56,10 @@ void bench_small_allocs()
     memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
     double start_mp = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
-        size_t sz = 32 + (i % 224);
-        ptrs[i] = mp_alloc(pool, sz);
+
+        size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
+        ptrs[i]   = mp_alloc(pool, sz);
+
     }
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         mp_free(pool, ptrs[i]);
@@ -61,14 +68,14 @@ void bench_small_allocs()
 
     printf("  System Malloc Time : %.4f sec (%.2f Mops/sec)\n",
            time_sys,
-           (SMALL_ALLOC_COUNT / time_sys) / 1e6);
+           (SMALL_ALLOC_COUNT / time_sys) / MILLION_OPS);
     printf("  cmem Time          : %.4f sec (%.2f Mops/sec)\n",
            time_mp,
-           (SMALL_ALLOC_COUNT / time_mp) / 1e6);
+           (SMALL_ALLOC_COUNT / time_mp) / MILLION_OPS);
     printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
 
     mp_destroy(pool);
-    free(ptrs);
+    free((void *)ptrs);
 }
 
 /**
@@ -83,8 +90,10 @@ void bench_medium_allocs()
 
     double start_sys = get_time_sec();
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
-        size_t sz = 1024 + (i % 63488);
-        ptrs[i] = malloc(sz);
+
+        size_t sz = 1024 + (i % MEDIUM_ALLOC_SPREAD);
+        ptrs[i]   = malloc(sz);
+
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         free(ptrs[i]);
@@ -94,8 +103,10 @@ void bench_medium_allocs()
     memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_DEFAULT);
     double start_mp = get_time_sec();
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
-        size_t sz = 1024 + (i % 63488);
-        ptrs[i] = mp_alloc(pool, sz);
+
+        size_t sz = 1024 + (i % MEDIUM_ALLOC_SPREAD);
+        ptrs[i]   = mp_alloc(pool, sz);
+
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         mp_free(pool, ptrs[i]);
@@ -107,7 +118,7 @@ void bench_medium_allocs()
     printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
 
     mp_destroy(pool);
-    free(ptrs);
+    free((void *)ptrs);
 }
 
 /**
@@ -116,17 +127,21 @@ void bench_medium_allocs()
  */
 void bench_arena_reset()
 {
-    printf("\n--- Benchmark 3: Fast Arena Reset (mp_reset x 1000 rounds of 500 allocs) ---\n");
+    printf("\n--- Benchmark 3: Fast Arena Reset (mp_reset x %d rounds of %d allocs) ---\n",
+           ARENA_RESET_ROUNDS,
+           ARENA_RESET_ALLOCS);
     memory_pool_t *pool = mp_create(8 * 1024 * 1024, MP_FLAG_DEFAULT);
-    void *ptrs[500];
+
+    void          *ptrs[ARENA_RESET_ALLOCS];
+
 
     // Standard Free loop
     double start_loop = get_time_sec();
-    for (int r = 0; r < 1000; r++) {
-        for (int i = 0; i < 500; i++) {
+    for (int round = 0; round < ARENA_RESET_ROUNDS; round++) {
+        for (int i = 0; i < ARENA_RESET_ALLOCS; i++) {
             ptrs[i] = mp_alloc(pool, 128 + i * 8);
         }
-        for (int i = 0; i < 500; i++) {
+        for (int i = 0; i < ARENA_RESET_ALLOCS; i++) {
             mp_free(pool, ptrs[i]);
         }
     }
@@ -134,8 +149,8 @@ void bench_arena_reset()
 
     // mp_reset Batch Free
     double start_reset = get_time_sec();
-    for (int r = 0; r < 1000; r++) {
-        for (int i = 0; i < 500; i++) {
+    for (int round = 0; round < ARENA_RESET_ROUNDS; round++) {
+        for (int i = 0; i < ARENA_RESET_ALLOCS; i++) {
             mp_alloc(pool, 128 + i * 8);
         }
         mp_reset(pool);
