@@ -414,7 +414,7 @@ mp_slab_slot_t *percpu_pop(memory_pool_t *pool, int cpu, uint8_t class_idx)
             headp, &head, (size_t)next, CMEM_ORDER_ACQUIRE, CMEM_ORDER_RELAXED)) {
         return NULL;
     }
-    entry->count--;
+    CMEM_ATOMIC_FETCH_SUB(&entry->count, 1, CMEM_ORDER_RELAXED);
     return slot;
 }
 
@@ -462,9 +462,13 @@ void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
         tail->next = slots[i];
         tail = slots[i];
     }
-    tail->next = (mp_slab_slot_t *)CMEM_ATOMIC_LOAD(&entry->head, CMEM_ORDER_RELAXED);
-    CMEM_ATOMIC_STORE(&entry->head, (size_t)head, CMEM_ORDER_RELAXED);
-    entry->count += (uint16_t)got;
+    size_t old_head;
+    do {
+        old_head = CMEM_ATOMIC_LOAD(&entry->head, CMEM_ORDER_RELAXED);
+        tail->next = (mp_slab_slot_t *)old_head;
+    } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(
+        &entry->head, &old_head, (size_t)head, CMEM_ORDER_RELAXED, CMEM_ORDER_RELAXED));
+    CMEM_ATOMIC_FETCH_ADD(&entry->count, (size_t)got, CMEM_ORDER_RELAXED);
 }
 
 /**
@@ -783,11 +787,14 @@ bool percpu_push(memory_pool_t *pool, int cpu, uint8_t class_idx, mp_slab_slot_t
     size_t new_head;
     do {
         old_head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
+        if (CMEM_ATOMIC_LOAD(&entry->count, CMEM_ORDER_RELAXED) >= MP_PERCPU_MAX_BATCH) {
+            return false;
+        }
         slot->next = (mp_slab_slot_t *)(uintptr_t)old_head;
         new_head = (size_t)(uintptr_t)slot;
     } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(
         headp, &old_head, new_head, CMEM_ORDER_RELAXED, CMEM_ORDER_RELAXED));
 
-    entry->count++;
+    CMEM_ATOMIC_FETCH_ADD(&entry->count, 1, CMEM_ORDER_RELAXED);
     return true;
 }

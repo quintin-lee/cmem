@@ -237,7 +237,7 @@ typedef struct mp_slab_page {
     struct mp_slab_page *prev; /**< Previous sibling in the page list         */
     void *page_raw_mem;        /**< Raw page base (for munmap and hot/cold)   */
     bool is_hot;               /**< True when marked hot for TLB optimization */
-    int64_t idle_since_ts;     /**< Monotonic timestamp when page became fully idle (0 = not idle) */
+    int64_t idle_since_ts; /**< Monotonic timestamp when page became fully idle (0 = not idle) */
 } mp_slab_page_t;
 
 /**
@@ -304,8 +304,8 @@ typedef struct tlsf_pool {
  * cursors into a fixed pre-allocated array, allowing wait-free push/pop.
  */
 typedef struct {
-    cmem_atomic_size_t head; /**< Atomic head cursor of the per-CPU freelist */
-    uint16_t count;          /**< Number of slots currently in the list      */
+    cmem_atomic_size_t head;  /**< Atomic head cursor of the per-CPU freelist */
+    cmem_atomic_size_t count; /**< Atomic count of slots currently in the list      */
 } mp_percpu_freelist_entry_t;
 
 /**
@@ -408,9 +408,9 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     bool cgroup_aware;       /**< Tracked against a cgroup memory limit      */
     size_t cgroup_mem_limit; /**< Cgroup capped memory limit (if aware)      */
 
-    bool idle_reclaim_enabled;         /**< Enable idle page reclamation               */
-    uint64_t idle_reclaim_timeout_ms;  /**< Idle timeout before reclaim (ms)           */
-    size_t idle_reclaim_min_pages;     /**< Min idle pages before reclaim triggers     */
+    bool idle_reclaim_enabled;        /**< Enable idle page reclamation               */
+    uint64_t idle_reclaim_timeout_ms; /**< Idle timeout before reclaim (ms)           */
+    size_t idle_reclaim_min_pages;    /**< Min idle pages before reclaim triggers     */
 };
 
 /**
@@ -689,8 +689,8 @@ extern void mp_frame_arena_destroy(cmem_frame_arena_t *farena);
  * Shared macros
  * -------------------------------------------------------------------------
  */
-#define CMEM_MS_PER_SEC 1000           /**< Milliseconds per second                          */
-#define CMEM_NSEC_PER_MSEC 1000000     /**< Nanoseconds per millisecond                      */
+#define CMEM_MS_PER_SEC 1000       /**< Milliseconds per second                          */
+#define CMEM_NSEC_PER_MSEC 1000000 /**< Nanoseconds per millisecond                      */
 #define CMEM_MIN(a, b) ((a) < (b) ? (a) : (b)) /**< Type-generic minimum  */
 #define CMEM_MAX(a, b) ((a) > (b) ? (a) : (b)) /**< Type-generic maximum  */
 
