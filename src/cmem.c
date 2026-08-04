@@ -37,13 +37,6 @@
 #include <unistd.h>
 #endif
 
-#ifdef __linux__
-#include <sys/syscall.h>
-#ifndef CMEM_MPOL_BIND
-#define CMEM_MPOL_BIND 2
-#endif
-#endif
-
 #define MP_MAGIC_HEAD 0x4D504F4F // "MPOO" in ASCII
 #define MP_CANARY_BYTE 0xDE
 #define MP_POISON_BYTE 0xDD

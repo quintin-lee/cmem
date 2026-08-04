@@ -20,6 +20,7 @@
 #include "cmem.h"
 #include "cmem_internal.h"
 #include <sched.h>
+#include <sys/syscall.h>
 
 /**
  * @brief Return the ID of the CPU the calling thread is running on.

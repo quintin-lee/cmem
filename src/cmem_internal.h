@@ -144,6 +144,12 @@ typedef struct {
  * untrusted file from forcing an oversized calloc() and keeps validation realistic. */
 #define CMEM_MAX_SNAPSHOT_RECORDS (8ul * 1024ul * 1024ul)
 
+/* NUMA memory policy: MPOL_BIND (value 2).  Used with the mbind() syscall to
+ * pin freshly mapped pages to a specific NUMA node. */
+#ifndef CMEM_MPOL_BIND
+#define CMEM_MPOL_BIND 2
+#endif
+
 /* Slab allocator tuning. Small allocations (<= SLAB_MAX_SIZE) are served from
  * SLAB_CLASS_COUNT fixed bucket sizes carved out of SLAB_PAGE_SIZE pages. */
 #define SLAB_CLASS_COUNT 7         /* Number of distinct small-object size classes    */
