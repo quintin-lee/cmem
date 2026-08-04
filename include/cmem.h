@@ -97,7 +97,9 @@ typedef enum {
         (1 << 13), /**< Enable encrypted memory with mlock and MADV_DONTDUMP */
     MP_FLAG_ASAN_INTEGRATION = (1 << 14), /**< Enable AddressSanitizer integration layer */
     MP_FLAG_REPORT_LEAKS_ON_DESTROY =
-        (1 << 15) /**< Automatically report leaks to stderr on mp_destroy() */
+        (1 << 15), /**< Automatically report leaks to stderr on mp_destroy() */
+    MP_FLAG_AUTO_NUMA =
+        (1 << 16) /**< Auto-bind allocations to the calling thread's NUMA node (Linux) */
 } mp_flags_t;
 
 /**
@@ -297,6 +299,24 @@ bool mp_enable_emergency_reserve(memory_pool_t *pool, size_t reserve_bytes);
  * @return true on success, false on failure
  */
 bool mp_set_numa_node(memory_pool_t *pool, int numa_node);
+
+/**
+ * @brief Returns the number of NUMA nodes detected on this system.
+ *
+ * Always returns at least 1 (single-node / non-NUMA systems report 1).
+ * On platforms without NUMA support this returns 1.
+ *
+ * @return Number of NUMA nodes, or 1 when unknown/unsupported.
+ */
+int mp_numa_node_count(void);
+
+/**
+ * @brief Returns the NUMA node ID owning the given CPU index.
+ *
+ * @param cpu CPU index (>= 0)
+ * @return NUMA node ID, or 0 when the CPU is unknown/unsupported.
+ */
+int mp_cpu_to_node(int cpu);
 
 /**
  * @brief Parses CMEM_CONF environment variable string and returns merged configuration flags.
