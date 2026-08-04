@@ -20,7 +20,11 @@
 #include "cmem.h"
 #include "cmem_internal.h"
 #include <sched.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 /**
  * @brief Return the ID of the CPU the calling thread is running on.
@@ -39,6 +43,210 @@ int cmem_sched_getcpu(void)
     return 0;
 #else
     return sched_getcpu();
+#endif
+}
+
+#define CMEM_MAX_NUMA_NODES 64
+#define CMEM_MAX_CPUS 1024
+
+static cmem_numa_topology_t g_numa_topo;
+static atomic_flag g_numa_topo_init = ATOMIC_FLAG_INIT;
+
+/**
+ * @brief Expand a sysfs list like "0-3,8" or "0" into an integer array.
+ *
+ * @param list    NUL-terminated sysfs list string.
+ * @param ids     Output array (at least max_ids entries).
+ * @param max_ids Capacity of the output array.
+ * @return Number of IDs written, or -1 on malformed input.
+ */
+static int cmem_parse_idlist(const char *list, int *ids, int max_ids)
+{
+    int count = 0;
+    const char *cursor = list;
+    while (*cursor != '\0' && count < max_ids) {
+        char *end = NULL;
+        long first = strtol(cursor, &end, 10);
+        if (end == cursor) {
+            return -1;
+        }
+        long last = first;
+        if (*end == '-') {
+            cursor = end + 1;
+            last = strtol(cursor, &end, 10);
+            if (end == cursor) {
+                return -1;
+            }
+        }
+        if (first < 0 || last < first) {
+            return -1;
+        }
+        while (first <= last && count < max_ids) {
+            ids[count++] = (int)first++;
+        }
+        if (*end == ',') {
+            cursor = end + 1;
+        } else if (*end != '\0') {
+            return -1;
+        }
+    }
+    return count;
+}
+
+/**
+ * @brief Probe the system NUMA topology once, lazily.
+ *
+ * Reads /sys/devices/system/node/online and /sys/devices/system/cpu/possible,
+ * then maps each CPU to its owning node via per-node cpulist files.  On any
+ * failure (or on non-Linux) the topology falls back to a single node with no
+ * cpu->node map, which makes the query APIs return conservative defaults.
+ */
+static void cmem_numa_probe(void)
+{
+    int node_ids[CMEM_MAX_NUMA_NODES];
+    int cpu_ids[CMEM_MAX_CPUS];
+    FILE *node_file = fopen("/sys/devices/system/node/online", "r");
+    if (node_file == NULL) {
+        g_numa_topo.node_count = 1;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+    char node_list[256];
+    if (fgets(node_list, sizeof(node_list), node_file) == NULL) {
+        (void)fclose(node_file);
+        g_numa_topo.node_count = 1;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+    (void)fclose(node_file);
+
+    int node_count = cmem_parse_idlist(node_list, node_ids, CMEM_MAX_NUMA_NODES);
+    if (node_count <= 0) {
+        g_numa_topo.node_count = 1;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+
+    FILE *cpu_file = fopen("/sys/devices/system/cpu/possible", "r");
+    if (cpu_file == NULL) {
+        g_numa_topo.node_count = node_count;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+    char cpu_list[1024];
+    if (fgets(cpu_list, sizeof(cpu_list), cpu_file) == NULL) {
+        (void)fclose(cpu_file);
+        g_numa_topo.node_count = node_count;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+    (void)fclose(cpu_file);
+
+    int cpu_count = cmem_parse_idlist(cpu_list, cpu_ids, CMEM_MAX_CPUS);
+    if (cpu_count <= 0) {
+        g_numa_topo.node_count = node_count;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+
+    int *cpu_to_node = (int *)calloc((size_t)cpu_count, sizeof(int));
+    if (cpu_to_node == NULL) {
+        g_numa_topo.node_count = node_count;
+        g_numa_topo.cpu_count = 0;
+        g_numa_topo.cpu_to_node = NULL;
+        return;
+    }
+    for (int i = 0; i < cpu_count; i++) {
+        cpu_to_node[i] = 0;
+    }
+
+    for (int n = 0; n < node_count; n++) {
+        char cpulist_path[64];
+        int written = snprintf(cpulist_path,
+                               sizeof(cpulist_path),
+                               "/sys/devices/system/node/node%d/cpulist",
+                               node_ids[n]);
+        if (written <= 0 || (size_t)written >= sizeof(cpulist_path)) {
+            continue;
+        }
+        FILE *list_file = fopen(cpulist_path, "r");
+        if (list_file == NULL) {
+            continue;
+        }
+        char line[1024];
+        if (fgets(line, sizeof(line), list_file) == NULL) {
+            (void)fclose(list_file);
+            continue;
+        }
+        (void)fclose(list_file);
+        int node_cpus[CMEM_MAX_CPUS];
+        int node_cpu_count = cmem_parse_idlist(line, node_cpus, CMEM_MAX_CPUS);
+        for (int c = 0; c < node_cpu_count; c++) {
+            int cpu = node_cpus[c];
+            if (cpu >= 0 && cpu < cpu_count) {
+                cpu_to_node[cpu] = node_ids[n];
+            }
+        }
+    }
+
+    g_numa_topo.node_count = node_count;
+    g_numa_topo.cpu_count = cpu_count;
+    g_numa_topo.cpu_to_node = cpu_to_node;
+}
+
+/**
+ * @brief Return the number of NUMA nodes on this system.
+ *
+ * @return Node count (>= 1); 1 when unknown or unsupported.
+ */
+int cmem_numa_node_count(void)
+{
+    if (!atomic_flag_test_and_set_explicit(&g_numa_topo_init, memory_order_acquire)) {
+        cmem_numa_probe();
+    }
+    return g_numa_topo.node_count > 0 ? g_numa_topo.node_count : 1;
+}
+
+/**
+ * @brief Return the NUMA node owning the given CPU index.
+ *
+ * @param cpu CPU index (>= 0)
+ * @return Node ID, or 0 when unknown/unsupported/out of range.
+ */
+int cmem_cpu_to_node(int cpu)
+{
+    if (cpu < 0) {
+        return 0;
+    }
+    (void)cmem_numa_node_count();
+    if (g_numa_topo.cpu_to_node == NULL || cpu >= g_numa_topo.cpu_count) {
+        return 0;
+    }
+    return g_numa_topo.cpu_to_node[cpu];
+}
+
+/**
+ * @brief Return the NUMA node the calling thread is currently running on.
+ *
+ * @return Node ID, or -1 when unavailable (non-Linux or unknown CPU).
+ */
+int cmem_numa_current_node(void)
+{
+#if defined(__linux__) && !defined(__APPLE__)
+    int cpu = sched_getcpu();
+    if (cpu < 0) {
+        return -1;
+    }
+    return cmem_cpu_to_node(cpu);
+#else
+    (void)cmem_numa_node_count();
+    return -1;
 #endif
 }
 
@@ -661,4 +869,14 @@ size_t mp_trim(memory_pool_t *pool, size_t pad)
     pool_unlock(pool);
 
     return total_reclaimed;
+}
+
+int mp_numa_node_count(void)
+{
+    return cmem_numa_node_count();
+}
+
+int mp_cpu_to_node(int cpu)
+{
+    return cmem_cpu_to_node(cpu);
 }
