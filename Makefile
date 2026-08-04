@@ -101,7 +101,11 @@ test_all: test test_advanced
 
 # C++ 测试
 test_cpp: format-check $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS_DEBUG) $(SRC) $(CPP_TEST_SRC) -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
+	@set -e; for src in $(SRC); do \
+		$(CC) $(CFLAGS_DEBUG) -c $$src -o $(BUILD_DIR)/$$(basename $$src .c).o; \
+	done; \
+	$(CXX) $(CXXFLAGS_DEBUG) -c $(CPP_TEST_SRC) -o $(BUILD_DIR)/test_cpp.o; \
+	$(CXX) $(CXXFLAGS_DEBUG) $(addprefix $(BUILD_DIR)/,$(notdir $(patsubst %.c,%.o,$(SRC)))) $(BUILD_DIR)/test_cpp.o -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
 	@echo "Running C++ tests..."
 	./$(BUILD_DIR)/cpp_tests
 
