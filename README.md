@@ -646,6 +646,9 @@ make bench
 # Build and run all examples
 make examples
 
+# Build diagnostic CLI tools
+make tools
+
 # CMake build
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
@@ -732,6 +735,10 @@ cmem/
 │   └── cmem_override.h     # Global malloc/free symbol interception
 ├── src/
 │   └── cmem.c              # Core implementation
+├── tools/
+│   ├── cmem-inspect/       # Real-time in-process diagnostic CLI
+│   ├── cmem-analyze/       # Offline binary snapshot analyzer
+│   └── common/             # Shared diagnostic output utilities
 ├── tests/
 │   ├── test_main.c         # C unit tests (60+ test cases)
 │   └── test_cpp.cpp        # C++ PMR + STL allocator tests

@@ -460,6 +460,19 @@ uint64_t alloc_latency_sum_ns;       // Total latency (nanoseconds)
 
 Supports P99, P50, and average latency statistics.
 
+### 7.4 Diagnostic CLI Tools
+
+The repository includes two diagnostic CLIs under `tools/`:
+
+- `tools/cmem-inspect` — links against `libcmem` for real-time in-process diagnostics:
+  - Subcommands: `leaks`, `audit`, `stats`, `tree`, `histogram`, `snapshot`, `diff`, `html`
+  - Supports `--json`, `--output <path>`, and `--quiet`
+- `tools/cmem-analyze` — standalone offline analyzer for `.cmem_dump` binary snapshots:
+  - Subcommands: `report`, `top`, `summary`, `validate`, `diff`
+  - Supports `--json`, `--html`, `--output <path>`, `--quiet`, `--top <n>`
+
+Build them with `make tools`.
+
 ---
 
 ## 8. Security Features

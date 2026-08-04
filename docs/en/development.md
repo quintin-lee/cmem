@@ -113,8 +113,9 @@ make test         # Compile and run C unit tests (Debug + Sanitizers)
 make test_cpp     # Compile and run C++ tests
 make bench        # Compile and run performance benchmarks
 make examples     # Compile and run example programs
+make tools        # Build diagnostic tools (cmem-inspect, cmem-analyze)
 make clean        # Clean build artifacts
-make all          # Compile library + tests + benchmarks + examples
+make all          # Compile library + tests + benchmarks + examples + tools
 ```
 
 ### 3.2 CMake Build
@@ -473,7 +474,24 @@ mp_set_event_callback(pool, [](memory_pool_t* p, mp_event_type_t ev, void* ptr, 
 }, NULL);
 ```
 
-### 9.5 GDB Debugging
+### 9.5 Diagnostic CLI Tools
+
+The repository includes two diagnostic CLIs under `tools/`:
+
+- `tools/cmem-inspect` — links against `libcmem` for real-time in-process inspection:
+  - `leaks`, `audit`, `stats`, `tree`, `histogram`, `snapshot`, `diff`, `html`
+  - Supports `--json`, `--output <path>`, and `--quiet`
+- `tools/cmem-analyze` — standalone offline analyzer for `.cmem_dump` binary snapshots:
+  - `report`, `top`, `summary`, `validate`, `diff`
+  - Supports `--json`, `--html`, `--output <path>`, `--quiet`, `--top <n>`
+
+Build them with:
+
+```bash
+make tools
+```
+
+### 9.6 GDB Debugging
 
 ```bash
 # Launch GDB

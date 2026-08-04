@@ -63,6 +63,7 @@
 - 代码规范（C11/C++17）
 - 构建系统（Makefile/CMake）
 - 测试指南（添加测试、运行测试、覆盖率）
+- 诊断 CLI 工具（`cmem-inspect`、`cmem-analyze`）
 - 提交规范（Gitmoji 约定）
 - 分支策略
 - 文档编写规范

@@ -306,6 +306,11 @@ mp_set_thread_quota(pool, 64 * 1024 * 1024);
 mp_set_event_callback(pool, security_event_cb, NULL);
 ```
 
+使用内置诊断 CLI 进行安全监控：
+
+- `tools/cmem-inspect` — 对运行中进程做实时泄漏/审计/统计检查
+- `tools/cmem-analyze` — 离线查看 `.cmem_dump`，无需附着进程
+
 ### 6.3 安全事件回调
 
 ```c

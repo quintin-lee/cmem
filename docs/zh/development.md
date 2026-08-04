@@ -113,8 +113,9 @@ make test         # 编译并运行 C 单元测试（Debug + Sanitizers）
 make test_cpp     # 编译并运行 C++ 测试
 make bench        # 编译并运行性能基准测试
 make examples     # 编译并运行示例程序
+make tools        # 构建诊断工具（cmem-inspect、cmem-analyze）
 make clean        # 清理构建产物
-make all          # 编译库 + 测试 + Benchmark + 示例
+make all          # 编译库 + 测试 + Benchmark + 示例 + 工具
 ```
 
 ### 3.2 CMake 构建
@@ -472,7 +473,24 @@ mp_set_event_callback(pool, [](memory_pool_t* p, mp_event_type_t ev, void* ptr, 
 }, NULL);
 ```
 
-### 9.5 GDB 调试
+### 9.5 诊断 CLI 工具
+
+仓库在 `tools/` 下提供两个诊断 CLI：
+
+- `tools/cmem-inspect` — 链接 `libcmem`，用于实时进程内诊断：
+  - 子命令：`leaks`、`audit`、`stats`、`tree`、`histogram`、`snapshot`、`diff`、`html`
+  - 支持 `--json`、`--output <path>`、`--quiet`
+- `tools/cmem-analyze` — 独立离线分析器，解析 `.cmem_dump` 二进制快照：
+  - 子命令：`report`、`top`、`summary`、`validate`、`diff`
+  - 支持 `--json`、`--html`、`--output <path>`、`--quiet`、`--top <n>`
+
+构建方式：
+
+```bash
+make tools
+```
+
+### 9.6 GDB 调试
 
 ```bash
 # 启动 GDB

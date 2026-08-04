@@ -642,6 +642,9 @@ make bench
 # 构建并运行所有示例
 make examples
 
+# 构建诊断 CLI 工具
+make tools
+
 # CMake 构建
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
@@ -706,6 +709,10 @@ cmem/
 │   └── cmem_override.h     # 全局 malloc/free 符号拦截
 ├── src/
 │   └── cmem.c              # 核心实现
+├── tools/
+│   ├── cmem-inspect/       # 实时进程内诊断 CLI
+│   ├── cmem-analyze/       # 离线二进制快照分析器
+│   └── common/             # 共享诊断输出工具
 ├── tests/
 │   ├── test_main.c         # C 单元测试 (44+ 测试用例)
 │   └── test_cpp.cpp        # C++ PMR + STL 分配器测试

@@ -31,6 +31,7 @@ cmem uses a **self-developed lightweight test framework** with no external depen
 ```
 tests/
 ├── test_main.c         # C comprehensive unit tests (44+ test cases)
+├── test_advanced.c     # Advanced C unit tests (callbacks, recovery, edge cases)
 └── test_cpp.cpp        # C++ PMR + STL Allocator tests
 
 benchmarks/
@@ -41,6 +42,18 @@ examples/
 ├── example_embedded.c      # Static buffer mode
 ├── example_leak_analysis.c # Leak analysis
 └── example_arena_tree.c    # Tree Arena
+
+tools/
+├── cmem-inspect/       # Real-time diagnostic CLI
+│   ├── cmem-inspect.c
+│   └── cmem-inspect.h
+├── cmem-analyze/       # Offline snapshot analyzer
+│   ├── cmem-analyze.c
+│   ├── cmem-analyze-parser.c
+│   └── cmem-analyze.h
+└── common/             # Shared diagnostic output utilities
+    ├── cmem-diag-output.c
+    └── cmem-diag-output.h
 ```
 
 ---

@@ -704,6 +704,57 @@ bool mp_diff_snapshots(const char* snapshot_a_path, const char* snapshot_b_path,
 
 ---
 
+## 7. 诊断 CLI 工具
+
+### cmem-inspect
+
+实时进程内诊断 CLI，链接 `libcmem`。
+
+```bash
+cmem-inspect <subcommand> [options]
+```
+
+子命令：
+- `leaks` — 泄漏分析
+- `audit` — 堆审计
+- `stats` — 池统计
+- `tree` — Arena 树
+- `histogram` — 分配尺寸直方图
+- `snapshot` — 导出二进制快照
+- `diff` — 对比两份二进制快照
+- `html` — 导出 HTML 报告
+
+通用选项：
+- `--json` — JSON 格式输出
+- `--output <path>` — 输出到文件
+- `--quiet` — 抑制非必要输出
+
+### cmem-analyze
+
+独立离线分析器，用于 `.cmem_dump` 二进制快照。
+
+```bash
+cmem-analyze <subcommand> [options] <input>
+```
+
+子命令：
+- `report` — 完整分析报告
+- `top` — 按大小/数量排序的 Top 分配
+- `summary` — 精简汇总统计
+- `validate` — 校验快照完整性
+- `diff` — 对比两份快照
+
+通用选项：
+- `--json` — JSON 格式输出
+- `--html` — 生成 HTML 报告
+- `--output <path>` — 输出到文件
+- `--quiet` — 抑制非必要输出
+- `--top <n>` — 限制 Top N 结果
+
+构建方式：`make tools`
+
+---
+
 ## 7. 泄漏检测与堆审计
 
 ### mp_audit_heap

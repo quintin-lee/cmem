@@ -31,6 +31,7 @@ cmem 使用 **自研轻量级测试框架**，无需外部依赖。
 ```
 tests/
 ├── test_main.c         # C 综合单元测试（44+ 测试用例）
+├── test_advanced.c     # 高级 C 单元测试（回调、恢复、边界条件）
 └── test_cpp.cpp        # C++ PMR + STL Allocator 测试
 
 benchmarks/
@@ -41,6 +42,18 @@ examples/
 ├── example_embedded.c      # 静态缓冲区模式
 ├── example_leak_analysis.c # 泄漏分析
 └── example_arena_tree.c    # 树状 Arena
+
+tools/
+├── cmem-inspect/       # 实时诊断 CLI
+│   ├── cmem-inspect.c
+│   └── cmem-inspect.h
+├── cmem-analyze/       # 离线快照分析器
+│   ├── cmem-analyze.c
+│   ├── cmem-analyze-parser.c
+│   └── cmem-analyze.h
+└── common/             # 共享诊断输出工具
+    ├── cmem-diag-output.c
+    └── cmem-diag-output.h
 ```
 
 ---

@@ -63,6 +63,7 @@ Covers:
 - Code standards (C11/C++17)
 - Build systems (Makefile/CMake)
 - Testing guide (adding tests, running tests, coverage)
+- Diagnostic CLI tools (`cmem-inspect`, `cmem-analyze`)
 - Commit conventions (Gitmoji)
 - Branching strategy
 - Documentation standards

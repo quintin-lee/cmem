@@ -704,6 +704,57 @@ Compares two memory snapshots and generates an incremental leak difference repor
 
 ---
 
+## 7. Diagnostic CLI Tools
+
+### cmem-inspect
+
+Real-time in-process diagnostic CLI that links against `libcmem`.
+
+```bash
+cmem-inspect <subcommand> [options]
+```
+
+Subcommands:
+- `leaks` — leak analysis
+- `audit` — heap audit
+- `stats` — pool statistics
+- `tree` — arena tree dump
+- `histogram` — allocation size histogram
+- `snapshot` — export binary snapshot
+- `diff` — diff two binary snapshots
+- `html` — export HTML report
+
+Common options:
+- `--json` — output in JSON format
+- `--output <path>` — write output to file
+- `--quiet` — suppress non-essential output
+
+### cmem-analyze
+
+Standalone offline analyzer for `.cmem_dump` binary snapshots.
+
+```bash
+cmem-analyze <subcommand> [options] <input>
+```
+
+Subcommands:
+- `report` — full analysis report
+- `top` — top allocations by size/count
+- `summary` — concise summary statistics
+- `validate` — validate snapshot integrity
+- `diff` — diff two snapshots
+
+Common options:
+- `--json` — output in JSON format
+- `--html` — generate HTML report
+- `--output <path>` — write output to file
+- `--quiet` — suppress non-essential output
+- `--top <n>` — limit top N results
+
+Build both tools with `make tools`.
+
+---
+
 ## 7. Leak Detection and Heap Auditing
 
 ### mp_audit_heap

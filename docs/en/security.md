@@ -306,6 +306,11 @@ mp_set_thread_quota(pool, 64 * 1024 * 1024);
 mp_set_event_callback(pool, security_event_cb, NULL);
 ```
 
+Use the bundled diagnostic CLIs for operational security monitoring:
+
+- `tools/cmem-inspect` — real-time leak/audit/stats inspection on a running process
+- `tools/cmem-analyze` — offline `.cmem_dump` review without attaching to the process
+
 ### 6.3 Security Event Callback
 
 ```c

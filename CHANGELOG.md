@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MP_FLAG_REPORT_LEAKS_ON_DESTROY` for automatic leak reporting on `mp_destroy()`
 - C++ `MemoryPool` wrappers: `get_allocation_info()` and `enumerate_regions()`
 - Windows/MSVC support: `mmap`/`madvise` backed by `VirtualAlloc`, corrected `Interlocked` atomic fallback semantics, and a dedicated MSVC CMake branch (`/W3 /std:c11` with `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`)
+- Diagnostic CLI tools:
+  - `tools/cmem-inspect` — real-time in-process diagnostic tool linking against `libcmem`
+  - `tools/cmem-analyze` — standalone offline analyzer for `.cmem_dump` binary snapshots
+  - `tools/common/cmem-diag-output.c` — shared JSON/text diagnostic output helper
+  - Makefile `tools` target and CMake integration for both utilities
 
 ### Changed
 - Updated benchmark results in README with real measured values

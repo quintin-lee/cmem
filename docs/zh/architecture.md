@@ -460,6 +460,19 @@ uint64_t alloc_latency_sum_ns;       // 总延迟（纳秒）
 
 支持 P99、P50、平均延迟统计。
 
+### 7.4 诊断 CLI 工具
+
+仓库在 `tools/` 下提供两个诊断 CLI：
+
+- `tools/cmem-inspect` — 链接 `libcmem`，用于实时进程内诊断：
+  - 子命令：`leaks`、`audit`、`stats`、`tree`、`histogram`、`snapshot`、`diff`、`html`
+  - 支持 `--json`、`--output <path>`、`--quiet`
+- `tools/cmem-analyze` — 独立离线分析器，解析 `.cmem_dump` 二进制快照：
+  - 子命令：`report`、`top`、`summary`、`validate`、`diff`
+  - 支持 `--json`、`--html`、`--output <path>`、`--quiet`、`--top <n>`
+
+构建方式：`make tools`
+
 ---
 
 ## 8. 安全特性
