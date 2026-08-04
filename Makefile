@@ -22,6 +22,7 @@ CPP_TEST_SRC = tests/test_cpp.cpp
 BENCH_SRC = benchmarks/bench_main.c
 
 BUILD_DIR = build
+OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 PREFIX = /usr/local
 LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
@@ -65,8 +66,8 @@ $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 静态库
-lib: format-check $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
-	ar rcs $(BUILD_DIR)/$(LIBNAME) $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
+lib: format-check $(OBJS)
+	ar rcs $(BUILD_DIR)/$(LIBNAME) $(OBJS)
 	@echo "Built static library: $(BUILD_DIR)/$(LIBNAME)"
 
 # 共享库
