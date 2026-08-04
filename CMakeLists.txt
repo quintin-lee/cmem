@@ -130,6 +130,12 @@ set_target_properties(cmem PROPERTIES
     PUBLIC_HEADER include/cmem.h
 )
 
+add_custom_command(TARGET cmem POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:cmem>
+        ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a
+)
+
 # 安装配置
 install(TARGETS cmem
     EXPORT cmemTargets
@@ -137,6 +143,12 @@ install(TARGETS cmem
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
     PUBLIC_HEADER DESTINATION include
+)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a
+    DESTINATION lib
+    RENAME libcmem-${CMEM_VERSION}.a
 )
 
 install(FILES
