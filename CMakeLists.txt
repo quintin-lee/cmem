@@ -97,7 +97,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-option(CMEM_BUILD_SHARED "Build shared library" OFF)
+option(CMEM_BUILD_SHARED "Build shared library" ON)
 
 # 代码覆盖率配置
 set(CMAKE_C_FLAGS_COVERAGE "-g -O0 -fprofile-arcs -ftest-coverage")
