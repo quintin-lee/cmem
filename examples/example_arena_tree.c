@@ -16,8 +16,10 @@ int main()
 {
     printf("=== Example 4: Hierarchical Child Arenas & HTML Profiler Dashboard ===\n\n");
 
+    // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
     memory_pool_t *root_pool =
         mp_create(2 * 1024 * 1024, MP_FLAG_THREAD_SAFE | MP_FLAG_TRACK_LOCATIONS);
+    // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
     assert(root_pool != NULL);
 
     memory_pool_t *scene_arena =

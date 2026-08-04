@@ -26,7 +26,7 @@ int main()
     memory_pool_t *pool = mp_create_from_buffer(
         g_embedded_ram_buffer, sizeof(g_embedded_ram_buffer), MP_FLAG_DEFAULT);
     if (!pool) {
-        fprintf(stderr, "Failed to initialize cmem static buffer arena!\n");
+        (void)fprintf(stderr, "Failed to initialize cmem static buffer arena!\n");
         return 1;
     }
 
@@ -34,7 +34,7 @@ int main()
 
     void *block1 = mp_alloc(pool, 1024);
     void *block2 = mp_alloc(pool, 4096);
-    void *block3 = mp_alloc(pool, 64.5 * 1024);
+    void *block3 = mp_alloc(pool, (size_t)(64.5 * 1024.0)); // NOLINT(readability-magic-numbers)
 
     uintptr_t base = (uintptr_t)g_embedded_ram_buffer;
     uintptr_t limit = base + sizeof(g_embedded_ram_buffer);

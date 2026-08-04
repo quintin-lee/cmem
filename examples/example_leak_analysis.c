@@ -32,9 +32,11 @@ int main()
 {
     printf("=== Example 3: Memory Leak Analysis & Heap Audit Demo ===\n\n");
 
+    // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
     memory_pool_t *pool = mp_create(1024 * 1024,
                                     MP_FLAG_THREAD_SAFE | MP_FLAG_DEBUG_CANARY |
                                         MP_FLAG_TRACK_LOCATIONS | MP_FLAG_POISON_ON_FREE);
+    // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
 
     if (!pool) {
         return 1;
@@ -44,8 +46,12 @@ int main()
     do_leaky_work(pool);
 
     printf("\n2. Running Heap Integrity Audit (mp_audit_heap):\n");
-    bool healthy = mp_audit_heap(pool);
-    printf("   Heap Audit Result: %s\n\n", healthy ? "HEALTHY" : "CORRUPTED");
+    bool        healthy = mp_audit_heap(pool);
+    const char *health  = "CORRUPTED";
+    if (healthy) {
+        health = "HEALTHY";
+    }
+    printf("   Heap Audit Result: %s\n\n", health);
 
     printf("3. Generating Detailed Leak Analysis Report:\n");
     char report[4096];
