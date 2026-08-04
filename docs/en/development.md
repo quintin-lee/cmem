@@ -120,7 +120,7 @@ make all          # Compile library + tests + benchmarks + examples
 ### 3.2 CMake Build
 
 ```bash
-# Debug build (with Sanitizers)
+# Debug build
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -132,6 +132,11 @@ cmake --build build_release
 # Install
 cmake --install build_release --prefix /usr/local
 ```
+
+**CMake toolchain notes:**
+- MSVC is auto-detected: uses `/W3 /std:c11` and defines `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`.
+- GCC/Clang use `-Wall -Wextra -pthread -D_GNU_SOURCE`.
+- When `clang-tidy` is on `PATH`, CMake wires it in as a compile-time check; the `.clang-tidy` file at the repo root controls which checks run.
 
 ### 3.3 Compiler Flags
 
@@ -145,6 +150,8 @@ cmake --install build_release --prefix /usr/local
 -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer
 ```
 
+**Feature macros:** Both build systems define `_GNU_SOURCE` (required for `sched.h`, `backtrace`, and `madvise` under strict `-std=c11`); per-file `_POSIX_C_SOURCE` / `_GNU_SOURCE` defines are no longer needed.
+
 ---
 
 ## 4. Testing Guide
@@ -153,8 +160,11 @@ cmake --install build_release --prefix /usr/local
 
 ```
 tests/
-├── test_main.c         # C comprehensive unit tests (35+ test cases)
-└── test_cpp.cpp        # C++ PMR + STL Allocator tests
+├── test_main.c         # C comprehensive unit tests (44+ test cases)
+├── test_advanced.c     # Advanced C unit tests (previously untested APIs, callbacks, recovery)
+├── test_cpp.cpp        # C++ PMR + STL Allocator tests
+├── stress_test.c       # Long-run stress/leak test (duration via STRESS_DURATION_SEC)
+└── fuzz_alloc.c        # Standalone fuzzing harness (STANDALONE_FUZZ mode)
 ```
 
 ### 4.2 Adding a New Test
@@ -537,7 +547,7 @@ void* p = mp_alloc(pool, size);
 **A:**
 - Linux (full support)
 - macOS (partial support, no NUMA/HugePages)
-- Windows (partial support, requires MSVC)
+- Windows (partial support; MSVC only, mmap/madvise backed by VirtualAlloc, POSIX shared memory unavailable)
 - FreeBSD/Android (basic support)
 
 ### Q8: How do I contribute code?

@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mp_enumerate_regions()` for enumerating all backing memory regions (Slab pages, TLSF pools, OS mappings)
 - `MP_FLAG_REPORT_LEAKS_ON_DESTROY` for automatic leak reporting on `mp_destroy()`
 - C++ `MemoryPool` wrappers: `get_allocation_info()` and `enumerate_regions()`
+- Windows/MSVC support: `mmap`/`madvise` backed by `VirtualAlloc`, corrected `Interlocked` atomic fallback semantics, and a dedicated MSVC CMake branch (`/W3 /std:c11` with `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`)
 
 ### Changed
 - Updated benchmark results in README with real measured values
@@ -42,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented GitHub Private Vulnerability Reporting setup in `SECURITY.md`
 - Added ThreadSanitizer badge, Docker instructions, and runtime analysis section to README
 - Added test step to release workflow for pre-release validation
+- Build now defines `-D_GNU_SOURCE` (replaces per-file `_POSIX_C_SOURCE` / `_GNU_SOURCE` feature-test macros) in both CMake and Makefile
+- Fixed `make lib` to compile each source into a per-file object before archiving (multi-source `-c` with a single `-o` was rejected by GCC)
+- Eliminated all clang-tidy warnings (368) across library sources, tests, benchmarks, and examples; tuned `.clang-tidy` (magic-number ignore list, powers-of-two exemption, constant-int-expression exemption)
 
 ### Fixed
 - Removed redundant `pool_lock`/`pool_unlock` in `tlsf_alloc` to prevent rwlock recursion deadlock
@@ -56,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 - Updated LICENSE copyright year to `2024-2026`
 - Added OS-specific ignore patterns to `.gitignore`
+- Updated platform support matrices (Windows/MSVC) and build/toolchain notes across README and `docs/`
 
 ## [1.0.0] - 2026-07-27
 

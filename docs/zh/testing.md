@@ -55,7 +55,7 @@ make test
 
 # 手动编译运行
 gcc -fsanitize=address,undefined -Wall -Wextra -g -O0 \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
+    -std=c11 -D_GNU_SOURCE -I./include src/cmem.c tests/test_main.c \
     -o build/unit_tests -pthread -lrt
 ./build/unit_tests
 ```

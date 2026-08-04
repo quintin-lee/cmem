@@ -55,7 +55,7 @@ make test
 
 # Manual compilation and run
 gcc -fsanitize=address,undefined -Wall -Wextra -g -O0 \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
+    -std=c11 -D_GNU_SOURCE -I./include src/cmem.c tests/test_main.c \
     -o build/unit_tests -pthread -lrt
 ./build/unit_tests
 ```
@@ -358,6 +358,7 @@ jobs:
 ### 8.2 Quality Gates
 
 - [ ] `make lib` compiles without warnings
+- [ ] CMake build reports no clang-tidy warnings (per `.clang-tidy` configuration)
 - [ ] `make test` passes all tests
 - [ ] `make test_cpp` passes
 - [ ] Code conforms to standards

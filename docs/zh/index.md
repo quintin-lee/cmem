@@ -142,7 +142,7 @@
 | **Linux (glibc)** | ✅ 完整 | NUMA、HugePages、共享内存、madvise、mlock |
 | **Linux (musl)** | ⚠️ 部分 | 基础分配器可用；NUMA/HugePages 可能需移植 |
 | **macOS** | ⚠️ 部分 | 无 NUMA/HugePages/共享内存；madvise 受限 |
-| **Windows (MSVC)** | ⚠️ 部分 | 需将 mmap/madvise 移植到 VirtualAlloc |
+| **Windows (MSVC)** | ⚠️ 部分 | 已将 mmap/madvise 移植到 VirtualAlloc；不支持 POSIX 共享内存 |
 | **FreeBSD** | ⚠️ 基础 | 可能只需少量 #ifdef 调整即可运行 |
 | **Android** | ⚠️ 基础 | Bionic libc；生产前需测试 |
 
@@ -152,7 +152,7 @@
 | :--- | :--- | :--- |
 | GCC | 7.0 | 13.0+ |
 | Clang | 6.0 | 17.0+ |
-| MSVC | 2017 | 2022+ |
+| MSVC | 2017 | 2019+ |
 
 ---
 

@@ -77,7 +77,7 @@ Covers:
 - Test structure and directories
 - Running tests (C/C++/Benchmark)
 - Adding new tests (template code)
-- Test coverage checklist (35+ test cases)
+- Test coverage checklist (44+ test cases)
 - Sanitizers usage (ASan/UBSan)
 - Performance benchmarks
 - CI/CD configuration
@@ -142,7 +142,7 @@ The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
 | **Linux (glibc)** | ✅ Full | NUMA, HugePages, Shared Memory, madvise, mlock |
 | **Linux (musl)** | ⚠️ Partial | Basic allocator works; NUMA/HugePages may need porting |
 | **macOS** | ⚠️ Partial | No NUMA/HugePages/Shared Memory; madvise limited |
-| **Windows (MSVC)** | ⚠️ Partial | Requires porting mmap/madvise to VirtualAlloc |
+| **Windows (MSVC)** | ⚠️ Partial | Ported mmap/madvise to VirtualAlloc; POSIX shared memory not available |
 | **FreeBSD** | ⚠️ Basic | May work with minor #ifdef adjustments |
 | **Android** | ⚠️ Basic | Bionic libc; test before production |
 
@@ -152,7 +152,7 @@ The current ABI version is `1`. Use `mp_abi_version()` to query at runtime.
 | :--- | :--- | :--- |
 | GCC | 7.0 | 13.0+ |
 | Clang | 6.0 | 17.0+ |
-| MSVC | 2017 | 2022+ |
+| MSVC | 2017 | 2019+ |
 
 ---
 

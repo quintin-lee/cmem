@@ -120,7 +120,7 @@ make all          # 编译库 + 测试 + Benchmark + 示例
 ### 3.2 CMake 构建
 
 ```bash
-# Debug 构建（带 Sanitizers）
+# Debug 构建
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -132,6 +132,11 @@ cmake --build build_release
 # 安装
 cmake --install build_release --prefix /usr/local
 ```
+
+**CMake 工具链说明：**
+- 自动检测 MSVC：使用 `/W3 /std:c11` 并定义 `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`。
+- GCC/Clang 使用 `-Wall -Wextra -pthread -D_GNU_SOURCE`。
+- 当 `PATH` 中存在 `clang-tidy` 时，CMake 会将其作为编译期检查接入；仓库根目录的 `.clang-tidy` 文件控制启用的检查项。
 
 ### 3.3 编译器标志
 
@@ -145,6 +150,8 @@ cmake --install build_release --prefix /usr/local
 -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer
 ```
 
+**特性宏：** 两套构建系统均定义 `_GNU_SOURCE`（在严格的 `-std=c11` 下需要它来启用 `sched.h`、`backtrace`、`madvise`）；不再需要逐个文件定义 `_POSIX_C_SOURCE` / `_GNU_SOURCE`。
+
 ---
 
 ## 4. 测试指南
@@ -153,8 +160,11 @@ cmake --install build_release --prefix /usr/local
 
 ```
 tests/
-├── test_main.c         # C 综合单元测试（35+ 测试用例）
-└── test_cpp.cpp        # C++ PMR + STL Allocator 测试
+├── test_main.c         # C 综合单元测试（44+ 测试用例）
+├── test_advanced.c     # 高级 C 单元测试（此前未覆盖的 API、回调、错误恢复）
+├── test_cpp.cpp        # C++ PMR + STL Allocator 测试
+├── stress_test.c       # 长期压力/泄漏测试（时长由 STRESS_DURATION_SEC 控制）
+└── fuzz_alloc.c        # 独立模糊测试入口（STANDALONE_FUZZ 模式）
 ```
 
 ### 4.2 添加新测试
@@ -536,7 +546,7 @@ void* p = mp_alloc(pool, size);
 **A:**
 - Linux（完整支持）
 - macOS（部分支持，无 NUMA/HugePages）
-- Windows（部分支持，需 MSVC）
+- Windows（部分支持；仅 MSVC，mmap/madvise 由 VirtualAlloc 提供，不支持 POSIX 共享内存）
 - FreeBSD/Android（基础支持）
 
 ### Q8: 如何贡献代码？
