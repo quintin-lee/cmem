@@ -69,11 +69,12 @@ $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
 # 静态库
 lib: format-check $(OBJS)
 	ar rcs $(BUILD_DIR)/$(LIBNAME) $(OBJS)
+	cp $(BUILD_DIR)/$(LIBNAME) $(BUILD_DIR)/$(LIBNAME:.a=-$(VERSION).a)
 	@echo "Built static library: $(BUILD_DIR)/$(LIBNAME)"
 
 # 共享库
-lib_shared: format-check $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
-	$(CC) $(CFLAGS) -fPIC -shared $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC)) -o $(BUILD_DIR)/$(SONAME) $(LDFLAGS)
+lib_shared: format-check | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -fPIC -shared -ftls-model=initial-exec $(SRC) -o $(BUILD_DIR)/$(SONAME) -Wl,-soname,libcmem.so.1 $(LDFLAGS)
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
 	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
@@ -166,6 +167,7 @@ install: lib | $(BUILD_DIR)
 	install -d $(DESTDIR)$(LIBDIR)
 	install -d $(DESTDIR)$(INCLUDEDIR)
 	install -m 644 $(BUILD_DIR)/$(LIBNAME) $(DESTDIR)$(LIBDIR)/$(LIBNAME)
+	install -m 644 $(BUILD_DIR)/$(LIBNAME:.a=-$(VERSION).a) $(DESTDIR)$(LIBDIR)/$(LIBNAME:.a=-$(VERSION).a)
 	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
 	install -m 644 include/cmem.hpp $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
 	install -m 644 include/cmem_pmr.hpp $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
@@ -190,6 +192,7 @@ install-shared: lib_shared | $(BUILD_DIR)
 # 卸载
 uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIBNAME)
+	rm -f $(DESTDIR)$(LIBDIR)/$(LIBNAME:.a=-$(VERSION).a)
 	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so
 	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so.1
 	rm -f $(DESTDIR)$(LIBDIR)/$(SONAME)
