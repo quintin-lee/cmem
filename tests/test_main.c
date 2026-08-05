@@ -536,6 +536,117 @@ void test_numa_auto_optimization()
 }
 
 /**
+ * @brief Tests compressed storage: round-trip, ownership, eviction, stats.
+ */
+void test_compressed_storage()
+{
+    printf("\n--- Test 38: Compressed Storage ---\n");
+
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+    assert(mp_set_compressed_budget(pool, 256 * 1024) == true);
+
+    /* Round-trip with repetitive data. */
+    const size_t data_size = 4096;
+    char *data = (char *)mp_alloc(pool, data_size);
+    assert(data != NULL);
+    for (size_t i = 0; i < data_size; i++) {
+        data[i] = (char)('a' + (i % 3));
+    }
+    compressed_handle_t handle = mp_compress_block(pool, data, data_size);
+    assert(handle != 0);
+
+    char *out = (char *)mp_decompress_block(pool, handle);
+    assert(out != NULL);
+    assert(memcmp(out, "abc", 3) == 0);
+    for (size_t i = 0; i < data_size; i++) {
+        assert(out[i] == (char)('a' + (i % 3)));
+    }
+    mp_free(pool, out);
+
+    /* Repeatable decompress. */
+    out = (char *)mp_decompress_block(pool, handle);
+    assert(out != NULL);
+    mp_free(pool, out);
+
+    /* Stats consistent. */
+    size_t used = 0, budget = 0, count = 0;
+    assert(mp_get_compressed_stats(pool, &used, &budget, &count) == true);
+    assert(used > 0 && used < data_size);
+    assert(budget == 256 * 1024);
+    assert(count == 1);
+
+    /* Free handle: second free fails, decompress returns NULL. */
+    assert(mp_free_compressed(pool, handle) == true);
+    assert(mp_free_compressed(pool, handle) == false);
+    assert(mp_decompress_block(pool, handle) == NULL);
+
+    /* No-gain: incompressible data keeps the original buffer.  A PRNG
+     * sequence (xorshift32) has no 4-byte repeats within the 64KiB
+     * window, so the codec finds no matches and must decline. */
+    char *rand_buf = (char *)mp_alloc(pool, 1024);
+    assert(rand_buf != NULL);
+    uint32_t seed = 12345u;
+    for (size_t i = 0; i < 1024; i++) {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        rand_buf[i] = (char)(seed & 0xFFu);
+    }
+    char *rand_copy = (char *)malloc(1024);
+    assert(rand_copy != NULL);
+    memcpy(rand_copy, rand_buf, 1024);
+    compressed_handle_t handle2 = mp_compress_block(pool, rand_buf, 1024);
+    assert(handle2 == 0);                           /* no gain — handle invalid */
+    assert(memcmp(rand_buf, rand_copy, 1024) == 0); /* original untouched */
+    free(rand_copy);
+    mp_free(pool, rand_buf);
+
+    /* Budget eviction: with budget 8KB all four ~19B blocks fit, then a
+     * budget smaller than a single block evicts everything and rejects
+     * the new block (deterministic; exercises the eviction loop guard). */
+    assert(mp_set_compressed_budget(pool, 8 * 1024) == true);
+    compressed_handle_t handles[4];
+    for (int i = 0; i < 4; i++) {
+        char *blk = (char *)mp_alloc(pool, 4096);
+        assert(blk != NULL);
+        for (size_t j = 0; j < 4096; j++) {
+            blk[j] = (char)('x' + (i % 3));
+        }
+        handles[i] = mp_compress_block(pool, blk, 4096);
+        assert(handles[i] != 0);
+    }
+    size_t c2 = 0;
+    assert(mp_get_compressed_stats(pool, NULL, NULL, &c2) == true);
+    assert(c2 == 4); /* all four fit under the 8KB budget */
+
+    /* Shrink the budget below a single block's size: the next compress
+     * evicts every stored block, then returns 0 (nothing left to evict)
+     * and the caller's buffer is retained untouched. */
+    assert(mp_set_compressed_budget(pool, 8) == true);
+    char *blk5 = (char *)mp_alloc(pool, 4096);
+    assert(blk5 != NULL);
+    memset(blk5, 'q', 4096);
+    compressed_handle_t handle5 = mp_compress_block(pool, blk5, 4096);
+    assert(handle5 == 0); /* rejected — budget smaller than one block */
+    for (size_t j = 0; j < 4096; j++) {
+        assert(blk5[j] == 'q'); /* original buffer retained */
+    }
+    mp_free(pool, blk5);
+
+    size_t c3 = 0;
+    assert(mp_get_compressed_stats(pool, NULL, NULL, &c3) == true);
+    assert(c3 == 0); /* all previous blocks were evicted */
+    for (int i = 0; i < 4; i++) {
+        assert(mp_decompress_block(pool, handles[i]) == NULL); /* stale */
+    }
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_compressed_storage");
+}
+
+/**
  * @brief Tests game and graphics pipeline dual ping-pong frame arena.
  */
 void test_frame_arena()
@@ -1510,6 +1621,7 @@ int main()
     test_fallback_on_oom();
     test_numa_node_binding();
     test_numa_auto_optimization();
+    test_compressed_storage();
     test_frame_arena();
     test_diff_snapshots();
     test_watermark_callback();
