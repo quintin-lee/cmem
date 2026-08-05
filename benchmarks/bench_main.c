@@ -40,18 +40,14 @@
 #define XORSHIFT_B 17
 #define XORSHIFT_C 5
 
-/* Volatile sink so the compiler cannot dead-code-eliminate malloc/free loops
- * whose pointers never escape (gcc -O2 would otherwise remove them entirely,
- * making the system-malloc measurement meaningless). */
-static volatile void *bench_escape_sink;
-
 /**
- * @brief Noinline barrier to prevent compiler from eliminating malloc/free loops.
- * Reads the escape sink through a function call the compiler cannot inline away.
+ * @brief Inline compiler memory barrier to prevent dead-code elimination of malloc/free.
+ * Passes ptr to an empty assembly instruction with a memory clobber, forcing the compiler
+ * to execute malloc and free without optimizing them away.
  */
-__attribute__((noinline)) static void bench_barrier(void)
+static inline void bench_escape(void *ptr)
 {
-    (void)bench_escape_sink;
+    __asm__ __volatile__("" : : "r"(ptr) : "memory");
 }
 
 /**
@@ -78,10 +74,9 @@ void bench_small_allocs()
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
         void *ptr = malloc(sz);
-        bench_escape_sink = ptr;
+        bench_escape(ptr);
         free(ptr);
     }
-    bench_barrier();
     double time_sys = get_time_sec() - start_sys;
 
     // 2. cmem Benchmark (interleaved alloc/free — realistic)
@@ -120,11 +115,11 @@ void bench_medium_allocs()
 
         size_t sz = 1024 + (i % MEDIUM_ALLOC_SPREAD);
         ptrs[i] = malloc(sz);
+        bench_escape(ptrs[i]);
     }
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         free(ptrs[i]);
     }
-    bench_barrier();
     double time_sys = get_time_sec() - start_sys;
 
     memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_DEFAULT);
@@ -439,10 +434,9 @@ void bench_size_distribution()
     double start = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         void *ptr = malloc(BENCH_SIZE_FIXED);
-        bench_escape_sink = ptr;
+        bench_escape(ptr);
         free(ptr);
     }
-    bench_barrier();
     double sys_fixed = get_time_sec() - start;
     memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
     start = get_time_sec();
@@ -461,10 +455,9 @@ void bench_size_distribution()
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
         size_t sz = 16 + (i * BENCH_SIZE_MIXED_STEP) % BENCH_SIZE_MIXED_SPREAD;
         void *ptr = malloc(sz);
-        bench_escape_sink = ptr;
+        bench_escape(ptr);
         free(ptr);
     }
-    bench_barrier();
     double sys_mixed = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
@@ -483,10 +476,9 @@ void bench_size_distribution()
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         size_t sz = BENCH_SIZE_LARGE_BASE + (i * BENCH_SIZE_LARGE_STEP) % BENCH_SIZE_LARGE_SPREAD;
         void *ptr = malloc(sz);
-        bench_escape_sink = ptr;
+        bench_escape(ptr);
         free(ptr);
     }
-    bench_barrier();
     double sys_large = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
@@ -728,10 +720,9 @@ void bench_allocation_patterns()
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
         size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
         void *ptr = malloc(sz);
-        bench_escape_sink = ptr;
+        bench_escape(ptr);
         free(ptr);
     }
-    bench_barrier();
     double sys_a = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
@@ -745,12 +736,11 @@ void bench_allocation_patterns()
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
         ptrs[i] = malloc(32 + (i % SMALL_ALLOC_SPREAD));
-        bench_escape_sink = ptrs[i];
+        bench_escape(ptrs[i]);
     }
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
         free(ptrs[i]);
     }
-    bench_barrier();
     double sys_b = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
@@ -770,10 +760,9 @@ void bench_allocation_patterns()
         seed ^= seed << XORSHIFT_C;
         size_t sz = 32 + (seed % SMALL_ALLOC_SPREAD);
         void *ptr = malloc(sz);
-        bench_escape_sink = ptr;
+        bench_escape(ptr);
         free(ptr);
     }
-    bench_barrier();
     double sys_c = get_time_sec() - start;
     seed = BENCH_XORSHIFT_SEED;
     start = get_time_sec();
@@ -790,16 +779,13 @@ void bench_allocation_patterns()
     /* (d) live set: allocate all, free 75% (timed), free rest after */
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
         ptrs[i] = malloc(32 + (i % SMALL_ALLOC_SPREAD));
+        bench_escape(ptrs[i]);
     }
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS - (int)live_count; i++) {
         free(ptrs[i]);
     }
-    bench_barrier();
     double sys_d = get_time_sec() - start;
-    for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
-        bench_escape_sink = ptrs[i];
-    }
     for (int i = BENCH_PATTERN_OPS - (int)live_count; i < BENCH_PATTERN_OPS; i++) {
         free(ptrs[i]);
     }
