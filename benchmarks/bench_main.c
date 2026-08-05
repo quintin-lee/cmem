@@ -40,14 +40,46 @@
 #define XORSHIFT_B 17
 #define XORSHIFT_C 5
 
+#define BENCH_MEDIAN_RUNS 5
+
 /**
- * @brief Inline compiler memory barrier to prevent dead-code elimination of malloc/free.
- * Passes ptr to an empty assembly instruction with a memory clobber, forcing the compiler
- * to execute malloc and free without optimizing them away.
+ * @brief Inline compiler memory barrier and memory touch write to prevent DCE and simulate real
+ * access.
  */
 static inline void bench_escape(void *ptr)
 {
+    if (ptr) {
+        ((volatile char *)ptr)[0] = 1;
+    }
     __asm__ __volatile__("" : : "r"(ptr) : "memory");
+}
+
+static void bench_warmup(memory_pool_t *pool)
+{
+    for (int i = 0; i < 10000; i++) {
+        void *sys_p = malloc(64);
+        bench_escape(sys_p);
+        free(sys_p);
+
+        if (pool) {
+            void *mp_p = mp_alloc(pool, 64);
+            bench_escape(mp_p);
+            mp_free(pool, mp_p);
+        }
+    }
+}
+
+static int double_cmp(const void *a, const void *b)
+{
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    return (da > db) - (da < db);
+}
+
+static double get_median_time(double times[], int count)
+{
+    qsort(times, count, sizeof(double), double_cmp);
+    return times[count / 2];
 }
 
 /**
