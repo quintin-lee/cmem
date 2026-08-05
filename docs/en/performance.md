@@ -342,6 +342,28 @@ The compression area is grown once, on first use, sized to the budget in
 effect at that moment. Raising the budget later only raises the eviction
 threshold — it does not enlarge the area.
 
+### 7.6 Fast-Path Mode (MP_FLAG_FAST_PATH)
+
+`MP_FLAG_FAST_PATH` trades diagnostic depth for allocation speed: the pool
+skips the header audit fields (magic, source location, backtrace) and the
+active-allocation linked list, and free-path corruption detection becomes a
+no-op. Pass it at `mp_create`:
+
+```c
+memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_FAST_PATH);
+```
+
+What still works: size-class dispatch, per-thread/per-CPU caches, canary and
+poison checks, zero-on-alloc, and the allocation counters —
+`mp_check_leaks()` keeps its count verdict (a per-address leak report is not
+possible without the active list). What is lost: double-free / header
+corruption detection, the `mp_audit_heap()` address walk, and per-allocation
+source attribution.
+
+In interleaved single-threaded small-allocation benchmarks the flag yields
+roughly a 1.1-1.5x throughput gain; combine it with `MP_FLAG_THREAD_LOCAL_CACHE`
+for the hottest single-threaded paths.
+
 ---
 
 ## 8. HugePages Optimization

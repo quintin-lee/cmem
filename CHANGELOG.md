@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
 - `MP_FLAG_AUTO_NUMA` pool flag with thread-local-first NUMA binding, plus `mp_numa_node_count()` / `mp_cpu_to_node()` topology query APIs
 - In-pool compressed storage: `mp_compress_block` / `mp_decompress_block` / `mp_free_compressed` with a built-in LZ4 codec, configurable budget with oldest-first eviction, and `mp_get_compressed_stats` reporting
+- `MP_FLAG_FAST_PATH` pool flag that skips header audit fields and active-list tracking for faster small allocations (about 1.1-1.5x on interleaved single-threaded traffic)
 - Targeted coverage tests for OS fallback allocation, debug canary/zero flags, slab full-page transitions, and lazy RSS purge paths
 - `mp_get_allocation_info()` for per-allocation metadata inspection (type, size, source location, backtrace)
 - `mp_enumerate_regions()` for enumerating all backing memory regions (Slab pages, TLSF pools, OS mappings)

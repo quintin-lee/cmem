@@ -334,6 +334,24 @@ mp_free_compressed(pool, h);                        // 释放句柄
 压缩区域在首次使用时一次性分配,大小按当时的预算确定。之后提高预算只会
 提高淘汰阈值 —— 不会扩大区域。
 
+### 7.6 快速路径模式 (MP_FLAG_FAST_PATH)
+
+`MP_FLAG_FAST_PATH` 用诊断深度换取分配速度:池跳过头部审计字段
+(magic、源位置、回溯)和活跃分配链表,释放路径的损坏检测变为空操作。
+在 `mp_create` 时传入:
+
+```c
+memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_FAST_PATH);
+```
+
+仍然有效:大小类分发、每线程/每 CPU 缓存、canary 与 poison 检查、
+零初始化、分配计数器 —— `mp_check_leaks()` 保留计数判定(没有活跃链表
+就无法做按地址的泄漏报告)。失去的:双重释放/头部损坏检测、
+`mp_audit_heap()` 地址遍历、以及按分配的来源标注。
+
+在交错单线程小分配基准中,该标志带来约 1.1-1.5 倍吞吐提升;单线程
+热点路径可配合 `MP_FLAG_THREAD_LOCAL_CACHE` 使用。
+
 ---
 
 ## 8. HugePages 优化
