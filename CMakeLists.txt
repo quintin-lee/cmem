@@ -153,7 +153,11 @@ set_target_properties(cmem_core PROPERTIES
 if(CMEM_BUILD_SHARED)
     add_library(cmem_core_shared SHARED ${CMEM_CORE_SRCS})
     target_link_libraries(cmem_core_shared PRIVATE pthread ${RT_LIBRARY})
-    target_compile_definitions(cmem_core_shared PUBLIC CMEM_DISABLE_DIAGNOSTICS)
+    # PRIVATE: the define must only affect cmem_core_shared's own compilation
+    # (compiling out mp_check_leaks() references in cmem_event.c). PUBLIC would
+    # propagate it to cmem_diag_shared, which links this target but needs the
+    # diagnostic types (mp_leak_severity_t, mp_leak_pattern_t) from cmem_diag.h.
+    target_compile_definitions(cmem_core_shared PRIVATE CMEM_DISABLE_DIAGNOSTICS)
     set_target_properties(cmem_core_shared PROPERTIES
         OUTPUT_NAME cmem_core
         VERSION ${CMEM_VERSION}
