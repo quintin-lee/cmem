@@ -153,6 +153,7 @@ set_target_properties(cmem_core PROPERTIES
 if(CMEM_BUILD_SHARED)
     add_library(cmem_core_shared SHARED ${CMEM_CORE_SRCS})
     target_link_libraries(cmem_core_shared PRIVATE pthread ${RT_LIBRARY})
+    target_compile_definitions(cmem_core_shared PUBLIC CMEM_DISABLE_DIAGNOSTICS)
     set_target_properties(cmem_core_shared PROPERTIES
         OUTPUT_NAME cmem_core
         VERSION ${CMEM_VERSION}
