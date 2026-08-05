@@ -92,17 +92,20 @@ lib_shared: format-check | $(BUILD_DIR)
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
 	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
 
+ASAN_SO := $(shell find /usr/lib /usr/lib64 /usr/lib32 -name "libasan.so*" 2>/dev/null | head -n 1)
+RUN_ASAN = $(if $(ASAN_SO),LD_PRELOAD=$(ASAN_SO),)
+
 # C 单元测试
 test: format-check $(SRC) $(TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests $(LDFLAGS)
 	@echo "Running C unit tests..."
-	./$(BUILD_DIR)/unit_tests
+	$(RUN_ASAN) ./$(BUILD_DIR)/unit_tests
 
 # C 高级单元测试
 test_advanced: format-check $(SRC) $(ADV_TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEBUG) $(SRC) $(ADV_TEST_SRC) -o $(BUILD_DIR)/advanced_tests $(LDFLAGS)
 	@echo "Running C advanced unit tests..."
-	./$(BUILD_DIR)/advanced_tests
+	$(RUN_ASAN) ./$(BUILD_DIR)/advanced_tests
 
 # 长时间高并发压测
 stress_test: format-check $(SRC) $(STRESS_SRC) | $(BUILD_DIR)
@@ -121,7 +124,7 @@ test_cpp: format-check $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS_DEBUG) -c $(CPP_TEST_SRC) -o $(BUILD_DIR)/test_cpp.o; \
 	$(CXX) $(CXXFLAGS_DEBUG) $(addprefix $(BUILD_DIR)/,$(notdir $(patsubst %.c,%.o,$(SRC)))) $(BUILD_DIR)/test_cpp.o -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
 	@echo "Running C++ tests..."
-	./$(BUILD_DIR)/cpp_tests
+	$(RUN_ASAN) ./$(BUILD_DIR)/cpp_tests
 
 # 性能基准测试
 bench: format-check $(SRC) $(BENCH_SRC) | $(BUILD_DIR)
