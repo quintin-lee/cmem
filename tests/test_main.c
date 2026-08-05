@@ -647,6 +647,56 @@ void test_compressed_storage()
 }
 
 /**
+ * @brief Tests the MP_FLAG_FAST_PATH pool: interleaved alloc/free traffic,
+ * leak-count verdict, and compatibility with canary and poison checks.
+ */
+void test_fast_path()
+{
+    printf("\n--- Test 39: FAST_PATH ---\n");
+
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_FAST_PATH);
+    assert(pool != NULL);
+
+    /* Interleaved alloc/free through every slab class. */
+    for (int i = 0; i < 1000000; i++) {
+        size_t sz = 32 + (i % 224);
+        void *ptr = mp_alloc(pool, sz);
+        assert(ptr != NULL);
+        *(volatile unsigned char *)ptr = 0xAA;
+        mp_free(pool, ptr);
+    }
+
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+    assert(mp_check_leaks(pool) == true);
+
+    /* Canary still enforced under FAST_PATH. */
+    memory_pool_t *canary_pool = mp_create(1024 * 1024, MP_FLAG_FAST_PATH | MP_FLAG_DEBUG_CANARY);
+    assert(canary_pool != NULL);
+    char *buf = (char *)mp_alloc(canary_pool, 64);
+    assert(buf != NULL);
+    memset(buf, 0x55, 64);
+    mp_free(canary_pool, buf);
+    assert(mp_check_leaks(canary_pool) == true);
+    mp_destroy(canary_pool);
+
+    /* Poison still enforced under FAST_PATH. */
+    memory_pool_t *poison_pool = mp_create(1024 * 1024, MP_FLAG_FAST_PATH | MP_FLAG_POISON_ON_FREE);
+    assert(poison_pool != NULL);
+    buf = (char *)mp_alloc(poison_pool, 64);
+    assert(buf != NULL);
+    memset(buf, 0x55, 64);
+    mp_free(poison_pool, buf);
+    assert(mp_check_leaks(poison_pool) == true);
+    mp_destroy(poison_pool);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_fast_path");
+}
+
+/**
  * @brief Tests game and graphics pipeline dual ping-pong frame arena.
  */
 void test_frame_arena()
@@ -1622,6 +1672,7 @@ int main()
     test_numa_node_binding();
     test_numa_auto_optimization();
     test_compressed_storage();
+    test_fast_path();
     test_frame_arena();
     test_diff_snapshots();
     test_watermark_callback();
