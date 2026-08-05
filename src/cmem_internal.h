@@ -348,9 +348,11 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     double auto_compact_fragmentation_threshold; /**< Fragmentation trigger ratio  */
     struct timespec last_auto_compact_time;      /**< Last auto-compact timestamp  */
 
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     size_t alloc_latency_histogram[32]; /**< Buckets for allocation-latency samples */
     size_t alloc_latency_count;         /**< Total latency samples                 */
     uint64_t alloc_latency_sum_ns;      /**< Accumulated latency (ns) for avg       */
+#endif
 
     size_t arena_quota_limit;               /**< Per-arena byte cap (0=unlimited) */
     mp_watermark_callback_t arena_quota_cb; /**< Quota-exceeded callback          */

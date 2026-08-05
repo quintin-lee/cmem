@@ -1420,7 +1420,9 @@ void mp_destroy(memory_pool_t *pool)
     percpu_flush(pool);
 
     if (pool->flags & MP_FLAG_REPORT_LEAKS_ON_DESTROY) {
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
         mp_check_leaks(pool);
+#endif
     }
 
     memory_pool_t *child = pool->first_child;
