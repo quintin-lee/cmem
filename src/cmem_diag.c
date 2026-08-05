@@ -45,6 +45,10 @@ bool mp_audit_heap(memory_pool_t *pool)
     if (!pool) {
         return true;
     }
+    /* FAST_PATH pools keep no active list and no magic; auditing is a no-op. */
+    if (pool->flags & MP_FLAG_FAST_PATH) {
+        return true;
+    }
     pool_lock(pool);
 
     bool healthy = true;

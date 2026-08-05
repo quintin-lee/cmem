@@ -85,7 +85,8 @@ bool mp_isolate_bad_block(memory_pool_t *pool, void *ptr)
         return false;
     }
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
-    if (header->magic != MP_MAGIC_HEAD) {
+    /* FAST_PATH pools don't stamp magic and keep no active list. */
+    if ((pool->flags & MP_FLAG_FAST_PATH) || header->magic != MP_MAGIC_HEAD) {
         return false;
     }
 
@@ -1879,6 +1880,23 @@ void active_list_remove(memory_pool_t *pool, mp_block_header_t *header)
 }
 
 /**
+ * @brief Update free-path accounting for one block.
+ * Under MP_FLAG_FAST_PATH the active-allocation list is not maintained, so the
+ * linked-list unlink is skipped; counters are always kept for leak-count verdicts.
+ * @param pool   The memory pool.
+ * @param header Block header being freed.
+ */
+static void mp_free_stats_update(memory_pool_t *pool, mp_block_header_t *header)
+{
+    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+        active_list_remove(pool, header);
+    }
+    pool->stats.active_bytes -= header->requested_size;
+    pool->stats.active_allocations--;
+    pool->stats.total_free_ops++;
+}
+
+/**
  * @brief Allocate with caller source-location attribution.
  * Records file/line/function and, when tracking is on, a backtrace before
  * delegating to the size-class dispatcher.
@@ -2254,7 +2272,8 @@ void mp_free(memory_pool_t *pool, void *ptr)
 
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
 
-    if (header->magic != MP_MAGIC_HEAD) {
+    /* FAST_PATH pools don't stamp magic; skip corruption detection. */
+    if (!(pool->flags & MP_FLAG_FAST_PATH) && header->magic != MP_MAGIC_HEAD) {
         if (pool) {
             (void)fprintf(
                 stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
@@ -2294,16 +2313,10 @@ void mp_free(memory_pool_t *pool, void *ptr)
 
         if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
             if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
-                active_list_remove(pool, header);
-                pool->stats.active_bytes -= header->requested_size;
-                pool->stats.active_allocations--;
-                pool->stats.total_free_ops++;
+                mp_free_stats_update(pool, header);
             } else {
                 pool_lock(pool);
-                active_list_remove(pool, header);
-                pool->stats.active_bytes -= header->requested_size;
-                pool->stats.active_allocations--;
-                pool->stats.total_free_ops++;
+                mp_free_stats_update(pool, header);
                 pool_unlock(pool);
             }
             if (pool->event_cb) {
@@ -2322,16 +2335,10 @@ void mp_free(memory_pool_t *pool, void *ptr)
             mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
             if (percpu_push(pool, cpu, class_idx, slot)) {
                 if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
-                    active_list_remove(pool, header);
-                    pool->stats.active_bytes -= header->requested_size;
-                    pool->stats.active_allocations--;
-                    pool->stats.total_free_ops++;
+                    mp_free_stats_update(pool, header);
                 } else {
                     pool_lock(pool);
-                    active_list_remove(pool, header);
-                    pool->stats.active_bytes -= header->requested_size;
-                    pool->stats.active_allocations--;
-                    pool->stats.total_free_ops++;
+                    mp_free_stats_update(pool, header);
                     pool_unlock(pool);
                 }
                 if (pool->event_cb) {
@@ -2343,10 +2350,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
 
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
             pool_lock(pool);
-            active_list_remove(pool, header);
-            pool->stats.active_bytes -= header->requested_size;
-            pool->stats.active_allocations--;
-            pool->stats.total_free_ops++;
+            mp_free_stats_update(pool, header);
             pool_unlock(pool);
             if (pool->event_cb) {
                 trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
@@ -2380,10 +2384,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
     size_t req_size = header->requested_size;
     void *raw_base = header->raw_base;
 
-    active_list_remove(pool, header);
-    pool->stats.active_bytes -= req_size;
-    pool->stats.active_allocations--;
-    pool->stats.total_free_ops++;
+    mp_free_stats_update(pool, header);
     if (alloc_type == ALLOC_TYPE_OS) {
         pool->stats.os_allocated_bytes -= req_size;
         pool->stats.total_pool_size -=
