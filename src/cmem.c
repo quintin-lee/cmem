@@ -41,12 +41,6 @@
 #define MP_CANARY_BYTE 0xDE
 #define MP_POISON_BYTE 0xDD
 
-#define SLAB_CLASS_COUNT 7
-#define SLAB_MAX_SIZE 512
-#define SLAB_PAGE_SIZE (64 * 1024) // 64 KB per slab page
-#define TLS_CACHE_MAX_SLOTS 256
-#define MAX_BACKTRACE_FRAMES 8
-
 /* TLSF Allocator Constants */
 #define TLSF_SL_SHIFT 4
 #define TLSF_SL_COUNT (1 << TLSF_SL_SHIFT) // 16 subdivisions per FL

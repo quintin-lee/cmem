@@ -48,7 +48,7 @@ typedef volatile LONG_PTR cmem_atomic_size_t;
 #define CMEM_ATOMIC_LOAD(obj, order) InterlockedCompareExchange64((LONG64 volatile *)(obj), 0, 0)
 #define CMEM_ATOMIC_STORE(obj, val, order)                                                         \
     InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
-#define CMEM_ATOMIC_EXCHANGE(obj, val, order)                                                         \
+#define CMEM_ATOMIC_EXCHANGE(obj, val, order)                                                      \
     InterlockedExchange64((LONG64 volatile *)(obj), (LONG64)(val))
 #define CMEM_ATOMIC_COMPARE_EXCHANGE(obj, expected, desired, succ, fail)                           \
     (InterlockedCompareExchange64(                                                                 \
@@ -164,11 +164,11 @@ typedef struct cmem_numa_topology {
 
 /* Slab allocator tuning. Small allocations (<= SLAB_MAX_SIZE) are served from
  * SLAB_CLASS_COUNT fixed bucket sizes carved out of SLAB_PAGE_SIZE pages. */
-#define SLAB_CLASS_COUNT 7         /* Number of distinct small-object size classes    */
-#define SLAB_MAX_SIZE 512          /* Largest object routed to a slab class (bytes)   */
-#define SLAB_PAGE_SIZE (64 * 1024) /* Bytes carved per slab page (64 KB)              */
-#define TLS_CACHE_MAX_SLOTS 256    /* Max slots stashed in a thread-local cache       */
-#define MAX_BACKTRACE_FRAMES 8     /* Max callstack frames captured per allocation    */
+#define SLAB_CLASS_COUNT CMEM_SLAB_CLASS_COUNT /* Number of distinct small-object size classes */
+#define SLAB_MAX_SIZE 512                      /* Largest object routed to a slab class (bytes)   */
+#define SLAB_PAGE_SIZE (64 * 1024)             /* Bytes carved per slab page (64 KB)              */
+#define TLS_CACHE_MAX_SLOTS 256                /* Max slots stashed in a thread-local cache       */
+#define MAX_BACKTRACE_FRAMES 8                 /* Max callstack frames captured per allocation    */
 
 /* TLSF Allocator Constants: the two-level segregated fit index geometry. */
 #define TLSF_SL_SHIFT 4                    /* Bits of second-level index (seg)                */
@@ -187,45 +187,6 @@ typedef struct cmem_numa_topology {
  * Shared internal types
  * -------------------------------------------------------------------------
  */
-/**
- * @brief cmem's own per-allocation metadata header.
- *
- * Every allocation cmem hands out points at a user payload whose address is
- * immediately preceded by one of these headers. It stores the mgmt info
- * needed for free(), realloc(), leak tracking, and introspection. This is a
- * cmem-internal structure distinct from the TLSF block header in cmem_tlsf.c.
- */
-typedef struct mp_block_header {
-    uint32_t magic;        /**< MP_MAGIC_HEAD to detect free/corruption         */
-    uint8_t alloc_type;    /**< Allocation tier: slab / TLSF / direct OS        */
-    uint8_t slab_class;    /**< Slab class index if served from a slab         */
-    uint16_t flags;        /**< Per-block flags (aligned, poisoned, etc).      */
-    size_t requested_size; /**< Size the caller actually asked for             */
-    size_t usable_size;    /**< Padded size actually handed out                */
-    void *raw_base;        /**< Start of backing memory (for munmap/free)      */
-    void *subpool;         /**< Owning subpool/child arena, if any             */
-
-    const char *alloc_file; /**< __FILE__ when location tracking is enabled     */
-    int alloc_line;         /**< __LINE__ when location tracking is enabled     */
-    const char *alloc_func; /**< __func__  when location tracking is enabled    */
-    void *backtrace_addrs[MAX_BACKTRACE_FRAMES]; /**< Captured stack addresses */
-    int backtrace_depth;                         /**< Number of valid backtrace frames */
-
-    struct mp_block_header *prev; /**< Previous live block in the active list      */
-    struct mp_block_header *next; /**< Next live block in the active list          */
-} mp_block_header_t;
-
-/**
- * @brief A free slot carved from a slab page.
- *
- * While a slot is free its first word is reused as the "next" freelist
- * pointer (intrusive singly linked list). When allocated, that space becomes
- * the user's payload. Only one mp_slab_slot_t per free object exists.
- */
-typedef struct mp_slab_slot {
-    struct mp_slab_slot *next; /**< Next free slot in the same class freelist */
-} mp_slab_slot_t;
-
 /**
  * @brief One full (or partially-used) 64 KB slab page.
  *
@@ -262,29 +223,17 @@ typedef struct {
     mp_slab_page_t *cold_pages;    /**< Pages marked cold                             */
 } mp_slab_class_t;
 
-/**
- * @brief Thread-local small-object cache.
- *
- * When MP_FLAG_THREAD_LOCAL_CACHE is on, each thread caches a few slots per
- * slab class here to avoid taking the class lock for every allocation/free.
- */
-typedef struct {
-    struct memory_pool *owner_pool;          /**< Pool owning the cached slots            */
-    mp_slab_slot_t *slots[SLAB_CLASS_COUNT]; /**< Per-class cache of free slots        */
-    uint16_t counts[SLAB_CLASS_COUNT];       /**< Number of cached slots per class      */
-} thread_cache_t;
-
 extern MP_THREAD_LOCAL thread_cache_t tls_cache; /**< Per-thread slab cache (TLS)            */
 extern MP_THREAD_LOCAL mp_thread_quota_t thread_quota; /**< Per-thread quota accounting (TLS) */
 
 /* Compressed-storage entry: one slot in the pool's handle table. */
 typedef struct cmem_compressed_entry {
-    size_t   original_size; /* uncompressed payload size */
-    size_t   comp_offset;   /* byte offset into compression_area */
-    size_t   comp_size;     /* compressed payload size */
-    uint32_t generation;    /* bumped on every reuse (stale-handle guard) */
-    uint32_t alloc_seq;     /* monotonic order for oldest-first eviction */
-    bool     used;
+    size_t original_size; /* uncompressed payload size */
+    size_t comp_offset;   /* byte offset into compression_area */
+    size_t comp_size;     /* compressed payload size */
+    uint32_t generation;  /* bumped on every reuse (stale-handle guard) */
+    uint32_t alloc_seq;   /* monotonic order for oldest-first eviction */
+    bool used;
 } cmem_compressed_entry_t;
 
 /**
@@ -385,9 +334,10 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     struct timespec window_start_time; /**< Start of the sampling window          */
 
     mp_slab_class_t slab_classes[SLAB_CLASS_COUNT]; /**< One class per size bucket     */
-    cmem_atomic_size_t remote_free_queue[SLAB_CLASS_COUNT]; /**< Lock-free cross-thread remote free queues */
-    bool use_custom_slab_sizes;                     /**< Custom class table in effect */
-    size_t custom_slab_sizes[SLAB_CLASS_COUNT];     /**< Custom class sizes        */
+    cmem_atomic_size_t
+        remote_free_queue[SLAB_CLASS_COUNT];    /**< Lock-free cross-thread remote free queues */
+    bool use_custom_slab_sizes;                 /**< Custom class table in effect */
+    size_t custom_slab_sizes[SLAB_CLASS_COUNT]; /**< Custom class sizes        */
 
     tlsf_pool_t *tlsf_root; /**< First TLSF arena (chained for expansion) */
 
@@ -409,11 +359,11 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     int num_cpus;                                 /**< CPU count for per-CPU freelists   */
     mp_percpu_freelist_entry_t *percpu_freelists; /**< Per-CPU free lists (lock-free)    */
 
-    int num_arenas;                     /**< Sub-arena count (0 if single pool) */
-    struct memory_pool **arenas;        /**< Multi-arena sub-pools array        */
-    cmem_atomic_size_t arena_rr_index;  /**< Round-robin atomic index for thread binding */
-    bool is_multi_arena_child;          /**< True if this is a sub-arena child   */
-    struct memory_pool *master_pool;    /**< Master pool back-pointer if sub-arena */
+    int num_arenas;                    /**< Sub-arena count (0 if single pool) */
+    struct memory_pool **arenas;       /**< Multi-arena sub-pools array        */
+    cmem_atomic_size_t arena_rr_index; /**< Round-robin atomic index for thread binding */
+    bool is_multi_arena_child;         /**< True if this is a sub-arena child   */
+    struct memory_pool *master_pool;   /**< Master pool back-pointer if sub-arena */
 
     mp_watermark_callback_t gc_cb;       /**< GC callback invoked before OOM rejection   */
     void *gc_user_data;                  /**< GC callback arg                            */
@@ -440,12 +390,12 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
 
     /* --- Compressed storage --- */
     cmem_compressed_entry_t *compressed_entries; /* handle table, NULL = disabled */
-    uint32_t                 compressed_capacity;/* table capacity (0 = disabled) */
-    uint32_t                 compressed_seq;     /* next allocation sequence */
-    size_t                   compressed_budget;  /* 0 = disabled */
-    size_t                   compressed_used;    /* bytes currently stored */
-    void                    *compressed_area;    /* compression area base */
-    size_t                   compressed_area_size; /* usable bytes in area */
+    uint32_t compressed_capacity;                /* table capacity (0 = disabled) */
+    uint32_t compressed_seq;                     /* next allocation sequence */
+    size_t compressed_budget;                    /* 0 = disabled */
+    size_t compressed_used;                      /* bytes currently stored */
+    void *compressed_area;                       /* compression area base */
+    size_t compressed_area_size;                 /* usable bytes in area */
 };
 
 /**
@@ -566,27 +516,8 @@ static inline uint8_t get_slab_class_index(memory_pool_t *pool, size_t size)
         }
         return SLAB_CLASS_COUNT;
     }
-    /* Default fixed bucket thresholds: 8,16,32,64,128,256,512 bytes. */
-    if (size <= 8) {
-        return 0;
-    }
-    if (size <= 16) {
-        return 1;
-    }
-    if (size <= 32) {
-        return 2;
-    }
-    if (size <= 64) {
-        return 3;
-    }
-    if (size <= 128) {
-        return 4;
-    }
-    if (size <= 256) {
-        return 5; // NOLINT(readability-magic-numbers)
-    }
-    if (size <= 512) {
-        return 6; // NOLINT(readability-magic-numbers)
+    if (size > 0 && size <= 512) {
+        return cmem_size_to_class[size];
     }
     return SLAB_CLASS_COUNT;
 }

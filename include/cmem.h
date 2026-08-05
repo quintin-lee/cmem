@@ -1110,6 +1110,103 @@ void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size);
  */
 void mp_free(memory_pool_t *pool, void *ptr);
 
+#ifndef MP_THREAD_LOCAL
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_THREADS__)
+#define MP_THREAD_LOCAL _Thread_local
+#elif defined(_MSC_VER)
+#define MP_THREAD_LOCAL __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define MP_THREAD_LOCAL __thread
+#else
+#define MP_THREAD_LOCAL
+#endif
+#endif
+
+typedef struct mp_slab_slot {
+    struct mp_slab_slot *next;
+} mp_slab_slot_t;
+
+#define CMEM_SLAB_CLASS_COUNT 7
+
+typedef struct {
+    memory_pool_t *owner_pool;
+    mp_slab_slot_t *slots[CMEM_SLAB_CLASS_COUNT];
+    uint16_t counts[CMEM_SLAB_CLASS_COUNT];
+} thread_cache_t;
+
+typedef struct mp_block_header {
+    uint32_t magic;
+    uint8_t alloc_type;
+    uint8_t slab_class;
+    uint16_t flags;
+    size_t requested_size;
+    size_t usable_size;
+    void *raw_base;
+    void *subpool;
+    const char *alloc_file;
+    int alloc_line;
+    const char *alloc_func;
+    void *backtrace_addrs[8];
+    int backtrace_depth;
+    struct mp_block_header *prev;
+    struct mp_block_header *next;
+} mp_block_header_t;
+
+extern MP_THREAD_LOCAL thread_cache_t tls_cache;
+extern const uint8_t cmem_size_to_class[513];
+
+/**
+ * @brief Ultra-fast inline small-object allocator for MP_FLAG_FAST_PATH pools.
+ */
+static inline void *mp_alloc_fast(memory_pool_t *pool, size_t size)
+{
+    if (__builtin_expect(pool != NULL && size > 0 && size <= 512, 1)) {
+        mp_flags_t flags = *(const mp_flags_t *)pool;
+        if (__builtin_expect((flags & MP_FLAG_FAST_PATH) != 0, 1)) {
+            uint8_t class_idx = cmem_size_to_class[size];
+            if (__builtin_expect(tls_cache.counts[class_idx] > 0, 1)) {
+                mp_slab_slot_t *slot = tls_cache.slots[class_idx];
+                tls_cache.slots[class_idx] = slot->next;
+                tls_cache.counts[class_idx]--;
+
+                mp_block_header_t *header = (mp_block_header_t *)slot;
+                header->alloc_type = (uint8_t)ALLOC_TYPE_SLAB;
+                header->slab_class = class_idx;
+                header->raw_base = slot;
+                header->subpool = pool;
+
+                return (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+            }
+        }
+    }
+    return mp_alloc(pool, size);
+}
+
+/**
+ * @brief Ultra-fast inline small-object deallocator for MP_FLAG_FAST_PATH pools.
+ */
+static inline void mp_free_fast(memory_pool_t *pool, void *ptr)
+{
+    if (__builtin_expect(ptr != NULL && pool != NULL, 1)) {
+        mp_flags_t flags = *(const mp_flags_t *)pool;
+        if (__builtin_expect((flags & MP_FLAG_FAST_PATH) != 0, 1)) {
+            mp_block_header_t *header =
+                (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
+            if (__builtin_expect(header->alloc_type == (uint8_t)ALLOC_TYPE_SLAB, 1)) {
+                uint8_t class_idx = header->slab_class;
+                if (__builtin_expect(tls_cache.counts[class_idx] < 256, 1)) {
+                    mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
+                    slot->next = tls_cache.slots[class_idx];
+                    tls_cache.slots[class_idx] = slot;
+                    tls_cache.counts[class_idx]++;
+                    return;
+                }
+            }
+        }
+    }
+    mp_free(pool, ptr);
+}
+
 /**
  * @brief Duplicates a null-terminated string into the memory pool.
  *
