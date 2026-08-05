@@ -712,8 +712,3 @@ void mp_set_global_pool(memory_pool_t *pool)
 {
     g_global_pool = pool;
 }
-
-/* --- Game & Graphics Pipeline Dual Ping-Pong Frame Arena --- */
-/**
- * @brief Frame arena structure for double-buffered per-frame allocations.
- */

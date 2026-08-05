@@ -1483,6 +1483,16 @@ void mp_destroy(memory_pool_t *pool)
 #endif
                 curr = next;
             }
+            curr = pool->slab_classes[i].empty_pages;
+            while (curr) {
+                mp_slab_page_t *next = curr->next;
+#ifdef _WIN32
+                cmem_aligned_free(curr->page_raw_mem);
+#else
+                cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
+#endif
+                curr = next;
+            }
         }
 
         tlsf_pool_t *tcurr = pool->tlsf_root;
@@ -1897,6 +1907,8 @@ void active_list_remove(memory_pool_t *pool, mp_block_header_t *header)
     if (header->next) {
         header->next->prev = header->prev;
     }
+    header->prev = NULL;
+    header->next = NULL;
 }
 
 /**
@@ -2148,35 +2160,65 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         mp_block_header_t *header =
             (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
 
-        if (pool->flags & MP_FLAG_THREAD_SAFE) {
-            pool_lock(pool);
-        }
+        bool call_watermark = false;
+        bool call_event = false;
 
         if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+            if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                pool_lock(pool);
+            }
             active_list_add(pool, header);
+            pool->stats.active_bytes += size;
+            if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                pool->stats.peak_bytes = pool->stats.active_bytes;
+            }
+            pool->stats.active_allocations++;
+            pool->stats.total_alloc_ops++;
+
+            int bucket = get_slab_class_index(pool, size);
+            if (bucket < CMEM_HISTOGRAM_BUCKETS) {
+                pool->stats.size_histogram[bucket]++;
+            }
+            if (pool->watermark_cb) {
+                call_watermark = true;
+            }
+            if (pool->event_cb) {
+                call_event = true;
+            }
+            if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                pool_unlock(pool);
+            }
+        } else {
+            if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                pool_lock(pool);
+            }
+            pool->stats.active_bytes += size;
+            if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+                pool->stats.peak_bytes = pool->stats.active_bytes;
+            }
+            pool->stats.active_allocations++;
+            pool->stats.total_alloc_ops++;
+
+            int bucket = get_slab_class_index(pool, size);
+            if (bucket < CMEM_HISTOGRAM_BUCKETS) {
+                pool->stats.size_histogram[bucket]++;
+            }
+            if (pool->watermark_cb) {
+                call_watermark = true;
+            }
+            if (pool->event_cb) {
+                call_event = true;
+            }
+            if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                pool_unlock(pool);
+            }
         }
 
-        pool->stats.active_bytes += size;
-        if (pool->stats.active_bytes > pool->stats.peak_bytes) {
-            pool->stats.peak_bytes = pool->stats.active_bytes;
-        }
-        pool->stats.active_allocations++;
-        pool->stats.total_alloc_ops++;
-
-        int bucket = get_slab_class_index(pool, size);
-        if (bucket < CMEM_HISTOGRAM_BUCKETS) {
-            pool->stats.size_histogram[bucket]++;
-        }
-
-        if (pool->watermark_cb) {
+        if (call_watermark) {
             check_watermark_after_change(pool);
         }
-        if (pool->event_cb) {
+        if (call_event) {
             trigger_event(pool, MP_EVENT_ALLOC, ptr, size);
-        }
-
-        if (pool->flags & MP_FLAG_THREAD_SAFE) {
-            pool_unlock(pool);
         }
     }
 
@@ -2408,6 +2450,8 @@ void mp_free(memory_pool_t *pool, void *ptr)
     uint8_t alloc_type = header->alloc_type;
     size_t req_size = header->requested_size;
     void *raw_base = header->raw_base;
+    bool call_watermark = false;
+    bool call_event = false;
 
     mp_free_stats_update(pool, header);
     if (alloc_type == ALLOC_TYPE_OS) {
@@ -2415,8 +2459,12 @@ void mp_free(memory_pool_t *pool, void *ptr)
         pool->stats.total_pool_size -=
             (req_size + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0));
     }
-    check_watermark_after_change(pool);
-    trigger_event(pool, MP_EVENT_FREE, ptr, req_size);
+    if (pool->watermark_cb) {
+        call_watermark = true;
+    }
+    if (pool->event_cb) {
+        call_event = true;
+    }
 
     if (alloc_type == ALLOC_TYPE_SLAB) {
         pool_unlock(pool);
@@ -2430,6 +2478,13 @@ void mp_free(memory_pool_t *pool, void *ptr)
     } else if (alloc_type == ALLOC_TYPE_EMERGENCY) {
         pool->emergency_used = false;
         pool_unlock(pool);
+    }
+
+    if (call_watermark) {
+        check_watermark_after_change(pool);
+    }
+    if (call_event) {
+        trigger_event(pool, MP_EVENT_FREE, ptr, req_size);
     }
 }
 

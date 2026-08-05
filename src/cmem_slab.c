@@ -78,9 +78,35 @@ void tls_cache_flush_pool(memory_pool_t *pool)
     }
 }
 
+#ifndef _WIN32
+static pthread_key_t g_tls_cache_key;
+static pthread_once_t g_tls_cache_key_once = PTHREAD_ONCE_INIT;
+
+static void tls_cache_dtor(void *arg)
+{
+    (void)arg;
+    if (tls_cache.owner_pool) {
+        tls_cache_flush_pool(tls_cache.owner_pool);
+    }
+}
+
+static void make_tls_cache_key(void)
+{
+    pthread_key_create(&g_tls_cache_key, tls_cache_dtor);
+}
+#endif
+
 void tls_cache_validate_owner(memory_pool_t *pool)
 {
+#ifndef _WIN32
+    pthread_once(&g_tls_cache_key_once, make_tls_cache_key);
+    pthread_setspecific(g_tls_cache_key, (void *)1);
+#endif
+
     if (tls_cache.owner_pool != pool) {
+        if (tls_cache.owner_pool != NULL) {
+            tls_cache_flush_pool(tls_cache.owner_pool);
+        }
         tls_cache.owner_pool = pool;
         for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
             tls_cache.slots[i] = NULL;
@@ -444,26 +470,6 @@ void slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
         }
         sc->empty_pages = page;
         sc->empty_page_count++;
-
-        /* Threshold check: if empty_page_count > max_empty_pages, unmap extra empty page
-         * immediately */
-        if (sc->empty_page_count > sc->max_empty_pages) {
-            mp_slab_page_t *unmap_page = sc->empty_pages;
-            sc->empty_pages = unmap_page->next;
-            if (sc->empty_pages) {
-                sc->empty_pages->prev = NULL;
-            }
-            sc->empty_page_count--;
-
-#ifdef _WIN32
-            cmem_aligned_free(unmap_page->page_raw_mem);
-#else
-            cmem_munmap(unmap_page->page_raw_mem, SLAB_PAGE_SIZE);
-#endif
-            if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
-                pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
-            }
-        }
     }
 }
 

@@ -636,10 +636,22 @@ void test_compressed_storage()
 
     size_t c3 = 0;
     assert(mp_get_compressed_stats(pool, NULL, NULL, &c3) == true);
-    assert(c3 == 0); /* all previous blocks were evicted */
+    assert(c3 == 0);
     for (int i = 0; i < 4; i++) {
-        assert(mp_decompress_block(pool, handles[i]) == NULL); /* stale */
+        assert(mp_decompress_block(pool, handles[i]) == NULL);
     }
+
+    /* Known-pattern validation: repeated bytes compress efficiently. */
+    char *pattern_buf = (char *)mp_alloc(pool, 256);
+    assert(pattern_buf != NULL);
+    memset(pattern_buf, 'Z', 256);
+    compressed_handle_t h_pat = mp_compress_block(pool, pattern_buf, 256);
+    assert(h_pat != 0);
+    char *dec = (char *)mp_decompress_block(pool, h_pat);
+    assert(dec != NULL);
+    assert(memcmp(dec, pattern_buf, 256) == 0);
+    mp_free(pool, dec);
+    assert(mp_free_compressed(pool, h_pat) == true);
 
     assert(mp_check_leaks(pool) == true);
     mp_destroy(pool);
@@ -1461,6 +1473,72 @@ void test_multithread_safety()
  * @brief Tests edge cases: zero-size alloc, huge alloc, non-power-of-2 aligned alloc,
  * realloc(NULL).
  */
+void test_boundary_cross_allocator()
+{
+    printf("\n--- Test: Boundary - Cross-Allocator Alloc/Free ---\n");
+    memory_pool_t *pool = mp_create(1024 * 1024, MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    void *slab_ptr = mp_alloc(pool, 8);
+    assert(slab_ptr != NULL);
+    mp_free(pool, slab_ptr);
+
+    void *tlsf_ptr = mp_alloc(pool, 65536);
+    assert(tlsf_ptr != NULL);
+    mp_free(pool, tlsf_ptr);
+
+    void *os_ptr = mp_alloc(pool, 10 * 1024 * 1024);
+    assert(os_ptr != NULL);
+    mp_free(pool, os_ptr);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_boundary_cross_allocator");
+}
+
+void test_boundary_zero_size_all_tiers()
+{
+    printf("\n--- Test: Boundary - Zero-Size All Tiers ---\n");
+    memory_pool_t *pool = mp_create(1024 * 1024, MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    assert(mp_alloc(pool, 0) == NULL);
+    assert(mp_calloc(pool, 0, 1) == NULL);
+    assert(mp_calloc(pool, 1, 0) == NULL);
+    assert(mp_realloc(pool, NULL, 0) == NULL);
+    void *p_tmp = mp_realloc(pool, NULL, 256);
+    assert(p_tmp != NULL);
+    mp_free(pool, p_tmp);
+    void *ptr_main = mp_realloc(pool, NULL, 256);
+    assert(ptr_main != NULL);
+    void *ptr_resized = mp_realloc(pool, ptr_main, 0);
+    assert(ptr_resized == NULL);
+    mp_free(pool, NULL);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_boundary_zero_size_all_tiers");
+}
+
+void test_boundary_max_size()
+{
+    printf("\n--- Test: Boundary - Maximum Allocatable Size ---\n");
+    memory_pool_t *pool = mp_create(1024 * 1024, MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    void *small = mp_alloc(pool, 8);
+    assert(small != NULL);
+    mp_free(pool, small);
+
+    void *exact = mp_alloc(pool, 512);
+    assert(exact != NULL);
+    mp_free(pool, exact);
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_boundary_max_size");
+}
+
 void test_edge_cases()
 {
     printf("\n--- Test: Edge Cases ---\n");
@@ -1696,6 +1774,9 @@ int main()
     test_child_arenas_and_html_export();
     test_arena_reset_and_json();
     test_static_buffer_and_callbacks();
+    test_boundary_cross_allocator();
+    test_boundary_zero_size_all_tiers();
+    test_boundary_max_size();
     test_edge_cases();
     test_error_paths();
     test_security_detection();

@@ -5,6 +5,10 @@
 #include <stdint.h>
 
 #define CMEM_SNAPSHOT_MAGIC 0x434D454D
+#define CMEM_MAX_TOTAL_POOL_SIZE ((uint64_t)1 << 40)
+#define CMEM_MAX_ACTIVE_ALLOCATIONS ((uint64_t)1 << 20)
+#define CMEM_MAX_LEAK_RECORDS 1048576
+#define CMEM_MAX_ALLOC_LINE 1000000
 
 typedef struct {
     uint32_t magic;
@@ -50,6 +54,15 @@ static bool parse_header(FILE *fp, cmem_parser_header_t *hdr)
         return false;
     }
     if (hdr->version != 1) {
+        return false;
+    }
+    if (hdr->total_pool_size > CMEM_MAX_TOTAL_POOL_SIZE) {
+        return false;
+    }
+    if (hdr->active_bytes > hdr->total_pool_size) {
+        return false;
+    }
+    if (hdr->active_allocations > CMEM_MAX_ACTIVE_ALLOCATIONS) {
         return false;
     }
     return true;
@@ -105,8 +118,8 @@ bool cmem_analyze_read_leaks(const char *path, cmem_leak_entry_t **entries, size
     }
 
     size_t max_records = (size_t)hdr.active_allocations;
-    if (max_records > 1024 * 1024) {
-        max_records = 1024 * 1024;
+    if (max_records > CMEM_MAX_LEAK_RECORDS) {
+        max_records = CMEM_MAX_LEAK_RECORDS;
     }
 
     cmem_leak_entry_t *out = calloc(max_records, sizeof(cmem_leak_entry_t));
@@ -117,7 +130,17 @@ bool cmem_analyze_read_leaks(const char *path, cmem_leak_entry_t **entries, size
 
     cmem_parser_record_t rec;
     size_t idx = 0;
-    while (idx < max_records && fread(&rec, sizeof(rec), 1, fp) == 1) {
+    while (idx < max_records) {
+        size_t got = fread(&rec, sizeof(rec), 1, fp);
+        if (got != 1) {
+            break;
+        }
+        if (rec.alloc_line > CMEM_MAX_ALLOC_LINE) {
+            rec.alloc_line = 0;
+        }
+        if (rec.alloc_type > 8) {
+            rec.alloc_type = 0;
+        }
         cmem_leak_entry_t *entry = &out[idx];
         entry->address = (void *)(uintptr_t)rec.address;
         entry->size = rec.requested_size;

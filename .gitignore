@@ -43,5 +43,9 @@ corpus/
 crash-*
 *.crash
 
+AGENTS.md
+CODE_REVIEW.md
+TASK_PLAN.md
+
 # Python utility scripts (development tools, not part of project)
 extract.py
