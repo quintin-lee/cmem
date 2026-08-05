@@ -678,13 +678,13 @@ make docker-build
 The `VERSION` file at the repository root is the single source of truth for the version number.
 
 ```bash
-# Bump patch version and create tag (e.g. 1.0.0 -> 1.0.1)
+# Bump patch version and create tag (e.g. 0.1.0 -> 0.1.1)
 make tag --bump=patch
 
-# Bump minor version (e.g. 1.0.0 -> 1.1.0)
+# Bump minor version (e.g. 0.1.0 -> 0.2.0)
 make tag --bump=minor
 
-# Bump major version (e.g. 1.0.0 -> 2.0.0)
+# Bump major version (e.g. 0.1.0 -> 1.0.0)
 make tag --bump=major
 
 # Set explicit version

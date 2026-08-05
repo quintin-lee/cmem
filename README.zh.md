@@ -674,13 +674,13 @@ make docker-build
 `VERSION` 文件是仓库根目录下版本号的唯一真实来源。
 
 ```bash
-# 递增 patch 版本并创建 tag（例如 1.0.0 -> 1.0.1）
+# 递增 patch 版本并创建 tag（例如 0.1.0 -> 0.1.1）
 make tag --bump=patch
 
-# 递增 minor 版本（例如 1.0.0 -> 1.1.0）
+# 递增 minor 版本（例如 0.1.0 -> 0.2.0）
 make tag --bump=minor
 
-# 递增 major 版本（例如 1.0.0 -> 2.0.0）
+# 递增 major 版本（例如 0.1.0 -> 1.0.0）
 make tag --bump=major
 
 # 设置显式版本

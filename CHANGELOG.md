@@ -5,138 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2] - 2026-08-02
-
-### Documentation
-- Updated all documentation to reflect current API surface
-- Added missing API sections for `mp_get_allocation_info` and `mp_enumerate_regions`
-- Fixed Event Types enumeration values to match header (`MP_EVENT_ALLOC = 1`, removed `MP_EVENT_WATERMARK_HIGH/LOW/CUSTOM`)
-- Fixed test count from 35+ to 44+ across all docs
-- Fixed GitHub links from `your-repo` to `quintin-lee/cmem`
-- Updated MSVC compiler version from 2022+ to 2019+
-- Added architecture sections for Memory Error Recovery, Thread Quota & Circuit Breaker
-
-## [1.0.1] - 2026-08-02
-
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-05
+
 ### Added
-- `VERSION` file as single source of truth for version number
-- `scripts/tag.sh` for automated version bumping and git tagging
-- `compile_commands.json` auto-generation via `set(CMAKE_EXPORT_COMPILE_COMMANDS ON)` for clangd/clang-tidy/ccls integration
-- Standalone `main()` for `fuzz_alloc` via `STANDALONE_FUZZ` compile definition
-- GitHub Release workflow with auto-generated release notes and multi-platform artifacts
-- `CONTRIBUTING.md` with development workflow and gitmoji commit conventions
-- Codecov coverage threshold enforcement (`80%` project, `80%` patch)
-- Docker reproducible build support (`Dockerfile`, `.dockerignore`, `make docker-build`)
-- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
-- `MP_FLAG_AUTO_NUMA` pool flag with thread-local-first NUMA binding, plus `mp_numa_node_count()` / `mp_cpu_to_node()` topology query APIs
-- In-pool compressed storage: `mp_compress_block` / `mp_decompress_block` / `mp_free_compressed` with a built-in LZ4 codec, configurable budget with oldest-first eviction, and `mp_get_compressed_stats` reporting
-- `MP_FLAG_FAST_PATH` pool flag that skips header audit fields and active-list tracking for faster small allocations (about 1.1-1.5x on interleaved single-threaded traffic)
-- Targeted coverage tests for OS fallback allocation, debug canary/zero flags, slab full-page transitions, and lazy RSS purge paths
-- `mp_get_allocation_info()` for per-allocation metadata inspection (type, size, source location, backtrace)
-- `mp_enumerate_regions()` for enumerating all backing memory regions (Slab pages, TLSF pools, OS mappings)
-- `MP_FLAG_REPORT_LEAKS_ON_DESTROY` for automatic leak reporting on `mp_destroy()`
-- C++ `MemoryPool` wrappers: `get_allocation_info()` and `enumerate_regions()`
-- Windows/MSVC support: `mmap`/`madvise` backed by `VirtualAlloc`, corrected `Interlocked` atomic fallback semantics, and a dedicated MSVC CMake branch (`/W3 /std:c11` with `_STDC_LIMIT_MACROS` / `_STDC_FORMAT_MACROS`)
-- Diagnostic CLI tools:
-  - `tools/cmem-inspect` — real-time in-process diagnostic tool linking against `libcmem`
-  - `tools/cmem-analyze` — standalone offline analyzer for `.cmem_dump` binary snapshots
-  - `tools/common/cmem-diag-output.c` — shared JSON/text diagnostic output helper
-  - Makefile `tools` target and CMake integration for both utilities
-- Versioned library outputs:
-  - Makefile `make lib` now emits `libcmem.a` and `libcmem-<version>.a`
-  - Makefile `make lib_shared` emits `libcmem.so.<version>` with SONAME, plus `libcmem.so` and `libcmem.so.1` symlinks
-  - CMake copies a versioned static archive after build and installs it
-  - CMake optional shared library target `cmem_shared` with `VERSION`/`SOVERSION` and `OUTPUT_NAME cmem`
+- **Modular Public Subsystem Headers**:
+  - `include/cmem_ring.h`: SPSC lock-free ring buffer allocator and event log ring buffer APIs
+  - `include/cmem_tlsf.h`: Two-Level Segregated Fit (TLSF) allocator structures
+  - `include/cmem_diag.h`: Heap integrity auditing (`mp_audit_heap`) and memory leak analysis (`mp_analyze_leaks`, `mp_export_leak_report`, `mp_export_html_report`)
+  - `include/cmem_snapshot.h`: Post-mortem binary crash dump snapshot exporter, parser, and incremental diff tool
+  - `include/cmem_metrics.h`: Prometheus exporter, JSON stats dump, latency histogram, P99/avg latency metrics, and pprof profiling
+  - `include/cmem_arena.h`: Hierarchical child pools, multi-arena partitioning, and per-arena memory quota management
+  - `include/cmem_frame.h`: Game & graphics dual ping-pong frame arena allocator
+  - `include/cmem_typed_pool.h`: Zero-overhead type-safe object pool allocator (`MP_TYPED_POOL_DEFINE`)
+- **Decoupled Diagnostics Subsystem**:
+  - `cmem_core` (`libcmem_core.a` / `libcmem_core.so`) for zero-diagnostic lightweight embedded deployment
+  - `cmem_diag` (`libcmem_diag.a` / `libcmem_diag.so`) for standalone observability and heap inspection
+  - `CMEM_ENABLE_DIAGNOSTICS` build option in CMake and Makefile
+- **Fast Path Inline Allocation APIs**:
+  - `mp_alloc_fast` and `mp_free_fast` inline functions for ultra-low latency allocations (up to 2.8x speedup over standard allocations)
+- **Library Versioning & Shared Targets**:
+  - Versioned static archives (`libcmem-0.1.0.a`, `libcmem_core-0.1.0.a`, `libcmem_diag-0.1.0.a`)
+  - Versioned shared libraries (`libcmem.so.0.1.0`, `libcmem_core.so.0.1.0`, `libcmem_diag.so.0.1.0`) with `SOVERSION` symlinks across Make and CMake
+- **Project Infrastructure & Tooling**:
+  - `VERSION` file as the single source of truth for version number
+  - `MP_FLAG_AUTO_NUMA` pool flag with thread-local-first NUMA binding and node topology query APIs (`mp_numa_node_count`, `mp_cpu_to_node`)
+  - In-pool compressed storage with built-in LZ4 codec, handle table, and LRU eviction (`mp_compress_block`, `mp_decompress_block`, `mp_free_compressed`)
+  - Diagnostic CLI utilities (`tools/cmem-inspect` for real-time inspection, `tools/cmem-analyze` for offline crash dump diffing)
+  - C++17 PMR adapter and STL allocator support (`include/cmem_pmr.hpp`, `include/cmem.hpp`)
+  - Windows / MSVC cross-platform support with `VirtualAlloc` system backend
 
 ### Changed
-- Updated benchmark results in README with real measured values
-- Strengthened API/ABI stability promise in README
-- Documented GitHub Private Vulnerability Reporting setup in `SECURITY.md`
-- Added ThreadSanitizer badge, Docker instructions, and runtime analysis section to README
-- Added test step to release workflow for pre-release validation
-- Build now defines `-D_GNU_SOURCE` (replaces per-file `_POSIX_C_SOURCE` / `_GNU_SOURCE` feature-test macros) in both CMake and Makefile
-- Fixed `make lib` to compile each source into a per-file object before archiving (multi-source `-c` with a single `-o` was rejected by GCC)
-- Eliminated all clang-tidy warnings (368) across library sources, tests, benchmarks, and examples; tuned `.clang-tidy` (magic-number ignore list, powers-of-two exemption, constant-int-expression exemption)
-- CMake enables shared library build by default via `CMEM_BUILD_SHARED=ON`
-- Makefile `test_cpp` now compiles C sources with `gcc` and links with `g++` to fix sanitizer linking
+- **Header Refactoring**:
+  - Refactored `include/cmem.h` into a lightweight master header that includes all subsystem headers by default for 100% backward compatibility
+- **Diagnostic Decoupling**:
+  - Refactored `mp_destroy()` to avoid implicit leak checks when diagnostics are disabled (`CMEM_DISABLE_DIAGNOSTICS`)
+- **Benchmark Improvements**:
+  - Corrected Benchmark 10 compressed storage handle tracking and output ratio calculations
+  - Improved throughput metric formatting (MB/s, Mops/sec, Kops/sec) and added accurate slower-than-malloc ratio indicators
 
 ### Fixed
-- Removed redundant `pool_lock`/`pool_unlock` in `tlsf_alloc` to prevent rwlock recursion deadlock
-- Fixed ASan integration test assertion for `mp_asan_check_memory(pool, NULL, 0)`
-- Enforced memory limit before huge allocation test for cross-platform portability
-- Guarded `__has_extension` usage in `cmem_override.h` for GCC compatibility
-- Fixed clang-format violations in `tests/fuzz_alloc.c`
-- Linked `fuzz_alloc` with `STANDALONE_FUZZ` definition in CMake
-- Fixed lcov `exclude` pattern error in `.github/workflows/coverage.yml` causing CI exit code 25
-- Resolved duplicate `error_recovery_cb` definition and clang-format violations in `tests/test_advanced.c`
-
-### Documentation
-- Updated LICENSE copyright year to `2024-2026`
-- Added OS-specific ignore patterns to `.gitignore`
-- Updated platform support matrices (Windows/MSVC) and build/toolchain notes across README and `docs/`
-
-## [1.0.0] - 2026-07-27
-
-### Added
-- Production readiness: implemented 5 missing public APIs (`mp_get_percpu_freelist`, `mp_get_percpu_cpu_count`, `mp_set_fallback_on_oom`, `mp_set_gc_callback`, `mp_set_eviction_callback`)
-- Advanced C unit tests covering previously untested APIs
-- Per-CPU lock-free freelist for low-contention fast path
-- Thread-local cache optimization achieving 1.73x speedup over system malloc
-- Configurable Slab Class table API
-- Runtime config hot-reload via `CMEM_CONF` environment variable
-- Auto-compaction trigger and arena quota enforcement
-- Latency P99 statistics recording
-- Structured event log ring buffer and pprof export
-- Memory error recovery with dirty pool marking and bad-block isolation
-- Graceful degradation with fallback malloc, GC and eviction callbacks
-- Thread-level quota and circuit breaker
-- ABI versioning and cgroup awareness
-- Online pool expansion without service interruption
-- AddressSanitizer integration layer
-- Encrypted memory support with `mlock`, `MADV_DONTDUMP` and secure zero
-- Hot/Cold page separation for TLB optimization
-- C++17 PMR adapter and STL allocator
-- Memory introspection APIs (`mp_usable_size`, `mp_alloc_size`, `mp_ptr_valid`, `mp_preferred_size`)
-- Memory compaction and OS page reclamation (`mp_trim`, `mp_madvise`, `mp_compact`, `mp_purge_lazy`, `mp_resident`, `mp_freeable`)
-- High/low watermark threshold alert callbacks
-- Batch allocations and memory compaction
-- Leak analysis report and heap audit
-- Binary crash memory snapshot dump and parser with incremental diff leak detection
-- Interactive HTML profiler report export
-- Prometheus / OpenTelemetry metrics exporter
-- POSIX shared memory pool and zero-copy IPC
-- Global `malloc`/`free` symbol interception (`cmem_override.h`)
-- Real-time allocation QPS and bandwidth throughput meter
-- 0-overhead typed object pool allocator
-- Cache line 64B alignment and false sharing elimination
-- Allocation size histogram diagnostics
-- Child arenas and visual HTML report export
-- Fast arena reset and JSON exporter
-- Static buffer arena and event callbacks
-- Guard pages protection via `PROT_NONE`
-- Linux HugePages (`MAP_HUGETLB`) acceleration
-- DPDK-style ultra-fast lock-free ring buffer allocator
-- `mp_reallocarray` overflow-safe reallocation
-- Convenience helpers (`mp_strdup`, `mp_memdup`, `mp_asprintf`)
-- Tree-shaped memory arena navigation with recursive destroy/reset
-- Arena metadata APIs (`mp_set_name`, `mp_get_name`, `mp_get_parent`, `mp_get_child_count`)
-- Bilingual documentation (English and Chinese)
-- ABI stability policy and platform support matrix
-- Shields.io badges in README
-
-### Fixed
-- Suppress unused variable warnings in example programs
-- Use `CMAKE_CURRENT_SOURCE_DIR` for clang-format paths in CMake
-- Replace `fscanf` with `fgets+strtoull` for robust cgroup parsing
-- Check `fread` return value in `mp_diff_snapshots`
-- Fix `mp_reparse_env_flags` return type for C++ compilation
-- Position ASan flags before compiler inputs in Makefile to fix link order error
-- Validate pointer via `mp_ptr_valid` before dereferencing header in `mp_usable_size` and `mp_alloc_size`
-- Zero-initialize test buffer to eliminate uninitialized stack memory warning in introspection tests
-
-### Documentation
-- Comprehensive Doxygen documentation for all public APIs
-- Architecture, API reference, development, testing, performance and security guides
-- Enhanced README with architecture overview, C++17 PMR usage, concurrency model and complete API reference
+- **Sanitizer & Build Fixes**:
+  - Resolved ASan preloading link order conflicts in Makefile using dynamic executable-scoped `RUN_ASAN`
+  - Fixed clang-tidy warnings (`readability-magic-numbers`, `bugprone-macro-parentheses`, parameter name consistency) across all public headers
