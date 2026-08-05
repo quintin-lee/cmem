@@ -635,7 +635,7 @@ extern bool
 tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, size_t new_size);
 
 /* System memory & platform (cmem_sys.c) */
-extern int cmem_sched_getcpu(void);
+extern int cmem_current_cpu(void);
 extern int cmem_numa_current_node(void);
 extern int cmem_numa_node_count(void);
 extern int cmem_cpu_to_node(int cpu);

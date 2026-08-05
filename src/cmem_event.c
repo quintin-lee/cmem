@@ -2879,7 +2879,7 @@ memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool)
 
     int idx = 0;
 #ifndef _WIN32
-    int cpu = cmem_sched_getcpu();
+    int cpu = cmem_current_cpu();
     if (cpu >= 0) {
         idx = cpu % pool->num_arenas;
     } else {

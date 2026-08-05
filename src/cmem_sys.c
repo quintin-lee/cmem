@@ -30,19 +30,36 @@
  * @brief Return the ID of the CPU the calling thread is running on.
  *
  * Used by the per-CPU freelist logic to pick the right lock-free list.
- * macOS has no sched_getcpu(); a constant is returned there since the
- * per-CPU lists are treated as a single logical list on that platform.
+ * The value is cached in thread-local storage and refreshed every
+ * CMEM_CPU_CACHE_REFRESH calls. A stale index is benign: per-CPU lists
+ * are guarded by atomic CAS, so popping from a previous CPU's list is
+ * still correct — only cache affinity is slightly reduced. This avoids
+ * the sched_getcpu() syscall on every allocation.
+ *
+ * macOS/Windows have no sched_getcpu(); a constant is returned there
+ * since the per-CPU lists are treated as a single logical list.
  *
  * @return CPU index (>= 0), or 0 on platforms without sched_getcpu().
  */
-int cmem_sched_getcpu(void)
+#define CMEM_CPU_CACHE_REFRESH 1024
+
+int cmem_current_cpu(void)
 {
 #ifdef __APPLE__
     return 0;
 #elif defined(_WIN32)
     return 0;
 #else
-    return sched_getcpu();
+    static MP_THREAD_LOCAL int cpu_cache = -1;
+    static MP_THREAD_LOCAL int refresh_countdown = 0;
+
+    if (cpu_cache < 0 || refresh_countdown == 0) {
+        int cpu = sched_getcpu();
+        cpu_cache = cpu < 0 ? 0 : cpu;
+        refresh_countdown = CMEM_CPU_CACHE_REFRESH;
+    }
+    refresh_countdown--;
+    return cpu_cache;
 #endif
 }
 

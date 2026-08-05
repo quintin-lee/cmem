@@ -649,7 +649,7 @@ int percpu_cpu_index(void)
 #ifdef _WIN32
     return 0;
 #else
-    int cpu = cmem_sched_getcpu();
+    int cpu = cmem_current_cpu();
     if (cpu < 0) {
         cpu = 0;
     }
