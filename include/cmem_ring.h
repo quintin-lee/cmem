@@ -26,10 +26,10 @@ typedef struct mp_event_log mp_event_log_t;
  * @brief Single entry in the event log ring buffer.
  */
 typedef struct {
-    mp_event_type_t event_type; /**< Type of event recorded */
-    void *ptr;                  /**< Allocation/payload pointer */
-    size_t size;                /**< Requested or allocated byte size */
     uint64_t timestamp_ns;      /**< Monotonic timestamp in nanoseconds */
+    mp_event_type_t event_type; /**< Event typeRecorded */
+    size_t size;                /**< Allocation size in bytes */
+    uintptr_t ptr;              /**< Pointer involved in the event */
 } mp_event_log_entry_t;
 
 /**
@@ -72,6 +72,13 @@ void mp_ring_destroy(cmem_ring_buffer_t *ring);
  * @return Pointer to event log instance, or NULL on failure
  */
 mp_event_log_t *mp_event_log_create(size_t capacity);
+
+/**
+ * @brief Destroys the event log and frees all associated memory.
+ *
+ * @param log Pointer to the event log
+ */
+void mp_event_log_destroy(mp_event_log_t *log);
 
 /**
  * @brief Records a new event into the event log ring buffer.

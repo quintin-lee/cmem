@@ -52,31 +52,31 @@ void mp_typed_pool_destroy(mp_typed_pool_t *tpool);
 /**
  * @brief Convenience macro to define a type-safe object pool wrapper.
  */
-#define MP_TYPED_POOL_DEFINE(type, name)                                                      \
-    typedef struct {                                                                           \
-        mp_typed_pool_t *raw_pool;                                                             \
-    } name##_pool_t;                                                                           \
-    static inline name##_pool_t *name##_pool_create(size_t cap)                                \
-    {                                                                                          \
-        name##_pool_t *p = (name##_pool_t *)malloc(sizeof(name##_pool_t));                     \
-        if (p)                                                                                 \
-            p->raw_pool = mp_typed_pool_create(sizeof(type), cap);                             \
-        return p;                                                                              \
-    }                                                                                          \
-    static inline type *name##_pool_alloc(name##_pool_t *p)                                    \
-    {                                                                                          \
-        return (type *)mp_typed_alloc(p->raw_pool);                                            \
-    }                                                                                          \
-    static inline void name##_pool_free(name##_pool_t *p, type *ptr)                          \
-    {                                                                                          \
-        mp_typed_free(p->raw_pool, (void *)ptr);                                               \
-    }                                                                                          \
-    static inline void name##_pool_destroy(name##_pool_t *p)                                   \
-    {                                                                                          \
-        if (p) {                                                                               \
-            mp_typed_pool_destroy(p->raw_pool);                                                \
-            free(p);                                                                           \
-        }                                                                                      \
+#define MP_TYPED_POOL_DEFINE(type, name)                                                           \
+    typedef struct {                                                                               \
+        mp_typed_pool_t *raw_pool;                                                                 \
+    } name##_pool_t;                                                                               \
+    static inline name##_pool_t *name##_pool_create(size_t cap)                                    \
+    {                                                                                              \
+        name##_pool_t *p = (name##_pool_t *)malloc(sizeof(name##_pool_t));                         \
+        if (p)                                                                                     \
+            p->raw_pool = mp_typed_pool_create(sizeof(type), cap);                                 \
+        return p;                                                                                  \
+    }                                                                                              \
+    static inline(type) * name##_pool_alloc(name##_pool_t *p)                                      \
+    {                                                                                              \
+        return (type *)mp_typed_alloc(p->raw_pool);                                                \
+    }                                                                                              \
+    static inline void name##_pool_free(name##_pool_t *p, (type) * ptr)                            \
+    {                                                                                              \
+        mp_typed_free(p->raw_pool, (void *)ptr);                                                   \
+    }                                                                                              \
+    static inline void name##_pool_destroy(name##_pool_t *p)                                       \
+    {                                                                                              \
+        if (p) {                                                                                   \
+            mp_typed_pool_destroy(p->raw_pool);                                                    \
+            free(p);                                                                               \
+        }                                                                                          \
     }
 
 #ifdef __cplusplus

@@ -38,14 +38,22 @@ memory_pool_t *mp_create_arena(size_t initial_capacity, int num_arenas, mp_flags
  * @brief Sets a per-arena byte allocation quota and optional overflow callback.
  *
  * @param pool Pointer to the memory pool
- * @param max_bytes Maximum allowed bytes (0 = unlimited)
+ * @param quota_bytes Maximum allowed bytes (0 = unlimited)
  * @param cb Callback triggered when quota is exceeded
  * @param user_data User data passed to callback
  */
 void mp_set_arena_quota(memory_pool_t *pool,
-                        size_t max_bytes,
+                        size_t quota_bytes,
                         mp_watermark_callback_t cb,
                         void *user_data);
+
+/**
+ * @brief Checks if the arena is within its quota limit.
+ *
+ * @param pool Pointer to the memory pool
+ * @return true if within quota or no quota set, false if over quota
+ */
+bool mp_check_arena_quota(memory_pool_t *pool);
 
 /**
  * @brief Dumps memory pool tree hierarchy to stdout.

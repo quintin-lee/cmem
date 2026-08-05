@@ -1301,34 +1301,6 @@ void mp_set_auto_compact(memory_pool_t *pool,
 bool mp_auto_compact_check(memory_pool_t *pool);
 
 /* ========================================================================== */
-/*  Per-Arena Memory Quota                                                     */
-/* ========================================================================== */
-
-/**
- * @brief Sets a per-arena memory quota with an over-limit callback.
- *
- * When the arena's active bytes exceed the quota, the callback is invoked.
- * This is independent of the global mp_set_memory_limit().
- *
- * @param pool Pointer to the memory pool
- * @param quota_bytes Maximum allowed active bytes for this arena (0 for unlimited)
- * @param cb Callback invoked when quota is exceeded
- * @param user_data Optional user data passed to the callback
- */
-void mp_set_arena_quota(memory_pool_t *pool,
-                        size_t quota_bytes,
-                        mp_watermark_callback_t cb,
-                        void *user_data);
-
-/**
- * @brief Checks if the arena is within its quota limit.
- *
- * @param pool Pointer to the memory pool
- * @return true if within quota or no quota set, false if over quota
- */
-bool mp_check_arena_quota(memory_pool_t *pool);
-
-/* ========================================================================== */
 /*  Allocation Latency Statistics                                              */
 /* ========================================================================== */
 
