@@ -1951,7 +1951,6 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                         pool->emergency_size) {
                     pool->emergency_used = true;
                     mp_block_header_t *header = (mp_block_header_t *)pool->emergency_buf;
-                    header->magic = MP_MAGIC_HEAD;
                     header->alloc_type = ALLOC_TYPE_EMERGENCY;
                     header->slab_class = 0;
                     header->flags = 0;
@@ -1959,12 +1958,15 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                     header->usable_size = pool->emergency_size - sizeof(mp_block_header_t);
                     header->raw_base = pool->emergency_buf;
                     header->subpool = NULL;
-                    header->alloc_file = NULL;
-                    header->alloc_line = 0;
-                    header->alloc_func = NULL;
-                    header->backtrace_depth = 0;
-                    header->prev = NULL;
-                    header->next = NULL;
+                    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                        header->magic = MP_MAGIC_HEAD;
+                        header->alloc_file = NULL;
+                        header->alloc_line = 0;
+                        header->alloc_func = NULL;
+                        header->backtrace_depth = 0;
+                        header->prev = NULL;
+                        header->next = NULL;
+                    }
 
                     void *emerg_ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
                     if (pool->flags & MP_FLAG_DEBUG_CANARY) {
@@ -1978,7 +1980,9 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                     if (pool->flags & MP_FLAG_THREAD_SAFE) {
                         pool_lock(pool);
                     }
-                    active_list_add(pool, header);
+                    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                        active_list_add(pool, header);
+                    }
                     pool->stats.active_bytes += size;
                     if (pool->stats.active_bytes > pool->stats.peak_bytes) {
                         pool->stats.peak_bytes = pool->stats.active_bytes;
@@ -2032,7 +2036,6 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
         if (slot) {
             mp_block_header_t *header = (mp_block_header_t *)slot;
-            header->magic = MP_MAGIC_HEAD;
             header->alloc_type = ALLOC_TYPE_SLAB;
             header->slab_class = class_idx;
             header->flags = 0;
@@ -2040,12 +2043,15 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             header->usable_size = pool->slab_classes[class_idx].slot_size;
             header->raw_base = slot;
             header->subpool = pool;
-            header->alloc_file = NULL;
-            header->alloc_line = 0;
-            header->alloc_func = NULL;
-            header->backtrace_depth = 0;
-            header->prev = NULL;
-            header->next = NULL;
+            if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_file = NULL;
+                header->alloc_line = 0;
+                header->alloc_func = NULL;
+                header->backtrace_depth = 0;
+                header->prev = NULL;
+                header->next = NULL;
+            }
 
             ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
 
@@ -2071,7 +2077,6 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         void *raw_mem = sys_mem_alloc(pool, total_sz, 8);
         if (raw_mem) {
             mp_block_header_t *header = (mp_block_header_t *)raw_mem;
-            header->magic = MP_MAGIC_HEAD;
             header->alloc_type = ALLOC_TYPE_OS;
             header->slab_class = 0;
             header->flags = 0;
@@ -2079,10 +2084,13 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             header->usable_size = size;
             header->raw_base = raw_mem;
             header->subpool = pool;
-            header->alloc_file = NULL;
-            header->alloc_line = 0;
-            header->alloc_func = NULL;
-            header->backtrace_depth = 0;
+            if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_file = NULL;
+                header->alloc_line = 0;
+                header->alloc_func = NULL;
+                header->backtrace_depth = 0;
+            }
 
             ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
 
@@ -2106,7 +2114,9 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             pool_lock(pool);
         }
 
-        active_list_add(pool, header);
+        if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+            active_list_add(pool, header);
+        }
 
         pool->stats.active_bytes += size;
         if (pool->stats.active_bytes > pool->stats.peak_bytes) {
