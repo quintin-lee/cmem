@@ -70,7 +70,9 @@ int cmem_current_cpu(void)
 #define CMEM_DECIMAL_BASE 10
 
 static cmem_numa_topology_t g_numa_topo;
+#ifndef _WIN32
 static atomic_flag g_numa_topo_init = ATOMIC_FLAG_INIT;
+#endif
 
 /**
  * @brief Expand a sysfs list like "0-3,8" or "0" into an integer array.
@@ -227,9 +229,13 @@ static void cmem_numa_probe(void)
  */
 int cmem_numa_node_count(void)
 {
+#ifndef _WIN32
     if (!atomic_flag_test_and_set_explicit(&g_numa_topo_init, memory_order_acquire)) {
         cmem_numa_probe();
     }
+#else
+    cmem_numa_probe();
+#endif
     return g_numa_topo.node_count > 0 ? g_numa_topo.node_count : 1;
 }
 
