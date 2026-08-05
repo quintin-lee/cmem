@@ -989,11 +989,12 @@ static void test_reset_with_full_pages()
 
 static void *multi_arena_worker(void *arg)
 {
+    enum { MULTI_ARENA_ITERS = 500 };
     memory_pool_t *pool = (memory_pool_t *)arg;
-    for (int i = 0; i < 500; i++) {
-        void *p = mp_alloc(pool, 64);
-        assert(p != NULL);
-        mp_free(pool, p);
+    for (int i = 0; i < MULTI_ARENA_ITERS; i++) {
+        void *ptr = mp_alloc(pool, 64);
+        assert(ptr != NULL);
+        mp_free(pool, ptr);
     }
     return NULL;
 }

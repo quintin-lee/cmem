@@ -30,7 +30,7 @@ void tls_cache_flush_pool(memory_pool_t *pool)
         for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
             while (tls_cache.slots[i]) {
                 mp_slab_slot_t *slot = tls_cache.slots[i];
-                if (((uintptr_t)slot & 7) != 0 || (uintptr_t)slot < 0x10000) {
+                if (((uintptr_t)slot & CMEM_SLAB_ALIGN_MASK) != 0 || (uintptr_t)slot < 0x10000) {
                     tls_cache.slots[i] = NULL;
                     break;
                 }
@@ -108,7 +108,7 @@ void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
     size_t head = (size_t)CMEM_ATOMIC_EXCHANGE(headp, 0, CMEM_ORDER_RELAXED);
     mp_slab_slot_t *slot = (mp_slab_slot_t *)(uintptr_t)head;
     while (slot) {
-        if (((uintptr_t)slot & 7) != 0 || (uintptr_t)slot < 0x10000) {
+        if (((uintptr_t)slot & CMEM_SLAB_ALIGN_MASK) != 0 || (uintptr_t)slot < 0x10000) {
             break;
         }
         mp_slab_slot_t *next = slot->next;
@@ -578,7 +578,7 @@ void percpu_flush(memory_pool_t *pool)
 
             mp_slab_slot_t *slot = (mp_slab_slot_t *)(uintptr_t)head;
             while (slot) {
-                if (((uintptr_t)slot & 7) != 0 || (uintptr_t)slot < 0x10000) {
+                if (((uintptr_t)slot & CMEM_SLAB_ALIGN_MASK) != 0 || (uintptr_t)slot < 0x10000) {
                     break;
                 }
                 mp_slab_slot_t *next = slot->next;
