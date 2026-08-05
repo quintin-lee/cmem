@@ -1429,6 +1429,17 @@ void mp_destroy(memory_pool_t *pool)
         child = next;
     }
 
+    /* Release compressed-storage state (blocks are owned by the pool). */
+    if (pool->compressed_area != NULL) {
+        mp_free(pool, pool->compressed_area);
+        pool->compressed_area = NULL;
+        pool->compressed_area_size = 0;
+    }
+    free(pool->compressed_entries);
+    pool->compressed_entries = NULL;
+    pool->compressed_capacity = 0;
+    pool->compressed_used = 0;
+
     if (!(pool->flags & MP_FLAG_STATIC_BUFFER)) {
         for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
             mp_slab_page_t *curr = pool->slab_classes[i].partial_pages;

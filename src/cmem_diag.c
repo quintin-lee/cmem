@@ -845,7 +845,10 @@ bool mp_check_leaks(memory_pool_t *pool)
     }
     pool_lock(pool);
 
-    bool clean = (pool->stats.active_allocations == 0);
+    /* The compression area is pool-owned infrastructure (like the emergency
+     * reserve); exclude it from the leak verdict. */
+    size_t expected_internal = (pool->compressed_area != NULL) ? 1u : 0u;
+    bool clean = (pool->stats.active_allocations == expected_internal);
     if (!clean) {
         char report[4096];
         pool_unlock(pool);
