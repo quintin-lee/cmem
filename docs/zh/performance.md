@@ -300,6 +300,40 @@ int node  = mp_cpu_to_node(0);      // 拥有 CPU #0 的 NUMA 节点(未知时�
 
 `MP_FLAG_AUTO_NUMA` 在非 Linux 平台上是空操作。
 
+### 7.5 压缩存储
+
+池内压缩存储以少量 CPU 开销换取内存节省。`mp_compress_block` 使用内置
+自包含 LZ4 block 编解码器压缩调用方拥有的缓冲区,并接管该缓冲区的所有权;
+压缩后的数据存放在从池中划出的专用区域内。
+
+```c
+memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+mp_set_compressed_budget(pool, 16 * 1024 * 1024);   // 可选;默认 16 MiB
+
+char *data = mp_alloc(pool, 1 << 20);               // 填充重复数据...
+compressed_handle_t h = mp_compress_block(pool, data, 1 << 20);
+// 此时 data 已归池所有 —— 不要再自行 mp_free(data)。
+
+char *out = mp_decompress_block(pool, h);           // 新分配的副本
+// ... 使用 out ...
+mp_free(pool, out);
+mp_free_compressed(pool, h);                        // 释放句柄
+```
+
+关键语义:
+
+- **所有权转移。** 成功后原缓冲区由池释放;失败(返回 `0`)时缓冲区
+  保持不变,仍由调用方负责释放。
+- **无收益规则。** 无法有效压缩的块(过小或高熵)会被拒绝 —— 调用方
+  保留原始缓冲区。小于 64 字节或大于 `INT_MAX` 的负载永不压缩。
+- **预算与淘汰。** 存储字节数受 `mp_set_compressed_budget` 限制
+  (默认 16 MiB);当新块会超出预算时,先淘汰最旧的块(FIFO 按插入序)。
+  被淘汰或释放的句柄解压返回 `NULL`。
+- **统计。** `mp_get_compressed_stats` 报告已用字节、预算和存活块数。
+
+压缩区域在首次使用时一次性分配,大小按当时的预算确定。之后提高预算只会
+提高淘汰阈值 —— 不会扩大区域。
+
 ---
 
 ## 8. HugePages 优化

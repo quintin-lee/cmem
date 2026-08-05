@@ -302,6 +302,46 @@ int node  = mp_cpu_to_node(0);      // NUMA node owning CPU #0 (0 when unknown)
 
 `MP_FLAG_AUTO_NUMA` is a no-op on non-Linux platforms.
 
+### 7.5 Compressed Storage
+
+Pool-owned compressed storage trades a little CPU for memory savings.
+`mp_compress_block` compresses a caller-owned buffer with the built-in
+self-contained LZ4 block codec and takes ownership of the buffer; the
+compressed payload lives in a dedicated area carved from the pool.
+
+```c
+memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+mp_set_compressed_budget(pool, 16 * 1024 * 1024);   // optional; default 16 MiB
+
+char *data = mp_alloc(pool, 1 << 20);               // fill with repetitive data...
+compressed_handle_t h = mp_compress_block(pool, data, 1 << 20);
+// data is now owned by the pool — do not mp_free(data) yourself.
+
+char *out = mp_decompress_block(pool, h);           // fresh mp_alloc'd copy
+// ... use out ...
+mp_free(pool, out);
+mp_free_compressed(pool, h);                        // release the handle
+```
+
+Key semantics:
+
+- **Ownership transfer.** On success the original buffer is freed by the
+  pool; on failure (`0` returned) the buffer is left untouched and remains
+  the caller's to free.
+- **No-gain rule.** Blocks that do not compress (small or high-entropy
+  payloads) are declined — the caller keeps the original buffer. Payloads
+  below 64 bytes and above `INT_MAX` are never compressed.
+- **Budget & eviction.** Stored bytes are capped by
+  `mp_set_compressed_budget` (default 16 MiB); when a new block would
+  exceed the budget, the oldest blocks are evicted first (FIFO by
+  insertion). Evicted or freed handles decompress to `NULL`.
+- **Stats.** `mp_get_compressed_stats` reports used bytes, budget, and
+  live block count.
+
+The compression area is grown once, on first use, sized to the budget in
+effect at that moment. Raising the budget later only raises the eviction
+threshold — it does not enlarge the area.
+
 ---
 
 ## 8. HugePages Optimization
