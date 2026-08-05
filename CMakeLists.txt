@@ -54,6 +54,7 @@ if(CLANG_FORMAT)
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_sys.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_diag.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_event.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_compress.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_advanced.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpp.cpp
@@ -122,7 +123,7 @@ else()
 endif()
 
 # 静态库目标
-add_library(cmem STATIC src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c)
+add_library(cmem STATIC src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c src/cmem_compress.c)
 target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
 add_dependencies(cmem format-check check-mermaid)
 set_target_properties(cmem PROPERTIES
