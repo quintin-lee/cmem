@@ -302,6 +302,69 @@ bool mp_enable_emergency_reserve(memory_pool_t *pool, size_t reserve_bytes);
 bool mp_set_numa_node(memory_pool_t *pool, int numa_node);
 
 /**
+ * @brief Opaque handle to a compressed block stored inside a pool.
+ *
+ * Zero is always an invalid handle.  Handles remain valid until the
+ * block is explicitly freed (mp_free_compressed) or evicted by budget
+ * pressure; stale handles are rejected safely by every API.
+ */
+typedef uint64_t compressed_handle_t;
+
+/**
+ * @brief Compresses data and transfers its ownership to the pool.
+ *
+ * The buffer at @p data is compressed into the pool's compression area
+ * and then released via mp_free().  On success the caller must no longer
+ * use @p data.  Returns 0 (and leaves @p data untouched) when the data
+ * does not compress, the pool has no compression facility, or no budget
+ * slot can be made available.
+ *
+ * @param pool Pool to store the compressed block in
+ * @param data Buffer to compress (ownership transferred on success)
+ * @param size Size of @p data in bytes
+ * @return Handle, or 0 on failure (original data retained)
+ */
+compressed_handle_t mp_compress_block(memory_pool_t *pool, void *data, size_t size);
+
+/**
+ * @brief Decompresses a block back into a fresh pool allocation.
+ *
+ * Safe to call multiple times; each call returns an independent copy.
+ * @return Pointer to the decompressed data, or NULL on invalid/stale
+ *         handles or corrupted data.
+ */
+void *mp_decompress_block(memory_pool_t *pool, compressed_handle_t handle);
+
+/**
+ * @brief Frees a compressed block and invalidates its handle.
+ * @return true on success, false if the handle was invalid or stale.
+ */
+bool mp_free_compressed(memory_pool_t *pool, compressed_handle_t handle);
+
+/**
+ * @brief Sets the maximum bytes the compression area may occupy.
+ *
+ * A budget of 0 disables further compression (existing handles remain
+ * valid and decompressible).  When the budget is exceeded, the oldest
+ * block is evicted to make room.
+ *
+ * @note The compression area is grown once, on the first use of
+ *       compression (either this call or mp_compress_block) and sized to
+ *       the budget in effect at that moment.  Raising the budget after
+ *       the area exists raises the eviction threshold only; it does not
+ *       enlarge the area.
+ * @return true on success.
+ */
+bool mp_set_compressed_budget(memory_pool_t *pool, size_t max_bytes);
+
+/**
+ * @brief Reports compression-area usage.  Any out parameter may be NULL.
+ * @return true on success.
+ */
+bool mp_get_compressed_stats(memory_pool_t *pool, size_t *used, size_t *budget,
+                             size_t *block_count);
+
+/**
  * @brief Returns the number of NUMA nodes detected on this system.
  *
  * Always returns at least 1 (single-node / non-NUMA systems report 1).
