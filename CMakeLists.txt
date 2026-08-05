@@ -144,12 +144,20 @@ set(CMEM_CORE_SRCS
 add_library(cmem_core STATIC ${CMEM_CORE_SRCS})
 target_link_libraries(cmem_core PRIVATE pthread ${RT_LIBRARY})
 add_dependencies(cmem_core format-check check-mermaid)
-set_target_properties(cmem_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(cmem_core PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    VERSION ${CMEM_VERSION}
+    SOVERSION ${CMEM_VERSION_MAJOR}
+)
 
 if(CMEM_BUILD_SHARED)
     add_library(cmem_core_shared SHARED ${CMEM_CORE_SRCS})
     target_link_libraries(cmem_core_shared PRIVATE pthread ${RT_LIBRARY})
-    set_target_properties(cmem_core_shared PROPERTIES OUTPUT_NAME cmem_core)
+    set_target_properties(cmem_core_shared PROPERTIES
+        OUTPUT_NAME cmem_core
+        VERSION ${CMEM_VERSION}
+        SOVERSION ${CMEM_VERSION_MAJOR}
+    )
 endif()
 
 # 2. 完整合并库与诊断库目标 (libcmem & libcmem_diag)
@@ -166,6 +174,11 @@ if(CMEM_ENABLE_DIAGNOSTICS)
 
     add_library(cmem_diag STATIC src/cmem_diag.c)
     target_link_libraries(cmem_diag PRIVATE cmem_core pthread ${RT_LIBRARY})
+    set_target_properties(cmem_diag PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        VERSION ${CMEM_VERSION}
+        SOVERSION ${CMEM_VERSION_MAJOR}
+    )
 
     if(CMEM_BUILD_SHARED)
         add_library(cmem_shared SHARED ${CMEM_CORE_SRCS} src/cmem_diag.c)
@@ -183,7 +196,15 @@ if(CMEM_ENABLE_DIAGNOSTICS)
 
         add_library(cmem_diag_shared SHARED src/cmem_diag.c)
         target_link_libraries(cmem_diag_shared PRIVATE cmem_core_shared pthread ${RT_LIBRARY})
-        set_target_properties(cmem_diag_shared PROPERTIES OUTPUT_NAME cmem_diag)
+        set_target_properties(cmem_diag_shared PROPERTIES
+            OUTPUT_NAME cmem_diag
+            VERSION ${CMEM_VERSION}
+            SOVERSION ${CMEM_VERSION_MAJOR}
+        )
+        if(NOT MSVC)
+            set_target_properties(cmem_diag_shared PROPERTIES PREFIX "lib" SUFFIX ".so")
+            target_compile_options(cmem_diag_shared PRIVATE -ftls-model=initial-exec)
+        endif()
 
         install(TARGETS cmem_core_shared cmem_shared cmem_diag_shared
             EXPORT cmemTargets
@@ -212,14 +233,22 @@ else()
     add_library(cmem STATIC ${CMEM_CORE_SRCS})
     target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
     target_compile_definitions(cmem PUBLIC CMEM_DISABLE_DIAGNOSTICS)
-    set_target_properties(cmem PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(cmem PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        VERSION ${CMEM_VERSION}
+        SOVERSION ${CMEM_VERSION_MAJOR}
+    )
 
     if(CMEM_BUILD_SHARED)
         target_compile_definitions(cmem_core_shared PUBLIC CMEM_DISABLE_DIAGNOSTICS)
         add_library(cmem_shared SHARED ${CMEM_CORE_SRCS})
         target_link_libraries(cmem_shared PRIVATE pthread ${RT_LIBRARY})
         target_compile_definitions(cmem_shared PUBLIC CMEM_DISABLE_DIAGNOSTICS)
-        set_target_properties(cmem_shared PROPERTIES OUTPUT_NAME cmem)
+        set_target_properties(cmem_shared PROPERTIES
+            OUTPUT_NAME cmem
+            VERSION ${CMEM_VERSION}
+            SOVERSION ${CMEM_VERSION_MAJOR}
+        )
         install(TARGETS cmem_core_shared cmem_shared
             EXPORT cmemTargets
             LIBRARY DESTINATION lib
@@ -238,8 +267,10 @@ endif()
 
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a
+    ${CMAKE_CURRENT_BINARY_DIR}/libcmem_core-${CMEM_VERSION}.a
+    ${CMAKE_CURRENT_BINARY_DIR}/libcmem_diag-${CMEM_VERSION}.a
     DESTINATION lib
-    RENAME libcmem-${CMEM_VERSION}.a
+    OPTIONAL
 )
 
 install(FILES

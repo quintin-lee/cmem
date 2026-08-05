@@ -13,6 +13,8 @@ CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I
 VERSION := $(shell cat VERSION | tr -d '[:space:]')
 LIBNAME = libcmem.a
 SONAME = libcmem.so.$(VERSION)
+CORE_SONAME = libcmem_core.so.$(VERSION)
+DIAG_SONAME = libcmem_diag.so.$(VERSION)
 
 SRC = $(wildcard src/*.c)
 TEST_SRC = tests/test_main.c
@@ -72,11 +74,13 @@ CORE_OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CORE_SRC))
 # 静态库 (核心分配器)
 lib_core: format-check $(CORE_OBJS)
 	ar rcs $(BUILD_DIR)/libcmem_core.a $(CORE_OBJS)
+	cp $(BUILD_DIR)/libcmem_core.a $(BUILD_DIR)/libcmem_core-$(VERSION).a
 	@echo "Built static library: $(BUILD_DIR)/libcmem_core.a"
 
 # 静态库 (诊断扩展库)
 lib_diag: format-check $(BUILD_DIR)/cmem_diag.o
 	ar rcs $(BUILD_DIR)/libcmem_diag.a $(BUILD_DIR)/cmem_diag.o
+	cp $(BUILD_DIR)/libcmem_diag.a $(BUILD_DIR)/libcmem_diag-$(VERSION).a
 	@echo "Built static library: $(BUILD_DIR)/libcmem_diag.a"
 
 # 静态库 (全功能合并库)
@@ -90,7 +94,13 @@ lib_shared: format-check | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -fPIC -shared -ftls-model=initial-exec $(SRC) -o $(BUILD_DIR)/$(SONAME) -Wl,-soname,libcmem.so.1 $(LDFLAGS)
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so
 	ln -sf $(SONAME) $(BUILD_DIR)/libcmem.so.1
-	@echo "Built shared library: $(BUILD_DIR)/$(SONAME)"
+	$(CC) $(CFLAGS) -fPIC -shared -ftls-model=initial-exec $(CORE_SRC) -o $(BUILD_DIR)/$(CORE_SONAME) -Wl,-soname,libcmem_core.so.1 $(LDFLAGS)
+	ln -sf $(CORE_SONAME) $(BUILD_DIR)/libcmem_core.so
+	ln -sf $(CORE_SONAME) $(BUILD_DIR)/libcmem_core.so.1
+	$(CC) $(CFLAGS) -fPIC -shared -ftls-model=initial-exec src/cmem_diag.c -o $(BUILD_DIR)/$(DIAG_SONAME) -Wl,-soname,libcmem_diag.so.1 $(LDFLAGS) -L$(BUILD_DIR) -lcmem_core
+	ln -sf $(DIAG_SONAME) $(BUILD_DIR)/libcmem_diag.so
+	ln -sf $(DIAG_SONAME) $(BUILD_DIR)/libcmem_diag.so.1
+	@echo "Built shared libraries: $(BUILD_DIR)/$(SONAME), $(BUILD_DIR)/$(CORE_SONAME), $(BUILD_DIR)/$(DIAG_SONAME)"
 
 ASAN_SO := $(shell find /usr/lib /usr/lib64 /usr/lib32 -name "libasan.so*" 2>/dev/null | head -n 1)
 RUN_ASAN = $(if $(ASAN_SO),LD_PRELOAD=$(ASAN_SO),)
@@ -184,6 +194,10 @@ install: lib | $(BUILD_DIR)
 	install -d $(DESTDIR)$(INCLUDEDIR)
 	install -m 644 $(BUILD_DIR)/$(LIBNAME) $(DESTDIR)$(LIBDIR)/$(LIBNAME)
 	install -m 644 $(BUILD_DIR)/$(LIBNAME:.a=-$(VERSION).a) $(DESTDIR)$(LIBDIR)/$(LIBNAME:.a=-$(VERSION).a)
+	install -m 644 $(BUILD_DIR)/libcmem_core.a $(DESTDIR)$(LIBDIR)/libcmem_core.a
+	install -m 644 $(BUILD_DIR)/libcmem_core-$(VERSION).a $(DESTDIR)$(LIBDIR)/libcmem_core-$(VERSION).a
+	install -m 644 $(BUILD_DIR)/libcmem_diag.a $(DESTDIR)$(LIBDIR)/libcmem_diag.a
+	install -m 644 $(BUILD_DIR)/libcmem_diag-$(VERSION).a $(DESTDIR)$(LIBDIR)/libcmem_diag-$(VERSION).a
 	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
 	install -m 644 include/cmem_diag.h $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
 	install -m 644 include/cmem_ring.h $(DESTDIR)$(INCLUDEDIR)/cmem_ring.h
@@ -207,6 +221,12 @@ install-shared: lib_shared | $(BUILD_DIR)
 	install -m 755 $(BUILD_DIR)/$(SONAME) $(DESTDIR)$(LIBDIR)/$(SONAME)
 	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so
 	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so.1
+	install -m 755 $(BUILD_DIR)/$(CORE_SONAME) $(DESTDIR)$(LIBDIR)/$(CORE_SONAME)
+	ln -sf $(CORE_SONAME) $(DESTDIR)$(LIBDIR)/libcmem_core.so
+	ln -sf $(CORE_SONAME) $(DESTDIR)$(LIBDIR)/libcmem_core.so.1
+	install -m 755 $(BUILD_DIR)/$(DIAG_SONAME) $(DESTDIR)$(LIBDIR)/$(DIAG_SONAME)
+	ln -sf $(DIAG_SONAME) $(DESTDIR)$(LIBDIR)/libcmem_diag.so
+	ln -sf $(DIAG_SONAME) $(DESTDIR)$(LIBDIR)/libcmem_diag.so.1
 	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
 	install -m 644 include/cmem_diag.h $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
 	install -m 644 include/cmem_ring.h $(DESTDIR)$(INCLUDEDIR)/cmem_ring.h
@@ -225,9 +245,19 @@ install-shared: lib_shared | $(BUILD_DIR)
 uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIBNAME)
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIBNAME:.a=-$(VERSION).a)
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_core.a
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_core-$(VERSION).a
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_diag.a
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_diag-$(VERSION).a
 	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so
 	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so.1
 	rm -f $(DESTDIR)$(LIBDIR)/$(SONAME)
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_core.so
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_core.so.1
+	rm -f $(DESTDIR)$(LIBDIR)/$(CORE_SONAME)
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_diag.so
+	rm -f $(DESTDIR)$(LIBDIR)/libcmem_diag.so.1
+	rm -f $(DESTDIR)$(LIBDIR)/$(DIAG_SONAME)
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.h
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_ring.h
