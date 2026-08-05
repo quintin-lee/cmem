@@ -385,79 +385,6 @@ int mp_cpu_to_node(int cpu);
 mp_flags_t mp_parse_env_flags(mp_flags_t default_flags);
 
 /**
- * @brief Creates a game & graphics dual ping-pong frame arena allocator.
- *
- * Frame arenas use double-buffering to provide O(1) per-frame reset,
- * ideal for per-frame allocations in rendering or physics pipelines.
- *
- * @param frame_capacity Capacity per frame buffer in bytes
- * @return Pointer to the frame arena, or NULL on failure
- */
-cmem_frame_arena_t *mp_frame_arena_create(size_t frame_capacity);
-
-/**
- * @brief Allocates temporary memory for the current frame.
- *
- * Allocation occurs from the currently active ping-pong buffer.
- *
- * @param farena Pointer to the frame arena
- * @param size Requested size in bytes
- * @return Pointer to the payload, or NULL on failure
- */
-void *mp_frame_alloc(cmem_frame_arena_t *farena, size_t size);
-
-/**
- * @brief Ends the current frame and swaps ping-pong buffers with O(1) cursor reset.
- *
- * The previously active buffer is reset, making it ready for the next frame.
- *
- * @param farena Pointer to the frame arena
- */
-void mp_frame_end(cmem_frame_arena_t *farena);
-
-/**
- * @brief Destroys the frame arena allocator instance.
- *
- * @param farena Pointer to the frame arena
- */
-void mp_frame_arena_destroy(cmem_frame_arena_t *farena);
-
-/**
- * @brief Creates a 0-overhead fixed-size object pool allocator.
- *
- * The typed pool uses a free-list with no per-object header overhead,
- * making it ideal for high-frequency allocation of fixed-size objects.
- *
- * @param elem_size Size of each element in bytes (rounded up to 8 bytes, min sizeof(void*))
- * @param capacity Maximum number of elements in the pool
- * @return Pointer to the typed pool, or NULL on failure
- */
-mp_typed_pool_t *mp_typed_pool_create(size_t elem_size, size_t capacity);
-
-/**
- * @brief Allocates an object pointer from the typed object pool with 0 header overhead.
- *
- * @param tpool Pointer to the typed pool
- * @return Pointer to the object, or NULL if pool is exhausted
- */
-void *mp_typed_alloc(mp_typed_pool_t *tpool);
-
-/**
- * @brief Returns an object pointer back to the typed object pool.
- *
- * @param tpool Pointer to the typed pool
- * @param ptr Pointer to the object to free
- */
-void mp_typed_free(mp_typed_pool_t *tpool, void *ptr);
-
-/**
- * @brief Destroys the typed object pool instance.
- *
- * @param tpool Pointer to the typed pool
- */
-void mp_typed_pool_destroy(mp_typed_pool_t *tpool);
-
-/**
  * @brief Creates a new cmem memory pool instance using default OS memory.
  *
  * This is the standard pool creation function. It internally calls mp_create_custom()
@@ -488,46 +415,6 @@ memory_pool_t *mp_get_global_pool(void);
  * @param pool Pointer to the memory pool to set as global (NULL resets to default)
  */
 void mp_set_global_pool(memory_pool_t *pool);
-
-/**
- * @brief Creates a lock-free DPDK-style Ring Buffer Allocator.
- *
- * Single-producer single-consumer lock-free ring buffer with atomic head/tail indices.
- * Capacity is rounded up to the next power of two.
- *
- * @param slot_size Size of each slot in bytes
- * @param capacity Number of slots (rounded up to next power of two)
- * @return Pointer to the ring buffer, or NULL on failure
- */
-cmem_ring_buffer_t *mp_ring_create(size_t slot_size, size_t capacity);
-
-/**
- * @brief Allocates a slot pointer from the lock-free ring buffer.
- *
- * Producer path using atomic fetch-add on head index.
- *
- * @param ring Pointer to the ring buffer
- * @return Pointer to the slot payload, or NULL if full
- */
-void *mp_ring_alloc(cmem_ring_buffer_t *ring);
-
-/**
- * @brief Returns a slot pointer back to the lock-free ring buffer.
- *
- * Consumer path using atomic fetch-add on tail index.
- *
- * @param ring Pointer to the ring buffer
- * @param ptr Pointer to the slot to return
- * @return true on success, false on invalid input
- */
-bool mp_ring_free(cmem_ring_buffer_t *ring, void *ptr);
-
-/**
- * @brief Destroys the lock-free ring buffer allocator instance.
- *
- * @param ring Pointer to the ring buffer
- */
-void mp_ring_destroy(cmem_ring_buffer_t *ring);
 
 /**
  * @brief Creates a POSIX shared memory pool in /dev/shm for zero-copy Inter-Process
@@ -1808,77 +1695,17 @@ bool mp_can_expand(memory_pool_t *pool);
  */
 size_t mp_get_expandable_size(memory_pool_t *pool);
 
-/* ========================================================================== */
-/*  Structured Event Log Ring Buffer & pprof Export                             */
-/* ========================================================================== */
-
-/**
- * @brief Structured event log record for lock-free ring buffer tracing.
- */
-typedef struct {
-    uint64_t timestamp_ns;      /**< Monotonic timestamp in nanoseconds */
-    mp_event_type_t event_type; /**< Event type (alloc, free, realloc, etc.) */
-    size_t size;                /**< Allocation size in bytes */
-    uintptr_t ptr;              /**< Pointer involved in the event */
-} mp_event_log_entry_t;
-
-/**
- * @brief Opaque handle to a structured event log ring buffer.
- */
-typedef struct mp_event_log mp_event_log_t;
-
-/**
- * @brief Creates a structured event log with a lock-free ring buffer.
- *
- * @param capacity Number of entries in the ring buffer (must be power of two)
- * @return Pointer to the event log, or NULL on failure
- */
-mp_event_log_t *mp_event_log_create(size_t capacity);
-
-/**
- * @brief Destroys the event log and frees all associated memory.
- * @param log Pointer to the event log
- */
-void mp_event_log_destroy(mp_event_log_t *log);
-
-/**
- * @brief Records an event into the structured event log ring buffer.
- *
- * @param log Pointer to the event log
- * @param event_type Event type
- * @param ptr Pointer involved in the event
- * @param size Size of the allocation
- * @return true on success, false if ring buffer is full
- */
-bool mp_event_log_record(mp_event_log_t *log, mp_event_type_t event_type, void *ptr, size_t size);
-
-/**
- * @brief Consumes and returns the next event from the ring buffer.
- *
- * @param log Pointer to the event log
- * @param entry Output event entry
- * @return true if an event was consumed, false if buffer is empty
- */
-bool mp_event_log_consume(mp_event_log_t *log, mp_event_log_entry_t *entry);
-
-/**
- * @brief Returns the number of unread events in the ring buffer.
- *
- * @param log Pointer to the event log
- * @return Number of pending events
- */
-size_t mp_event_log_pending(mp_event_log_t *log);
-
-/**
- * @brief Clears all pending events from the ring buffer.
- *
- * @param log Pointer to the event log
- */
-void mp_event_log_clear(mp_event_log_t *log);
+#include "cmem_arena.h"
+#include "cmem_frame.h"
+#include "cmem_ring.h"
+#include "cmem_snapshot.h"
+#include "cmem_tlsf.h"
+#include "cmem_typed_pool.h"
 
 #if !defined(CMEM_DISABLE_DIAGNOSTICS) &&                                                          \
     (!defined(CMEM_ENABLE_DIAGNOSTICS) || CMEM_ENABLE_DIAGNOSTICS == 1)
 #include "cmem_diag.h"
+#include "cmem_metrics.h"
 #endif
 
 #ifdef MP_ENABLE_LOCATION_MACROS
