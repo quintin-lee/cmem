@@ -1,8 +1,8 @@
 /**
  * @file cmem_diag.h
- * @brief cmem - Diagnostics, Inspection, Leak Analysis, and Telemetry Exporters.
+ * @brief cmem - Diagnostics, Heap Auditing, and Leak Analysis Subsystem.
  *
- * Dedicated public header for cmem diagnostic and observability subsystem.
+ * Dedicated public header for cmem diagnostic and leak analysis subsystem.
  * Move these APIs into a separate library target (libcmem_diag) to allow
  * lightweight embedded deployment of libcmem_core without diagnostic overhead.
  */
@@ -92,135 +92,12 @@ mp_leak_pattern_t mp_analyze_leak_pattern(const mp_allocation_info_t *info);
 bool mp_export_html_report(memory_pool_t *pool, const char *filepath);
 
 /**
- * @brief Formats and dumps memory pool metrics into Prometheus text exposition format.
- *
- * Output follows the Prometheus exposition format with HELP/TYPE headers.
- *
- * @param pool Pointer to the memory pool
- * @param out_buf Output buffer for Prometheus metrics text
- * @param max_len Maximum length of the output buffer
- * @return Number of bytes written to out_buf
- */
-size_t mp_export_prometheus_metrics(memory_pool_t *pool, char *out_buf, size_t max_len);
-
-/**
- * @brief Exports a binary post-mortem memory crash snapshot dump to file.
- *
- * The snapshot can later be parsed with mp_parse_binary_snapshot()
- * or compared with mp_diff_snapshots().
- *
- * @param pool Pointer to the memory pool
- * @param filepath Path to the output binary snapshot file
- * @return true on success
- */
-bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath);
-
-/**
- * @brief Parses a binary post-mortem memory snapshot file into readable text report.
- *
- * @param filepath Path to the binary snapshot file
- * @param out_report Output buffer for the text report
- * @param max_len Maximum length of the output buffer
- * @return true on success
- */
-bool mp_parse_binary_snapshot(const char *filepath, char *out_report, size_t max_len);
-
-/**
- * @brief Compares two binary snapshot files and generates an incremental leak diff report.
- *
- * Identifies allocations present in snapshot B but not in snapshot A.
- *
- * @param snapshot_a_path Path to the baseline snapshot
- * @param snapshot_b_path Path to the target snapshot
- * @param out_report Output buffer for the diff report
- * @param max_len Maximum length of the output buffer
- * @return true on success
- */
-bool mp_diff_snapshots(const char *snapshot_a_path,
-                       const char *snapshot_b_path,
-                       char *out_report,
-                       size_t max_len);
-
-/**
- * @brief Prints ASCII allocation size distribution histogram chart to stdout.
- *
- * @param pool Pointer to the memory pool
- */
-void mp_dump_histogram(memory_pool_t *pool);
-
-/**
- * @brief Retrieves current statistical metrics of the memory pool.
- *
- * @param pool Pointer to the memory pool
- * @param stats Output statistics structure
- */
-void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats);
-
-/**
- * @brief Prints detailed summary and health status of the memory pool to stdout.
- *
- * @param pool Pointer to the memory pool
- */
-void mp_dump_info(memory_pool_t *pool);
-
-/**
- * @brief Dumps memory pool tree hierarchy to stdout.
- *
- * Recursively prints all child arenas with their active bytes and allocation counts.
- *
- * @param pool Pointer to the root memory pool
- */
-void mp_dump_tree_info(memory_pool_t *pool);
-
-/**
- * @brief Dumps memory pool stats into JSON format buffer for telemetry monitoring.
- *
- * @param pool Pointer to the memory pool
- * @param buf Output buffer for JSON text
- * @param max_len Maximum length of the output buffer
- * @return Number of bytes written to buf
- */
-size_t mp_dump_json_stats(memory_pool_t *pool, char *buf, size_t max_len);
-
-/**
  * @brief Checks if there are any un-freed memory allocations and prints a leak report if found.
  *
  * @param pool Pointer to the memory pool
  * @return true if no leaks detected, false otherwise
  */
 bool mp_check_leaks(memory_pool_t *pool);
-
-/**
- * @brief Records allocation latency sample for P99/avg profiling.
- */
-void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns);
-
-/**
- * @brief Retrieves estimated P99 allocation latency in nanoseconds.
- */
-uint64_t mp_get_latency_p99(memory_pool_t *pool);
-
-/**
- * @brief Retrieves average allocation latency in nanoseconds.
- */
-uint64_t mp_get_latency_avg(memory_pool_t *pool);
-
-/**
- * @brief Resets allocation latency histogram counters.
- */
-void mp_reset_latency_stats(memory_pool_t *pool);
-
-/**
- * @brief Exports allocation events in pprof-compatible text format.
- *
- * Output can be processed by pprof tools for flame graph generation.
- *
- * @param pool Pointer to the memory pool
- * @param out_buf Output buffer for pprof text
- * @param max_len Maximum length of the output buffer
- * @return Number of bytes written to out_buf
- */
-size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len);
 
 #ifdef __cplusplus
 }
