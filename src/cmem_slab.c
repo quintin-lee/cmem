@@ -23,6 +23,10 @@ const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 32, 64, 128, 256, 512};
 MP_THREAD_LOCAL thread_cache_t tls_cache = {NULL, {0}, {0}};
 MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
 
+/* Forward declaration: slab_free_nolock is defined after remote_free_harvest
+ * but must be visible to it. */
+void slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header);
+
 void tls_cache_flush_pool(memory_pool_t *pool)
 {
     if (tls_cache.owner_pool == pool) {
@@ -117,7 +121,9 @@ void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
         header->alloc_type = ALLOC_TYPE_SLAB;
         header->slab_class = class_idx;
         header->raw_base = (void *)slot;
-        slab_free(pool, header);
+        /* Callers of remote_free_harvest already hold sc->lock; use the
+         * no-lock variant to avoid recursive re-locking (self-deadlock). */
+        slab_free_nolock(pool, header);
         slot = next;
     }
 }
@@ -346,17 +352,15 @@ void *slab_alloc(memory_pool_t *pool,
  * the page from `full` back to `partial` when it gains its first free slot,
  * so it becomes a refill candidate once more.
  *
+ * Callers MUST already hold the owning slab class's lock (`sc->lock`).
+ *
  * @param pool   Pool owning the allocation.
  * @param header The mp_block_header_t to free (alloc_type == SLAB).
  */
-void slab_free(memory_pool_t *pool, mp_block_header_t *header)
+void slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
 {
     uint8_t class_idx = header->slab_class;
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
-
-    if (pool->flags & MP_FLAG_THREAD_SAFE) {
-        pthread_mutex_lock(&sc->lock);
-    }
 
     uintptr_t ptr_val = (uintptr_t)header->raw_base;
     uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
@@ -434,6 +438,33 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
             }
         }
     }
+}
+
+/**
+ * @brief Return an allocation to its owning slab page's free list.
+ *
+ * Recomputes the page base address by masking the slot address down to a
+ * 64 KB boundary, pushes the slot back onto the page free list, and moves
+ * the page from `full` back to `partial` when it gains its first free slot,
+ * so it becomes a refill candidate once more.
+ *
+ * Takes the owning slab class's lock (`sc->lock`) when the pool is
+ * thread-safe; see `slab_free_nolock` for the lock-free variant used by
+ * callers that already hold the lock.
+ *
+ * @param pool   Pool owning the allocation.
+ * @param header The mp_block_header_t to free (alloc_type == SLAB).
+ */
+void slab_free(memory_pool_t *pool, mp_block_header_t *header)
+{
+    uint8_t class_idx = header->slab_class;
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+
+    slab_free_nolock(pool, header);
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
