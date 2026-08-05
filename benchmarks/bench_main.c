@@ -33,11 +33,26 @@
 #define BENCH_PATTERN_LIVE_KEEP 25
 #define BENCH_SIZE_MIXED_STEP 7
 #define BENCH_SIZE_LARGE_STEP 13
+#define BENCH_NSEC_PER_OP 1e9
+#define BENCH_MB_FACTOR (1024.0 * 1024.0)
+#define BENCH_XORSHIFT_SEED 12345u
+#define XORSHIFT_A 13
+#define XORSHIFT_B 17
+#define XORSHIFT_C 5
 
 /* Volatile sink so the compiler cannot dead-code-eliminate malloc/free loops
  * whose pointers never escape (gcc -O2 would otherwise remove them entirely,
  * making the system-malloc measurement meaningless). */
 static volatile void *bench_escape_sink;
+
+/**
+ * @brief Noinline barrier to prevent compiler from eliminating malloc/free loops.
+ * Reads the escape sink through a function call the compiler cannot inline away.
+ */
+__attribute__((noinline)) static void bench_barrier(void)
+{
+    (void)bench_escape_sink;
+}
 
 /**
  * @brief Retrieves the current monotonic time in seconds.
@@ -66,6 +81,7 @@ void bench_small_allocs()
         bench_escape_sink = ptr;
         free(ptr);
     }
+    bench_barrier();
     double time_sys = get_time_sec() - start_sys;
 
     // 2. cmem Benchmark (interleaved alloc/free — realistic)
@@ -108,6 +124,7 @@ void bench_medium_allocs()
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
         free(ptrs[i]);
     }
+    bench_barrier();
     double time_sys = get_time_sec() - start_sys;
 
     memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_DEFAULT);
@@ -425,6 +442,7 @@ void bench_size_distribution()
         bench_escape_sink = ptr;
         free(ptr);
     }
+    bench_barrier();
     double sys_fixed = get_time_sec() - start;
     memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
     start = get_time_sec();
@@ -446,6 +464,7 @@ void bench_size_distribution()
         bench_escape_sink = ptr;
         free(ptr);
     }
+    bench_barrier();
     double sys_mixed = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
@@ -467,6 +486,7 @@ void bench_size_distribution()
         bench_escape_sink = ptr;
         free(ptr);
     }
+    bench_barrier();
     double sys_large = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < MEDIUM_ALLOC_COUNT; i++) {
@@ -496,7 +516,7 @@ void bench_batch_apis()
 
     /* single alloc/free loops */
     double start = get_time_sec();
-    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+    for (int batch_idx = 0; batch_idx < BENCH_BATCH_COUNT; batch_idx++) {
         for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
             ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
         }
@@ -508,7 +528,7 @@ void bench_batch_apis()
 
     /* batch APIs */
     start = get_time_sec();
-    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+    for (int batch_idx = 0; batch_idx < BENCH_BATCH_COUNT; batch_idx++) {
         size_t got = mp_alloc_batch(pool, BENCH_SIZE_FIXED, ptrs, BENCH_BATCH_ELEMS);
         if (got != BENCH_BATCH_ELEMS) {
             fprintf(stderr, "mp_alloc_batch returned %zu (expected %d)\n", got, BENCH_BATCH_ELEMS);
@@ -521,11 +541,11 @@ void bench_batch_apis()
     printf("  Single loops : %.4f sec (%.2f Mops/sec, %.2f ns/op)\n",
            time_single,
            (total_ops / time_single) / MILLION_OPS,
-           (time_single / total_ops) * 1e9);
+           (time_single / total_ops) * BENCH_NSEC_PER_OP);
     printf("  Batch APIs   : %.4f sec (%.2f Mops/sec, %.2f ns/op)\n",
            time_batch,
            (total_ops / time_batch) / MILLION_OPS,
-           (time_batch / total_ops) * 1e9);
+           (time_batch / total_ops) * BENCH_NSEC_PER_OP);
     printf("  Batch speedup: %.2fx\n", time_single / time_batch);
 
     mp_destroy(pool);
@@ -592,22 +612,22 @@ void bench_thread_scaling()
     printf("  Mode       | Threads | Mops/sec | Efficiency\n");
     printf("  -----------+---------+----------+-----------\n");
 
-    for (int m = 0; m < 2; m++) {
-        const char *mode_name = (m == 0) ? "single      " : "multi-arena ";
+    for (int mode_idx = 0; mode_idx < 2; mode_idx++) {
+        const char *mode_name = (mode_idx == 0) ? "single      " : "multi-arena ";
         mp_flags_t flags = MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE;
-        if (m == 1) {
+        if (mode_idx == 1) {
             flags |= MP_FLAG_MULTI_ARENA;
         }
         memory_pool_t *pool = mp_create(128 * 1024 * 1024, flags);
         double base = 0.0;
-        for (int t = 0; t < BENCH_THREAD_COUNTS; t++) {
-            int nthreads = thread_counts[t];
+        for (int thread_idx = 0; thread_idx < BENCH_THREAD_COUNTS; thread_idx++) {
+            int nthreads = thread_counts[thread_idx];
             double mops = bench_scaling_run(pool, nthreads, allocs_per_thread);
             if (mops < 0.0) {
                 fprintf(stderr, "Thread scaling run failed\n");
                 break;
             }
-            if (t == 0) {
+            if (thread_idx == 0) {
                 base = mops;
             }
             printf("  %s | %d       | %.2f     | %.2fx\n", mode_name, nthreads, mops, mops / base);
@@ -637,9 +657,9 @@ void bench_compressed_storage()
     size_t total_in = 0;
     size_t total_out = 0;
     for (int i = 0; i < BENCH_COMPRESS_ITERS; i++) {
-        compressed_handle_t h = mp_compress_block(pool, data, BENCH_COMPRESS_BLOCK_SIZE);
-        if (h != 0) {
-            mp_free_compressed(pool, h);
+        compressed_handle_t comp_handle = mp_compress_block(pool, data, BENCH_COMPRESS_BLOCK_SIZE);
+        if (comp_handle != 0) {
+            mp_free_compressed(pool, comp_handle);
             total_in += BENCH_COMPRESS_BLOCK_SIZE;
             total_out += BENCH_COMPRESS_BLOCK_SIZE;
         }
@@ -676,10 +696,10 @@ void bench_compressed_storage()
     double time_decompress = get_time_sec() - start;
 
     printf("  Compress   : %.2f MB/s (%.2f Mops/sec)\n",
-           ((double)total_in / time_compress) / (1024.0 * 1024.0),
+           ((double)total_in / time_compress) / BENCH_MB_FACTOR,
            ((double)total_in / time_compress) / MILLION_OPS);
     printf("  Decompress : %.2f MB/s (%.2f Mops/sec)\n",
-           ((double)total_in / time_decompress) / (1024.0 * 1024.0),
+           ((double)total_in / time_decompress) / BENCH_MB_FACTOR,
            ((double)total_in / time_decompress) / MILLION_OPS);
     printf("  Compressed : %zu bytes stored for %zu input (ratio %.2f:1)\n",
            total_out,
@@ -711,6 +731,7 @@ void bench_allocation_patterns()
         bench_escape_sink = ptr;
         free(ptr);
     }
+    bench_barrier();
     double sys_a = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
@@ -729,6 +750,7 @@ void bench_allocation_patterns()
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
         free(ptrs[i]);
     }
+    bench_barrier();
     double sys_b = get_time_sec() - start;
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
@@ -740,24 +762,25 @@ void bench_allocation_patterns()
     double cmem_b = get_time_sec() - start;
 
     /* (c) random sizes via xorshift */
-    uint32_t seed = 12345u;
+    uint32_t seed = BENCH_XORSHIFT_SEED;
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
+        seed ^= seed << XORSHIFT_A;
+        seed ^= seed >> XORSHIFT_B;
+        seed ^= seed << XORSHIFT_C;
         size_t sz = 32 + (seed % SMALL_ALLOC_SPREAD);
         void *ptr = malloc(sz);
         bench_escape_sink = ptr;
         free(ptr);
     }
+    bench_barrier();
     double sys_c = get_time_sec() - start;
-    seed = 12345u;
+    seed = BENCH_XORSHIFT_SEED;
     start = get_time_sec();
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
+        seed ^= seed << XORSHIFT_A;
+        seed ^= seed >> XORSHIFT_B;
+        seed ^= seed << XORSHIFT_C;
         size_t sz = 32 + (seed % SMALL_ALLOC_SPREAD);
         void *ptr = mp_alloc(pool, sz);
         mp_free(pool, ptr);
@@ -772,6 +795,7 @@ void bench_allocation_patterns()
     for (int i = 0; i < BENCH_PATTERN_OPS - (int)live_count; i++) {
         free(ptrs[i]);
     }
+    bench_barrier();
     double sys_d = get_time_sec() - start;
     for (int i = 0; i < BENCH_PATTERN_OPS; i++) {
         bench_escape_sink = ptrs[i];
