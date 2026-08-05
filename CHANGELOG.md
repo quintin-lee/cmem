@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Slab Allocator Thread Safety & Lifetime Fixes**:
+  - Eliminated mid-free `cmem_munmap` call in `slab_free_nolock` to prevent use-after-free race conditions when unmapping 64KB slab pages during concurrent allocations/frees.
+  - Added POSIX `pthread_key` thread-exit destructor (`tls_cache_dtor`) to automatically flush thread-local cached slots (`tls_cache`) back to `owner_pool` on thread termination.
+  - Updated `tls_cache_validate_owner()` to flush previous pool slots before reassigning thread cache ownership.
+  - Zeroed out `header->prev` and `header->next` in `active_list_remove()` to prevent dangling linked-list pointers.
+  - Included `empty_pages` list cleanup in `mp_destroy()` and re-initialization in `mp_reset()`.
+
+### Added
+- **Expanded Boundary Tests**:
+  - Added `test_boundary_cross_allocator`, `test_boundary_zero_size_all_tiers`, and `test_boundary_max_size` unit test cases.
+- **Diagnostic Parser Bounds Checks**:
+  - Hardened snapshot parser `cmem-analyze-parser.c` with total pool size and allocation record limit validation.
+
 ## [0.1.0] - 2026-08-05
 
 ### Added

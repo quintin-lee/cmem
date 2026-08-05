@@ -54,7 +54,8 @@ flowchart TD
 **核心特性：**
 - 预定义尺寸类：8B, 16B, 32B, 64B, 128B, 256B, 512B
 - 每个 Class 独立锁，减少锁争用
-- 支持线程本地缓存（TLS Cache）实现无锁快速路径
+- 支持线程本地缓存（TLS Cache）实现无锁快速路径，包含 POSIX 线程退出自动清理机制（`pthread_key`）
+- 在 `empty_pages` 链表中复用空闲 Slab 页，消除释放途中的 `munmap` 开销与 Use-After-Free 隐患
 - 支持 Per-CPU Lock-Free Freelist 进一步降低并发开销
 
 **数据结构：**

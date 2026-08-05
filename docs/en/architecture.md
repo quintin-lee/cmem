@@ -54,7 +54,8 @@ A fixed-size Class allocator for small objects, providing $O(1)$ allocation/deal
 **Core Features:**
 - Predefined size classes: 8B, 16B, 32B, 64B, 128B, 256B, 512B
 - Each Class has an independent lock, reducing lock contention
-- Supports Thread-Local Cache (TLS Cache) for lock-free fast path
+- Supports Thread-Local Cache (TLS Cache) for lock-free fast path with automatic POSIX thread-exit cleanup (`pthread_key`)
+- Retains empty slab pages in `empty_pages` list to avoid mid-free `munmap` overhead and prevent use-after-free
 - Supports Per-CPU Lock-Free Freelist to further reduce concurrency overhead
 
 **Data Structures:**
