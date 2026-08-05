@@ -277,6 +277,16 @@ typedef struct {
 extern MP_THREAD_LOCAL thread_cache_t tls_cache; /**< Per-thread slab cache (TLS)            */
 extern MP_THREAD_LOCAL mp_thread_quota_t thread_quota; /**< Per-thread quota accounting (TLS) */
 
+/* Compressed-storage entry: one slot in the pool's handle table. */
+typedef struct cmem_compressed_entry {
+    size_t   original_size; /* uncompressed payload size */
+    size_t   comp_offset;   /* byte offset into compression_area */
+    size_t   comp_size;     /* compressed payload size */
+    uint32_t generation;    /* bumped on every reuse (stale-handle guard) */
+    uint32_t alloc_seq;     /* monotonic order for oldest-first eviction */
+    bool     used;
+} cmem_compressed_entry_t;
+
 /**
  * @brief TLSF block header (cmem_tlsf.c).
  *
@@ -427,6 +437,15 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     bool idle_reclaim_enabled;        /**< Enable idle page reclamation               */
     uint64_t idle_reclaim_timeout_ms; /**< Idle timeout before reclaim (ms)           */
     size_t idle_reclaim_min_pages;    /**< Min idle pages before reclaim triggers     */
+
+    /* --- Compressed storage --- */
+    cmem_compressed_entry_t *compressed_entries; /* handle table, NULL = disabled */
+    uint32_t                 compressed_capacity;/* table capacity (0 = disabled) */
+    uint32_t                 compressed_seq;     /* next allocation sequence */
+    size_t                   compressed_budget;  /* 0 = disabled */
+    size_t                   compressed_used;    /* bytes currently stored */
+    void                    *compressed_area;    /* compression area base */
+    size_t                   compressed_area_size; /* usable bytes in area */
 };
 
 /**
@@ -620,6 +639,9 @@ extern int cmem_sched_getcpu(void);
 extern int cmem_numa_current_node(void);
 extern int cmem_numa_node_count(void);
 extern int cmem_cpu_to_node(int cpu);
+
+extern int cmem_lz4_compress(const uint8_t *src, uint8_t *dst, int src_size, int dst_cap);
+extern int cmem_lz4_decompress(const uint8_t *src, uint8_t *dst, int src_size, int dst_size);
 extern void cmem_munmap(void *ptr, size_t size);
 extern void *cmem_aligned_malloc(size_t size, size_t alignment);
 extern void cmem_aligned_free(void *ptr);
