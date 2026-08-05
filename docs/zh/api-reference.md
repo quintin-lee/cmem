@@ -200,6 +200,38 @@ void* mp_alloc(memory_pool_t* pool, size_t size);
 
 ---
 
+### mp_alloc_fast
+
+```c
+static inline void* mp_alloc_fast(memory_pool_t* pool, size_t size);
+```
+
+针对配置了 `MP_FLAG_FAST_PATH` 标志的内存池的高性能内联小对象分配接口。直接存取线程局部缓存 `tls_cache` 并通过 $O(1)$ 尺寸映射表直接跳转，彻底消除跨编译单元函数调用延迟。
+
+**参数：**
+- `pool`：内存池指针
+- `size`：请求字节数（`1 <= size <= 512`）
+
+**返回值：**
+- 成功：返回指向 payload 的指针
+- 失败/缓存未命中：自动降级调用 `mp_alloc(pool, size)`
+
+---
+
+### mp_free_fast
+
+```c
+static inline void mp_free_fast(memory_pool_t* pool, void* ptr);
+```
+
+针对配置了 `MP_FLAG_FAST_PATH` 标志的内存池的高性能内联小对象释放接口。在 TLS 线程局部缓存命中时，避免全局互斥锁竞争，提供极速无锁压栈释放。
+
+**参数：**
+- `pool`：内存池指针
+- `ptr`：指向要释放的 payload 指针
+
+---
+
 ### mp_calloc
 
 ```c

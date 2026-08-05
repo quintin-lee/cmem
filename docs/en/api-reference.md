@@ -200,6 +200,38 @@ Allocates a memory block of the specified number of bytes from the memory pool.
 
 ---
 
+### mp_alloc_fast
+
+```c
+static inline void* mp_alloc_fast(memory_pool_t* pool, size_t size);
+```
+
+Ultra-fast inline small-object allocation macro/function for pools configured with `MP_FLAG_FAST_PATH`. Directly accesses `tls_cache` and uses an $O(1)$ size-to-class lookup array to bypass function call overhead.
+
+**Parameters:**
+- `pool`: Memory pool pointer
+- `size`: Number of bytes requested (`1 <= size <= 512`)
+
+**Return Value:**
+- Success: Returns a pointer to the payload
+- Failure / Cache Miss: Automatically falls back to `mp_alloc(pool, size)`
+
+---
+
+### mp_free_fast
+
+```c
+static inline void mp_free_fast(memory_pool_t* pool, void* ptr);
+```
+
+Ultra-fast inline small-object deallocation macro/function for pools configured with `MP_FLAG_FAST_PATH`. Replaces global pool mutex lock acquisitions on thread-local cache hits with lock-free TLS slot push and atomic counter operations.
+
+**Parameters:**
+- `pool`: Memory pool pointer
+- `ptr`: Pointer to payload to free
+
+---
+
 ### mp_calloc
 
 ```c

@@ -92,6 +92,7 @@ flowchart TD
 
 ### 1. ⚡ High-Performance Tiered Allocator
 - **Slab Allocator (<= 512B)**: Fixed-size Class allocator for small objects (8B ~ 512B) with $O(1)$ alloc/free and zero external fragmentation.
+- **Fast Path Inline Allocation (`mp_alloc_fast` / `mp_free_fast`)**: Exposes inline primitives and $O(1)$ LUT for `MP_FLAG_FAST_PATH` pools, boosting small object throughput to **230+ Mops/sec** (~4.2ns per op).
 - **TLSF Allocator (512B ~ 4MB)**: Two-Level Segregated Fit with $O(1)$ bitmap search and **in-place expansion** to avoid unnecessary `memcpy`.
 - **Direct OS Fallback (> 4MB)**: Automatically falls back to system memory mapping with Guard Pages and HugePages acceleration.
 

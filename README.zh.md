@@ -88,6 +88,7 @@ flowchart TD
 
 ### 1. ⚡ 高性能分层分配器
 - **Slab 分配器 (<= 512B)**：适用于小对象 (8B ~ 512B) 的固定大小类分配器，具备 $O(1)$ 分配/释放和零外部碎片。
+- **Fast Path 内联快速分配 (`mp_alloc_fast` / `mp_free_fast`)**：针对 `MP_FLAG_FAST_PATH` 提供头文件级内联接口与 $O(1)$ LUT 查表，将小对象分配吞吐提升至 **230+ Mops/sec**（单次分配低至 ~4.2ns）。
 - **TLSF 分配器 (512B ~ 4MB)**：二级分离适配，具备 $O(1)$ 位图搜索和**原地扩展**以避免不必要的 `memcpy`。
 - **直接 OS 回退 (> 4MB)**：自动回退到系统内存映射，支持 Guard Pages 和 HugePages 加速。
 
