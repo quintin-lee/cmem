@@ -2312,15 +2312,17 @@ void mp_free(memory_pool_t *pool, void *ptr)
         uint8_t class_idx = header->slab_class;
 
         if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
-            if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
-                mp_free_stats_update(pool, header);
-            } else {
-                pool_lock(pool);
-                mp_free_stats_update(pool, header);
-                pool_unlock(pool);
-            }
-            if (pool->event_cb) {
-                trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+            if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
+                    mp_free_stats_update(pool, header);
+                } else {
+                    pool_lock(pool);
+                    mp_free_stats_update(pool, header);
+                    pool_unlock(pool);
+                }
+                if (pool->event_cb) {
+                    trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+                }
             }
 
             mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
