@@ -28,7 +28,9 @@
 #define BENCH_BATCH_COUNT 10000
 #define BENCH_THREAD_COUNTS 4
 #define BENCH_COMPRESS_BLOCK_SIZE 4096
-#define BENCH_COMPRESS_ITERS 10000
+#define BENCH_COMPRESS_ITERS 2000
+#define BENCH_MOPS_THRESHOLD 0.01
+#define BENCH_KOPS_FACTOR 1000.0
 #define BENCH_PATTERN_OPS 200000
 #define BENCH_PATTERN_LIVE_KEEP 25
 #define BENCH_SIZE_MIXED_STEP 7
@@ -678,6 +680,14 @@ void bench_compressed_storage()
     memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_DEFAULT);
     bench_warmup(pool);
 
+    compressed_handle_t *handles =
+        (compressed_handle_t *)calloc(BENCH_COMPRESS_ITERS, sizeof(compressed_handle_t));
+    if (!handles) {
+        fprintf(stderr, "Benchmark 10: handles allocation failed\n");
+        mp_destroy(pool);
+        return;
+    }
+
     void *data = mp_alloc(pool, BENCH_COMPRESS_BLOCK_SIZE);
     char *bytes = (char *)data;
     static const char pattern[] = "{\"id\":12345,\"name\":\"cmem_tiered_memory_pool\",\"status\":"
@@ -689,58 +699,66 @@ void bench_compressed_storage()
 
     double start = get_time_sec();
     size_t total_in = 0;
-    size_t total_out = 0;
     for (int i = 0; i < BENCH_COMPRESS_ITERS; i++) {
-        compressed_handle_t comp_handle = mp_compress_block(pool, data, BENCH_COMPRESS_BLOCK_SIZE);
-        if (comp_handle != 0) {
-            mp_free_compressed(pool, comp_handle);
+        handles[i] = mp_compress_block(pool, data, BENCH_COMPRESS_BLOCK_SIZE);
+        if (handles[i] != 0) {
             total_in += BENCH_COMPRESS_BLOCK_SIZE;
-            total_out += BENCH_COMPRESS_BLOCK_SIZE;
-        }
-        data = mp_alloc(pool, BENCH_COMPRESS_BLOCK_SIZE);
-        bytes = (char *)data;
-        for (int j = 0; j < BENCH_COMPRESS_BLOCK_SIZE; j++) {
-            bytes[j] = pattern[j % pat_len];
         }
     }
     double time_compress = get_time_sec() - start;
 
-    compressed_handle_t handle = mp_compress_block(pool, data, BENCH_COMPRESS_BLOCK_SIZE);
-    if (handle == 0) {
-        fprintf(stderr, "Benchmark 10: initial compress failed\n");
-        mp_free(pool, data);
-        mp_destroy(pool);
-        return;
-    }
-    size_t comp_used = 0;
+    size_t total_out = 0;
     size_t comp_budget = 0;
     size_t comp_blocks = 0;
-    if (mp_get_compressed_stats(pool, &comp_used, &comp_budget, &comp_blocks)) {
-        total_out = comp_used;
-    }
+    mp_get_compressed_stats(pool, &total_out, &comp_budget, &comp_blocks);
+
     start = get_time_sec();
-    void *out_buf = NULL;
     for (int i = 0; i < BENCH_COMPRESS_ITERS; i++) {
-        out_buf = mp_decompress_block(pool, handle);
-        if (out_buf) {
-            bench_escape(out_buf);
-            mp_free(pool, out_buf);
+        if (handles[i] != 0) {
+            void *out_buf = mp_decompress_block(pool, handles[i]);
+            if (out_buf) {
+                bench_escape(out_buf);
+                mp_free(pool, out_buf);
+            }
         }
     }
     double time_decompress = get_time_sec() - start;
 
-    printf("  Compress   : %.2f MB/s (%.2f Mops/sec)\n",
-           ((double)total_in / time_compress) / BENCH_MB_FACTOR,
-           ((double)total_in / time_compress) / MILLION_OPS);
-    printf("  Decompress : %.2f MB/s (%.2f Mops/sec)\n",
-           ((double)total_in / time_decompress) / BENCH_MB_FACTOR,
-           ((double)total_in / time_decompress) / MILLION_OPS);
+    double compress_mops =
+        (time_compress > 0) ? ((double)BENCH_COMPRESS_ITERS / time_compress) / MILLION_OPS : 0.0;
+    double decompress_mops = (time_decompress > 0)
+                                 ? ((double)BENCH_COMPRESS_ITERS / time_decompress) / MILLION_OPS
+                                 : 0.0;
+    double compress_mbps =
+        (time_compress > 0) ? (((double)total_in / time_compress) / BENCH_MB_FACTOR) : 0.0;
+    double decompress_mbps =
+        (time_decompress > 0) ? (((double)total_in / time_decompress) / BENCH_MB_FACTOR) : 0.0;
+
+    if (compress_mops < BENCH_MOPS_THRESHOLD) {
+        printf("  Compress   : %.2f MB/s (%.2f Kops/sec)\n",
+               compress_mbps,
+               compress_mops * BENCH_KOPS_FACTOR);
+    } else {
+        printf("  Compress   : %.2f MB/s (%.2f Mops/sec)\n", compress_mbps, compress_mops);
+    }
+    if (decompress_mops < BENCH_MOPS_THRESHOLD) {
+        printf("  Decompress : %.2f MB/s (%.2f Kops/sec)\n",
+               decompress_mbps,
+               decompress_mops * BENCH_KOPS_FACTOR);
+    } else {
+        printf("  Decompress : %.2f MB/s (%.2f Mops/sec)\n", decompress_mbps, decompress_mops);
+    }
     printf("  Compressed : %zu bytes stored for %zu input (ratio %.2f:1)\n",
            total_out,
            total_in,
-           total_in > 0 ? (double)total_in / (double)total_out : 0.0);
+           total_out > 0 ? (double)total_in / (double)total_out : 0.0);
 
-    mp_free_compressed(pool, handle);
+    for (int i = 0; i < BENCH_COMPRESS_ITERS; i++) {
+        if (handles[i] != 0) {
+            mp_free_compressed(pool, handles[i]);
+        }
+    }
+    free(handles);
     mp_free(pool, data);
     mp_destroy(pool);
 }
