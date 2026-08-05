@@ -37,7 +37,9 @@ typedef std::atomic<size_t> cmem_atomic_size_t; /* Atomic size counter (C++ std:
 #define CMEM_ORDER_RELAXED std::memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE std::memory_order_acquire
 #define CMEM_ORDER_RELEASE std::memory_order_release
+#ifndef MP_THREAD_LOCAL
 #define MP_THREAD_LOCAL thread_local
+#endif
 #elif defined(_WIN32)
 #include <windows.h>
 typedef volatile LONG_PTR cmem_atomic_size_t;
@@ -57,7 +59,9 @@ typedef volatile LONG_PTR cmem_atomic_size_t;
 #define CMEM_ORDER_RELAXED 0
 #define CMEM_ORDER_ACQUIRE 0
 #define CMEM_ORDER_RELEASE 0
+#ifndef MP_THREAD_LOCAL
 #define MP_THREAD_LOCAL __declspec(thread)
+#endif
 #else
 #include <errno.h>
 #include <stdatomic.h>
@@ -73,7 +77,9 @@ typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ORDER_RELAXED memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE memory_order_acquire
 #define CMEM_ORDER_RELEASE memory_order_release
+#ifndef MP_THREAD_LOCAL
 #define MP_THREAD_LOCAL _Thread_local
+#endif
 #endif
 
 #include <errno.h>
