@@ -303,6 +303,7 @@ typedef struct tlsf_pool {
     void *raw_area;                                   /**< Raw base of this TLSF region          */
     size_t raw_size;                                  /**< Size of the TLSF region               */
     struct tlsf_pool *next;                           /**< Next TLSF arena (linked for expansion) */
+    struct memory_pool *owner_pool;                   /**< Memory pool owning this TLSF arena     */
 } tlsf_pool_t;
 
 /**
@@ -397,6 +398,12 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
 
     int num_cpus;                                 /**< CPU count for per-CPU freelists   */
     mp_percpu_freelist_entry_t *percpu_freelists; /**< Per-CPU free lists (lock-free)    */
+
+    int num_arenas;                     /**< Sub-arena count (0 if single pool) */
+    struct memory_pool **arenas;        /**< Multi-arena sub-pools array        */
+    cmem_atomic_size_t arena_rr_index;  /**< Round-robin atomic index for thread binding */
+    bool is_multi_arena_child;          /**< True if this is a sub-arena child   */
+    struct memory_pool *master_pool;    /**< Master pool back-pointer if sub-arena */
 
     mp_watermark_callback_t gc_cb;       /**< GC callback invoked before OOM rejection   */
     void *gc_user_data;                  /**< GC callback arg                            */
@@ -577,6 +584,7 @@ static inline uint8_t get_slab_class_index(memory_pool_t *pool, size_t size)
 extern void active_list_add(memory_pool_t *pool, mp_block_header_t *header);
 extern void active_list_remove(memory_pool_t *pool, mp_block_header_t *header);
 extern void *mp_alloc_internal(memory_pool_t *pool, size_t size);
+extern memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool);
 
 /* Slab allocator (cmem_slab.c) */
 extern bool slab_init(memory_pool_t *pool);

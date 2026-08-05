@@ -308,6 +308,10 @@ mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-pa
         }
     }
 
+    if (flags & MP_FLAG_MULTI_ARENA) {
+        mp_enable_multi_arena(pool, 0);
+    }
+
     return pool;
 }
 

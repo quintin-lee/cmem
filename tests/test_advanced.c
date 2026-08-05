@@ -987,6 +987,36 @@ static void test_reset_with_full_pages()
 
 // NOLINTEND(readability-magic-numbers, clang-analyzer-optin.core.EnumCastOutOfRange)
 
+static void *multi_arena_worker(void *arg)
+{
+    memory_pool_t *pool = (memory_pool_t *)arg;
+    for (int i = 0; i < 500; i++) {
+        void *p = mp_alloc(pool, 64);
+        assert(p != NULL);
+        mp_free(pool, p);
+    }
+    return NULL;
+}
+
+static void test_multi_arena()
+{
+    printf("\n--- Test: Multi-Arena Thread-to-Arena Partitioning ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+    assert(mp_get_arena_count(pool) > 0);
+
+    pthread_t threads[4];
+    for (int i = 0; i < 4; i++) {
+        pthread_create(&threads[i], NULL, multi_arena_worker, pool);
+    }
+    for (int i = 0; i < 4; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_multi_arena");
+}
+
 int main()
 {
     printf("\n================ RUNNING CMEM ADVANCED UNIT TESTS ================\n");
@@ -1036,6 +1066,7 @@ int main()
     test_get_allocation_info();
     test_enumerate_regions();
     test_report_leaks_on_destroy();
+    test_multi_arena();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;

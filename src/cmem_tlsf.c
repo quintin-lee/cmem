@@ -140,6 +140,7 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
     memset(tpool, 0, sizeof(tlsf_pool_t));
     tpool->raw_area = (void *)((uint8_t *)raw_mem + sizeof(tlsf_pool_t));
     tpool->raw_size = size;
+    tpool->owner_pool = pool;
 
     /* Seed the arena with one covering free block. */
     tlsf_block_t *block = (tlsf_block_t *)tpool->raw_area;

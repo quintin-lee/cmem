@@ -1475,6 +1475,12 @@ void mp_destroy(memory_pool_t *pool)
 
         percpu_destroy(pool);
 
+        if (pool->arenas) {
+            free(pool->arenas);
+            pool->arenas = NULL;
+            pool->num_arenas = 0;
+        }
+
         free(pool);
     }
 }
@@ -2022,7 +2028,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             header->requested_size = size;
             header->usable_size = pool->slab_classes[class_idx].slot_size;
             header->raw_base = slot;
-            header->subpool = NULL;
+            header->subpool = pool;
             header->alloc_file = NULL;
             header->alloc_line = 0;
             header->alloc_func = NULL;
@@ -2061,6 +2067,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             header->requested_size = size;
             header->usable_size = size;
             header->raw_base = raw_mem;
+            header->subpool = pool;
             header->alloc_file = NULL;
             header->alloc_line = 0;
             header->alloc_func = NULL;
@@ -2127,6 +2134,12 @@ void *mp_alloc(memory_pool_t *pool, size_t size)
 {
     if (!pool || size == 0) {
         return NULL;
+    }
+    if (pool->num_arenas > 0) {
+        memory_pool_t *arena = mp_get_thread_bound_arena(pool);
+        if (arena && arena != pool) {
+            return mp_alloc(arena, size);
+        }
     }
     if (pool->flags & MP_FLAG_CACHE_ALIGNED) {
         return mp_aligned_alloc(pool, 64, size);
@@ -2214,24 +2227,39 @@ void *mp_calloc(memory_pool_t *pool, size_t num, size_t size)
  */
 void mp_free(memory_pool_t *pool, void *ptr)
 {
-    if (!pool || !ptr) {
+    if (!ptr) {
         return;
     }
 
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
 
     if (header->magic != MP_MAGIC_HEAD) {
-        (void)fprintf(
-            stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
-        trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
-        mp_mark_pool_dirty(pool);
-        if (pool->error_recovery_cb) {
-            pool->error_recovery_cb(pool,
-                                    true,
-                                    pool->stats.active_bytes,
-                                    pool->stats.max_memory_limit,
-                                    pool->error_recovery_user_data);
+        if (pool) {
+            (void)fprintf(
+                stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
+            trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
+            mp_mark_pool_dirty(pool);
+            if (pool->error_recovery_cb) {
+                pool->error_recovery_cb(pool,
+                                        true,
+                                        pool->stats.active_bytes,
+                                        pool->stats.max_memory_limit,
+                                        pool->error_recovery_user_data);
+            }
         }
+        return;
+    }
+
+    if (header->subpool) {
+        if (header->alloc_type == ALLOC_TYPE_TLSF) {
+            tlsf_pool_t *tpool = (tlsf_pool_t *)header->subpool;
+            if (tpool->owner_pool) {
+                pool = tpool->owner_pool;
+            }
+        } else {
+            pool = (memory_pool_t *)header->subpool;
+        }
+    } else if (!pool) {
         return;
     }
 
@@ -2806,4 +2834,158 @@ void mp_frame_arena_destroy(cmem_frame_arena_t *farena)
         mp_destroy(farena->pool_b);
     }
     free(farena);
+}
+
+/* ========================================================================== */
+/*  Multi-Arena Thread Binding Architecture                                   */
+/* ========================================================================== */
+#define MAX_TLS_BOUND_POOLS 8
+
+typedef struct {
+    memory_pool_t *master_pool;
+    memory_pool_t *bound_arena;
+    int arena_index;
+} tls_arena_binding_t;
+
+typedef struct {
+    tls_arena_binding_t bindings[MAX_TLS_BOUND_POOLS];
+    int count;
+} tls_arena_map_t;
+
+static MP_THREAD_LOCAL tls_arena_map_t tls_arena_map = {{{NULL, NULL, 0}}, 0};
+
+memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool)
+{
+    if (!pool || pool->num_arenas <= 0) {
+        return pool;
+    }
+
+    for (int i = 0; i < tls_arena_map.count; i++) {
+        if (tls_arena_map.bindings[i].master_pool == pool) {
+            return tls_arena_map.bindings[i].bound_arena;
+        }
+    }
+
+    int idx = 0;
+#ifndef _WIN32
+    int cpu = cmem_sched_getcpu();
+    if (cpu >= 0) {
+        idx = cpu % pool->num_arenas;
+    } else {
+        idx = (int)(CMEM_ATOMIC_FETCH_ADD(&pool->arena_rr_index, 1, CMEM_ORDER_RELAXED) %
+                    (size_t)pool->num_arenas);
+    }
+#else
+    idx = (int)(CMEM_ATOMIC_FETCH_ADD(&pool->arena_rr_index, 1, CMEM_ORDER_RELAXED) %
+                (size_t)pool->num_arenas);
+#endif
+
+    memory_pool_t *bound_arena = pool->arenas[idx];
+    if (tls_arena_map.count < MAX_TLS_BOUND_POOLS) {
+        tls_arena_map.bindings[tls_arena_map.count].master_pool = pool;
+        tls_arena_map.bindings[tls_arena_map.count].bound_arena = bound_arena;
+        tls_arena_map.bindings[tls_arena_map.count].arena_index = idx;
+        tls_arena_map.count++;
+    }
+    return bound_arena;
+}
+
+bool mp_enable_multi_arena(memory_pool_t *pool, int num_arenas)
+{
+    if (!pool || pool->is_multi_arena_child) {
+        return false;
+    }
+    if (pool->num_arenas > 0) {
+        return true;
+    }
+
+    if (num_arenas <= 0) {
+#ifdef _WIN32
+        num_arenas = (int)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#else
+        num_arenas = (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+        if (num_arenas <= 0) {
+            num_arenas = 4;
+        }
+    }
+    if (num_arenas > 64) {
+        num_arenas = 64;
+    }
+
+    pool_lock(pool);
+    pool->arenas = (memory_pool_t **)calloc((size_t)num_arenas, sizeof(memory_pool_t *));
+    if (!pool->arenas) {
+        pool_unlock(pool);
+        return false;
+    }
+
+    pool->num_arenas = num_arenas;
+    pool->flags |= MP_FLAG_MULTI_ARENA;
+
+    int numa_nodes = mp_numa_node_count();
+
+    for (int i = 0; i < num_arenas; i++) {
+        char name[64];
+        (void)snprintf(name, sizeof(name), "%.48s_Arena%d", pool->arena_name, i);
+        memory_pool_t *child = mp_create_child(pool, 0, pool->flags & ~MP_FLAG_MULTI_ARENA, name);
+        if (!child) {
+            child = pool;
+        } else {
+            child->is_multi_arena_child = true;
+            child->master_pool = pool;
+            if (numa_nodes > 1) {
+                child->numa_node = i % numa_nodes;
+            }
+        }
+        pool->arenas[i] = child;
+    }
+    pool_unlock(pool);
+    return true;
+}
+
+bool mp_bind_thread_to_arena(memory_pool_t *pool, int arena_index)
+{
+    if (!pool || pool->num_arenas <= 0 || arena_index < 0 || arena_index >= pool->num_arenas) {
+        return false;
+    }
+    memory_pool_t *bound_arena = pool->arenas[arena_index];
+
+    for (int i = 0; i < tls_arena_map.count; i++) {
+        if (tls_arena_map.bindings[i].master_pool == pool) {
+            tls_arena_map.bindings[i].bound_arena = bound_arena;
+            tls_arena_map.bindings[i].arena_index = arena_index;
+            return true;
+        }
+    }
+
+    if (tls_arena_map.count < MAX_TLS_BOUND_POOLS) {
+        tls_arena_map.bindings[tls_arena_map.count].master_pool = pool;
+        tls_arena_map.bindings[tls_arena_map.count].bound_arena = bound_arena;
+        tls_arena_map.bindings[tls_arena_map.count].arena_index = arena_index;
+        tls_arena_map.count++;
+        return true;
+    }
+    return false;
+}
+
+memory_pool_t *mp_get_thread_arena(memory_pool_t *pool)
+{
+    return mp_get_thread_bound_arena(pool);
+}
+
+int mp_get_arena_count(memory_pool_t *pool)
+{
+    if (!pool) {
+        return 0;
+    }
+    return pool->num_arenas;
+}
+
+memory_pool_t *mp_get_arena(memory_pool_t *pool, int arena_index)
+{
+    if (!pool || pool->num_arenas <= 0 || arena_index < 0 || arena_index >= pool->num_arenas) {
+        return NULL;
+    }
+    return pool->arenas[arena_index];
 }

@@ -99,7 +99,8 @@ typedef enum {
     MP_FLAG_REPORT_LEAKS_ON_DESTROY =
         (1 << 15), /**< Automatically report leaks to stderr on mp_destroy() */
     MP_FLAG_AUTO_NUMA =
-        (1 << 16) /**< Auto-bind allocations to the calling thread's NUMA node (Linux) */
+        (1 << 16), /**< Auto-bind allocations to the calling thread's NUMA node (Linux) */
+    MP_FLAG_MULTI_ARENA = (1 << 17) /**< Enable multi-arena thread-to-arena partitioning mode */
 } mp_flags_t;
 
 /**
@@ -544,6 +545,53 @@ memory_pool_t *mp_get_parent(memory_pool_t *pool);
  * @return Number of direct children, or 0 if pool is invalid
  */
 size_t mp_get_child_count(memory_pool_t *pool);
+
+/**
+ * @brief Enables multi-arena mode for a memory pool and sets up thread-to-arena partitioning.
+ *
+ * Spawns num_arenas internal child arenas. Threads calling mp_alloc() are bound
+ * to specific arenas (via round-robin or CPU affinity), minimizing lock contention
+ * and enabling NUMA node alignment on Linux.
+ *
+ * @param pool Memory pool to upgrade to multi-arena mode
+ * @param num_arenas Number of sub-arenas to create (0 to auto-detect CPU/NUMA count)
+ * @return True on success, false on failure
+ */
+bool mp_enable_multi_arena(memory_pool_t *pool, int num_arenas);
+
+/**
+ * @brief Binds the calling thread to a specific arena index within a multi-arena pool.
+ *
+ * @param pool Multi-arena memory pool
+ * @param arena_index Arena index (0 <= arena_index < num_arenas)
+ * @return True on success, false on failure
+ */
+bool mp_bind_thread_to_arena(memory_pool_t *pool, int arena_index);
+
+/**
+ * @brief Gets the sub-arena assigned to the calling thread for a multi-arena pool.
+ *
+ * @param pool Multi-arena memory pool
+ * @return Pointer to the bound sub-arena (or pool if multi-arena is disabled)
+ */
+memory_pool_t *mp_get_thread_arena(memory_pool_t *pool);
+
+/**
+ * @brief Gets the total count of sub-arenas in a multi-arena pool.
+ *
+ * @param pool Memory pool
+ * @return Number of sub-arenas, or 0 if multi-arena mode is not active
+ */
+int mp_get_arena_count(memory_pool_t *pool);
+
+/**
+ * @brief Gets a pointer to the sub-arena at the specified index.
+ *
+ * @param pool Multi-arena memory pool
+ * @param arena_index Arena index (0 <= arena_index < num_arenas)
+ * @return Pointer to the sub-arena, or NULL if invalid
+ */
+memory_pool_t *mp_get_arena(memory_pool_t *pool, int arena_index);
 
 /**
  * @brief Calculates the memory pool pressure ratio relative to its limit or total size.

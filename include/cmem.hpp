@@ -278,6 +278,38 @@ class MemoryPool
     }
 
     /**
+     * @brief Enables multi-arena mode for thread-to-arena partitioning.
+     *
+     * @param num_arenas Number of sub-arenas (0 to auto-detect CPU/NUMA count)
+     * @return true on success
+     */
+    bool enable_multi_arena(int num_arenas = 0)
+    {
+        return mp_enable_multi_arena(pool_, num_arenas);
+    }
+
+    /**
+     * @brief Binds calling thread to a specific sub-arena index.
+     *
+     * @param arena_index Arena index (0 <= arena_index < num_arenas)
+     * @return true on success
+     */
+    bool bind_thread_to_arena(int arena_index)
+    {
+        return mp_bind_thread_to_arena(pool_, arena_index);
+    }
+
+    /**
+     * @brief Gets total count of sub-arenas in this pool.
+     *
+     * @return Number of sub-arenas, or 0 if multi-arena is disabled
+     */
+    int get_arena_count() const
+    {
+        return mp_get_arena_count(pool_);
+    }
+
+    /**
      * @brief Sets a hard maximum memory budget limit.
      *
      * When active_bytes exceeds this limit, allocations may fail or
