@@ -140,7 +140,7 @@ add_custom_command(TARGET cmem POST_BUILD
 )
 
 if(CMEM_BUILD_SHARED)
-    add_library(cmem_shared SHARED src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c)
+    add_library(cmem_shared SHARED src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c src/cmem_compress.c)
     target_link_libraries(cmem_shared PRIVATE pthread ${RT_LIBRARY})
     set_target_properties(cmem_shared PROPERTIES
         VERSION ${CMEM_VERSION}
