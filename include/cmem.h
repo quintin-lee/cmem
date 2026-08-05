@@ -100,7 +100,10 @@ typedef enum {
         (1 << 15), /**< Automatically report leaks to stderr on mp_destroy() */
     MP_FLAG_AUTO_NUMA =
         (1 << 16), /**< Auto-bind allocations to the calling thread's NUMA node (Linux) */
-    MP_FLAG_MULTI_ARENA = (1 << 17) /**< Enable multi-arena thread-to-arena partitioning mode */
+    MP_FLAG_MULTI_ARENA = (1 << 17), /**< Enable multi-arena thread-to-arena partitioning mode */
+    MP_FLAG_FAST_PATH = (1 << 18),   /**< Skip header audit fields and active-list
+                                         tracking; prefer raw allocation speed over
+                                         double-free/leak-address diagnostics */
 } mp_flags_t;
 
 /**
