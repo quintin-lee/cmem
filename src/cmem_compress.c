@@ -29,6 +29,14 @@
 #define CMEM_LZ4_MIN_MATCH 4
 /* Maximum offset representable in the 16-bit LE offset field. */
 #define CMEM_LZ4_MAX_DIST 0xFFFF
+/* Max value storable in a 4-bit token nibble (extension sentinel). */
+#define CMEM_LZ4_TOKEN_NIBBLE 15
+/* Mask isolating the match-length nibble of a token. */
+#define CMEM_LZ4_NIBBLE_MASK 0x0F
+/* Mask isolating one byte of the 16-bit LE offset field. */
+#define CMEM_LZ4_OFF_BYTE_MASK 0xFFu
+/* Mask isolating the generation half of a compressed handle. */
+#define CMEM_LZ4_HANDLE_GEN_MASK 0xFFFFFFFFu
 
 static int cmem_lz4_write_len(uint8_t *op, const uint8_t *oend, int len)
 {
@@ -101,10 +109,12 @@ int cmem_lz4_compress(const uint8_t *src, uint8_t *dst, int src_size, int dst_ca
         if (op + 1 > oend) {
             return -1;
         }
-        *op++ = (uint8_t)((lit_len < 15 ? lit_len : 15) << 4) |
-                (uint8_t)(mlen - CMEM_LZ4_MIN_MATCH < 15 ? mlen - CMEM_LZ4_MIN_MATCH : 15);
-        if (lit_len >= 15) {
-            int ext = cmem_lz4_write_len(op, oend, lit_len - 15);
+        *op++ =
+            (uint8_t)((lit_len < CMEM_LZ4_TOKEN_NIBBLE ? lit_len : CMEM_LZ4_TOKEN_NIBBLE) << 4) |
+            (uint8_t)(mlen - CMEM_LZ4_MIN_MATCH < CMEM_LZ4_TOKEN_NIBBLE ? mlen - CMEM_LZ4_MIN_MATCH
+                                                                        : CMEM_LZ4_TOKEN_NIBBLE);
+        if (lit_len >= CMEM_LZ4_TOKEN_NIBBLE) {
+            int ext = cmem_lz4_write_len(op, oend, lit_len - CMEM_LZ4_TOKEN_NIBBLE);
             if (ext < 0) {
                 return -1;
             }
@@ -121,11 +131,12 @@ int cmem_lz4_compress(const uint8_t *src, uint8_t *dst, int src_size, int dst_ca
             return -1;
         }
         uint16_t off = (uint16_t)best_off;
-        op[0] = (uint8_t)(off & 0xFFu);
+        op[0] = (uint8_t)(off & CMEM_LZ4_OFF_BYTE_MASK);
         op[1] = (uint8_t)(off >> 8);
         op += 2;
-        if (mlen - CMEM_LZ4_MIN_MATCH >= 15) {
-            int ext = cmem_lz4_write_len(op, oend, mlen - CMEM_LZ4_MIN_MATCH - 15);
+        if (mlen - CMEM_LZ4_MIN_MATCH >= CMEM_LZ4_TOKEN_NIBBLE) {
+            int ext =
+                cmem_lz4_write_len(op, oend, mlen - CMEM_LZ4_MIN_MATCH - CMEM_LZ4_TOKEN_NIBBLE);
             if (ext < 0) {
                 return -1;
             }
@@ -142,9 +153,9 @@ int cmem_lz4_compress(const uint8_t *src, uint8_t *dst, int src_size, int dst_ca
         if (op + 1 > oend) {
             return -1;
         }
-        *op++ = (uint8_t)((lit_len < 15 ? lit_len : 15) << 4);
-        if (lit_len >= 15) {
-            int ext = cmem_lz4_write_len(op, oend, lit_len - 15);
+        *op++ = (uint8_t)((lit_len < CMEM_LZ4_TOKEN_NIBBLE ? lit_len : CMEM_LZ4_TOKEN_NIBBLE) << 4);
+        if (lit_len >= CMEM_LZ4_TOKEN_NIBBLE) {
+            int ext = cmem_lz4_write_len(op, oend, lit_len - CMEM_LZ4_TOKEN_NIBBLE);
             if (ext < 0) {
                 return -1;
             }
@@ -168,8 +179,8 @@ int cmem_lz4_decompress(const uint8_t *src, uint8_t *dst, int src_size, int dst_
 
     while (ip < iend) {
         uint8_t token = *ip++;
-        int lit_len = (token >> 4) & 0x0F;
-        if (lit_len == 15) {
+        int lit_len = (token >> 4) & CMEM_LZ4_NIBBLE_MASK;
+        if (lit_len == CMEM_LZ4_TOKEN_NIBBLE) {
             for (;;) {
                 if (ip >= iend) {
                     return -1;
@@ -198,8 +209,8 @@ int cmem_lz4_decompress(const uint8_t *src, uint8_t *dst, int src_size, int dst_
         if (off == 0 || off > (uint32_t)(op - dst)) {
             return -1;
         }
-        int match_len = (token & 0x0F);
-        if (match_len == 15) {
+        int match_len = (token & CMEM_LZ4_NIBBLE_MASK);
+        if (match_len == CMEM_LZ4_TOKEN_NIBBLE) {
             for (;;) {
                 if (ip >= iend) {
                     return -1;
@@ -266,19 +277,19 @@ static void cmem_compress_evict_oldest(memory_pool_t *pool)
     uint32_t oldest = UINT32_MAX;
     int32_t oldest_idx = -1;
     for (uint32_t i = 0; i < pool->compressed_capacity; i++) {
-        cmem_compressed_entry_t *e = &pool->compressed_entries[i];
-        if (e->used && e->alloc_seq < oldest) {
-            oldest = e->alloc_seq;
+        cmem_compressed_entry_t *entry = &pool->compressed_entries[i];
+        if (entry->used && entry->alloc_seq < oldest) {
+            oldest = entry->alloc_seq;
             oldest_idx = (int32_t)i;
         }
     }
     if (oldest_idx < 0) {
         return;
     }
-    cmem_compressed_entry_t *e = &pool->compressed_entries[oldest_idx];
-    e->used = false;
-    e->generation++; /* invalidate stale handles */
-    pool->compressed_used -= e->comp_size;
+    cmem_compressed_entry_t *entry = &pool->compressed_entries[oldest_idx];
+    entry->used = false;
+    entry->generation++; /* invalidate stale handles */
+    pool->compressed_used -= entry->comp_size;
 }
 
 compressed_handle_t mp_compress_block(memory_pool_t *pool, void *data, size_t size)
@@ -347,8 +358,9 @@ compressed_handle_t mp_compress_block(memory_pool_t *pool, void *data, size_t si
         /* Simple first-fit; the area is private to this pool. */
         bool busy = false;
         for (uint32_t i = 0; i < pool->compressed_capacity; i++) {
-            cmem_compressed_entry_t *e = &pool->compressed_entries[i];
-            if (e->used && e->comp_offset < off + aligned && e->comp_offset + e->comp_size > off) {
+            cmem_compressed_entry_t *entry = &pool->compressed_entries[i];
+            if (entry->used && entry->comp_offset < off + aligned &&
+                entry->comp_offset + entry->comp_size > off) {
                 busy = true;
                 break;
             }
@@ -365,19 +377,19 @@ compressed_handle_t mp_compress_block(memory_pool_t *pool, void *data, size_t si
     memcpy(area + off, scratch, (size_t)clen);
     free(scratch);
 
-    cmem_compressed_entry_t *e = &pool->compressed_entries[slot];
-    e->original_size = size;
-    e->comp_offset = off;
-    e->comp_size = (size_t)clen;
-    e->generation++;
-    e->alloc_seq = pool->compressed_seq++;
-    e->used = true;
+    cmem_compressed_entry_t *entry = &pool->compressed_entries[slot];
+    entry->original_size = size;
+    entry->comp_offset = off;
+    entry->comp_size = (size_t)clen;
+    entry->generation++;
+    entry->alloc_seq = pool->compressed_seq++;
+    entry->used = true;
     pool->compressed_used += (size_t)clen;
 
     /* Ownership transfer: release the caller's buffer. */
     mp_free(pool, data);
 
-    return (compressed_handle_t)((((uint64_t)slot) << 32) | e->generation);
+    return (compressed_handle_t)((((uint64_t)slot) << 32) | entry->generation);
 }
 
 void *mp_decompress_block(memory_pool_t *pool, compressed_handle_t handle)
@@ -386,23 +398,23 @@ void *mp_decompress_block(memory_pool_t *pool, compressed_handle_t handle)
         return NULL;
     }
     uint32_t slot = (uint32_t)(handle >> 32);
-    uint32_t gen = (uint32_t)(handle & 0xFFFFFFFFu);
+    uint32_t gen = (uint32_t)(handle & CMEM_LZ4_HANDLE_GEN_MASK);
     if (slot >= pool->compressed_capacity) {
         return NULL;
     }
-    cmem_compressed_entry_t *e = &pool->compressed_entries[slot];
-    if (!e->used || e->generation != gen) {
+    cmem_compressed_entry_t *entry = &pool->compressed_entries[slot];
+    if (!entry->used || entry->generation != gen) {
         return NULL; /* stale or evicted */
     }
-    void *out = mp_alloc(pool, e->original_size);
+    void *out = mp_alloc(pool, entry->original_size);
     if (out == NULL) {
         return NULL;
     }
-    int dlen = cmem_lz4_decompress((const uint8_t *)pool->compressed_area + e->comp_offset,
+    int dlen = cmem_lz4_decompress((const uint8_t *)pool->compressed_area + entry->comp_offset,
                                    (uint8_t *)out,
-                                   (int)e->comp_size,
-                                   (int)e->original_size);
-    if (dlen != (int)e->original_size) {
+                                   (int)entry->comp_size,
+                                   (int)entry->original_size);
+    if (dlen != (int)entry->original_size) {
         mp_free(pool, out);
         return NULL; /* corrupted */
     }
@@ -415,17 +427,17 @@ bool mp_free_compressed(memory_pool_t *pool, compressed_handle_t handle)
         return false;
     }
     uint32_t slot = (uint32_t)(handle >> 32);
-    uint32_t gen = (uint32_t)(handle & 0xFFFFFFFFu);
+    uint32_t gen = (uint32_t)(handle & CMEM_LZ4_HANDLE_GEN_MASK);
     if (slot >= pool->compressed_capacity) {
         return false;
     }
-    cmem_compressed_entry_t *e = &pool->compressed_entries[slot];
-    if (!e->used || e->generation != gen) {
+    cmem_compressed_entry_t *entry = &pool->compressed_entries[slot];
+    if (!entry->used || entry->generation != gen) {
         return false;
     }
-    e->used = false;
-    e->generation++;
-    pool->compressed_used -= e->comp_size;
+    entry->used = false;
+    entry->generation++;
+    pool->compressed_used -= entry->comp_size;
     return true;
 }
 

@@ -361,7 +361,9 @@ bool mp_set_compressed_budget(memory_pool_t *pool, size_t max_bytes);
  * @brief Reports compression-area usage.  Any out parameter may be NULL.
  * @return true on success.
  */
-bool mp_get_compressed_stats(memory_pool_t *pool, size_t *used, size_t *budget,
+bool mp_get_compressed_stats(memory_pool_t *pool,
+                             size_t *used,
+                             size_t *budget,
                              size_t *block_count);
 
 /**
