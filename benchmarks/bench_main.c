@@ -441,9 +441,9 @@ void bench_fast_path()
         double start = get_time_sec();
         for (int i = 0; i < BENCH_FAST_PATH_ITERS; i++) {
             size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
-            void *ptr = mp_alloc(fast_pool, sz);
+            void *ptr = mp_alloc_fast(fast_pool, sz);
             bench_escape(ptr);
-            mp_free(fast_pool, ptr);
+            mp_free_fast(fast_pool, ptr);
         }
         fast_times[run] = get_time_sec() - start;
     }
