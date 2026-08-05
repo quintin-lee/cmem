@@ -19,6 +19,11 @@
 #define NSEC_PER_SEC 1e9
 #define MILLION_OPS 1e6
 
+/* Volatile sink so the compiler cannot dead-code-eliminate malloc/free loops
+ * whose pointers never escape (gcc -O2 would otherwise remove them entirely,
+ * making the system-malloc measurement meaningless). */
+static volatile void *bench_escape_sink;
+
 /**
  * @brief Retrieves the current monotonic time in seconds.
  * @return Current time in seconds as a double.
@@ -37,30 +42,24 @@ static double get_time_sec()
 void bench_small_allocs()
 {
     printf("\n--- Benchmark 1: Small Allocations (32-256 Bytes x %d ops) ---\n", SMALL_ALLOC_COUNT);
-    void **ptrs = (void **)malloc(sizeof(void *) * SMALL_ALLOC_COUNT);
 
-    // 1. System Malloc Benchmark
+    // 1. System Malloc Benchmark (interleaved alloc/free — realistic)
     double start_sys = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
-
         size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
-        ptrs[i] = malloc(sz);
-    }
-    for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
-        free(ptrs[i]);
+        void *ptr = malloc(sz);
+        bench_escape_sink = ptr;
+        free(ptr);
     }
     double time_sys = get_time_sec() - start_sys;
 
-    // 2. cmem Benchmark
+    // 2. cmem Benchmark (interleaved alloc/free — realistic)
     memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
     double start_mp = get_time_sec();
     for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
-
         size_t sz = 32 + (i % SMALL_ALLOC_SPREAD);
-        ptrs[i] = mp_alloc(pool, sz);
-    }
-    for (int i = 0; i < SMALL_ALLOC_COUNT; i++) {
-        mp_free(pool, ptrs[i]);
+        void *ptr = mp_alloc(pool, sz);
+        mp_free(pool, ptr);
     }
     double time_mp = get_time_sec() - start_mp;
 
@@ -73,7 +72,6 @@ void bench_small_allocs()
     printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
 
     mp_destroy(pool);
-    free((void *)ptrs);
 }
 
 /**
