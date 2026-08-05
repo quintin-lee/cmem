@@ -139,7 +139,13 @@ void bench_small_allocs()
     printf("  cmem Time          : %.4f sec (%.2f Mops/sec)\n",
            time_mp,
            (SMALL_ALLOC_COUNT / time_mp) / MILLION_OPS);
-    printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
+    if (time_sys >= time_mp) {
+        printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
+    } else {
+        printf("  Ratio              : %.2fx (%.2fx slower than malloc)\n",
+               time_sys / time_mp,
+               time_mp / time_sys);
+    }
 
     mp_destroy(pool);
 }
@@ -185,7 +191,13 @@ void bench_medium_allocs()
 
     printf("  System Malloc Time : %.4f sec\n", time_sys);
     printf("  cmem Time          : %.4f sec\n", time_mp);
-    printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
+    if (time_sys >= time_mp) {
+        printf("  Speedup            : %.2fx faster!\n", time_sys / time_mp);
+    } else {
+        printf("  Ratio              : %.2fx (%.2fx slower than malloc)\n",
+               time_sys / time_mp,
+               time_mp / time_sys);
+    }
 
     mp_destroy(pool);
     free((void *)ptrs);
