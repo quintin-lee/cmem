@@ -46,13 +46,17 @@ int main()
 
     printf("All allocations confirmed inside static arena memory boundary!\n");
 
+#ifndef CMEM_DISABLE_DIAGNOSTICS
     mp_dump_info(pool);
+#endif
 
     mp_free(pool, block1);
     mp_free(pool, block2);
     mp_free(pool, block3);
 
+#ifndef CMEM_DISABLE_DIAGNOSTICS
     mp_check_leaks(pool);
+#endif
     mp_destroy(pool);
 
     printf("\nStatic Buffer Arena Example Completed Successfully!\n");

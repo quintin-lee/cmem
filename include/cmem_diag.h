@@ -190,6 +190,38 @@ size_t mp_dump_json_stats(memory_pool_t *pool, char *buf, size_t max_len);
  */
 bool mp_check_leaks(memory_pool_t *pool);
 
+/**
+ * @brief Records allocation latency sample for P99/avg profiling.
+ */
+void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns);
+
+/**
+ * @brief Retrieves estimated P99 allocation latency in nanoseconds.
+ */
+uint64_t mp_get_latency_p99(memory_pool_t *pool);
+
+/**
+ * @brief Retrieves average allocation latency in nanoseconds.
+ */
+uint64_t mp_get_latency_avg(memory_pool_t *pool);
+
+/**
+ * @brief Resets allocation latency histogram counters.
+ */
+void mp_reset_latency_stats(memory_pool_t *pool);
+
+/**
+ * @brief Exports allocation events in pprof-compatible text format.
+ *
+ * Output can be processed by pprof tools for flame graph generation.
+ *
+ * @param pool Pointer to the memory pool
+ * @param out_buf Output buffer for pprof text
+ * @param max_len Maximum length of the output buffer
+ * @return Number of bytes written to out_buf
+ */
+size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len);
+
 #ifdef __cplusplus
 }
 #endif

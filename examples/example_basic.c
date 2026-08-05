@@ -51,15 +51,19 @@ int main()
     strcpy(greeting, "Hello cmem Memory Manager!");
     printf("   greeting: %s\n\n", greeting);
 
+#ifndef CMEM_DISABLE_DIAGNOSTICS
     printf("2. Dumping Diagnostics Snapshot:\n");
     mp_dump_info(pool);
+#endif
 
     printf("3. Freeing allocated blocks...\n");
     mp_free(pool, greeting);
     mp_free(pool, numbers);
 
+#ifndef CMEM_DISABLE_DIAGNOSTICS
     printf("\n4. Leak Checking:\n");
     mp_check_leaks(pool);
+#endif
 
     mp_destroy(pool);
     printf("\nBasic Example Completed Successfully!\n");

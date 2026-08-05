@@ -45,6 +45,7 @@ if(CLANG_FORMAT)
     add_custom_target(format-check
         COMMAND ${CLANG_FORMAT} --dry-run --Werror
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_diag.h
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem.hpp
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_pmr.hpp
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_override.h
@@ -99,6 +100,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(CMEM_BUILD_SHARED "Build shared library" ON)
+option(CMEM_ENABLE_DIAGNOSTICS "Enable diagnostics and telemetry subsystem" ON)
 
 # 代码覆盖率配置
 set(CMAKE_C_FLAGS_COVERAGE "-g -O0 -fprofile-arcs -ftest-coverage")
@@ -122,56 +124,110 @@ else()
     find_library(RT_LIBRARY rt)
 endif()
 
-# 静态库目标
-add_library(cmem STATIC src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c src/cmem_compress.c)
-target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
-add_dependencies(cmem format-check check-mermaid)
-set_target_properties(cmem PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    VERSION ${CMEM_VERSION}
-    SOVERSION ${CMEM_VERSION_MAJOR}
-    PUBLIC_HEADER include/cmem.h
+set(CMEM_CORE_SRCS
+    src/cmem.c
+    src/cmem_slab.c
+    src/cmem_tlsf.c
+    src/cmem_sys.c
+    src/cmem_event.c
+    src/cmem_compress.c
 )
 
-add_custom_command(TARGET cmem POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
-        $<TARGET_FILE:cmem>
-        ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a
-)
+# 1. 核心分配器静态库与动态库目标 (libcmem_core)
+add_library(cmem_core STATIC ${CMEM_CORE_SRCS})
+target_link_libraries(cmem_core PRIVATE pthread ${RT_LIBRARY})
+add_dependencies(cmem_core format-check check-mermaid)
+set_target_properties(cmem_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(CMEM_BUILD_SHARED)
-    add_library(cmem_shared SHARED src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_diag.c src/cmem_event.c src/cmem_compress.c)
-    target_link_libraries(cmem_shared PRIVATE pthread ${RT_LIBRARY})
-    set_target_properties(cmem_shared PROPERTIES
+    add_library(cmem_core_shared SHARED ${CMEM_CORE_SRCS})
+    target_link_libraries(cmem_core_shared PRIVATE pthread ${RT_LIBRARY})
+    set_target_properties(cmem_core_shared PROPERTIES OUTPUT_NAME cmem_core)
+endif()
+
+# 2. 完整合并库与诊断库目标 (libcmem & libcmem_diag)
+if(CMEM_ENABLE_DIAGNOSTICS)
+    add_library(cmem STATIC ${CMEM_CORE_SRCS} src/cmem_diag.c)
+    target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
+    add_dependencies(cmem format-check check-mermaid)
+    set_target_properties(cmem PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
         VERSION ${CMEM_VERSION}
         SOVERSION ${CMEM_VERSION_MAJOR}
         PUBLIC_HEADER include/cmem.h
-        OUTPUT_NAME cmem
     )
-    if(NOT MSVC)
-        set_target_properties(cmem_shared PROPERTIES
-            PREFIX "lib"
-            SUFFIX ".so"
-        )
-        target_compile_options(cmem_shared PRIVATE -ftls-model=initial-exec)
-    endif()
 
-    install(TARGETS cmem_shared
+    add_library(cmem_diag STATIC src/cmem_diag.c)
+    target_link_libraries(cmem_diag PRIVATE cmem_core pthread ${RT_LIBRARY})
+
+    if(CMEM_BUILD_SHARED)
+        add_library(cmem_shared SHARED ${CMEM_CORE_SRCS} src/cmem_diag.c)
+        target_link_libraries(cmem_shared PRIVATE pthread ${RT_LIBRARY})
+        set_target_properties(cmem_shared PROPERTIES
+            VERSION ${CMEM_VERSION}
+            SOVERSION ${CMEM_VERSION_MAJOR}
+            PUBLIC_HEADER include/cmem.h
+            OUTPUT_NAME cmem
+        )
+        if(NOT MSVC)
+            set_target_properties(cmem_shared PROPERTIES PREFIX "lib" SUFFIX ".so")
+            target_compile_options(cmem_shared PRIVATE -ftls-model=initial-exec)
+        endif()
+
+        add_library(cmem_diag_shared SHARED src/cmem_diag.c)
+        target_link_libraries(cmem_diag_shared PRIVATE cmem_core_shared pthread ${RT_LIBRARY})
+        set_target_properties(cmem_diag_shared PROPERTIES OUTPUT_NAME cmem_diag)
+
+        install(TARGETS cmem_core_shared cmem_shared cmem_diag_shared
+            EXPORT cmemTargets
+            LIBRARY DESTINATION lib
+            RUNTIME DESTINATION bin
+            PUBLIC_HEADER DESTINATION include
+        )
+        install(TARGETS cmem_core cmem cmem_diag
+            EXPORT cmemTargets
+            ARCHIVE DESTINATION lib
+            LIBRARY DESTINATION lib
+            RUNTIME DESTINATION bin
+            PUBLIC_HEADER DESTINATION include
+        )
+    else()
+        install(TARGETS cmem_core cmem cmem_diag
+            EXPORT cmemTargets
+            ARCHIVE DESTINATION lib
+            LIBRARY DESTINATION lib
+            RUNTIME DESTINATION bin
+            PUBLIC_HEADER DESTINATION include
+        )
+    endif()
+else()
+    target_compile_definitions(cmem_core PUBLIC CMEM_DISABLE_DIAGNOSTICS)
+    add_library(cmem STATIC ${CMEM_CORE_SRCS})
+    target_link_libraries(cmem PRIVATE pthread ${RT_LIBRARY})
+    target_compile_definitions(cmem PUBLIC CMEM_DISABLE_DIAGNOSTICS)
+    set_target_properties(cmem PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    if(CMEM_BUILD_SHARED)
+        target_compile_definitions(cmem_core_shared PUBLIC CMEM_DISABLE_DIAGNOSTICS)
+        add_library(cmem_shared SHARED ${CMEM_CORE_SRCS})
+        target_link_libraries(cmem_shared PRIVATE pthread ${RT_LIBRARY})
+        target_compile_definitions(cmem_shared PUBLIC CMEM_DISABLE_DIAGNOSTICS)
+        set_target_properties(cmem_shared PROPERTIES OUTPUT_NAME cmem)
+        install(TARGETS cmem_core_shared cmem_shared
+            EXPORT cmemTargets
+            LIBRARY DESTINATION lib
+            RUNTIME DESTINATION bin
+            PUBLIC_HEADER DESTINATION include
+        )
+    endif()
+    install(TARGETS cmem_core cmem
         EXPORT cmemTargets
+        ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
         RUNTIME DESTINATION bin
         PUBLIC_HEADER DESTINATION include
     )
 endif()
-
-# 安装配置
-install(TARGETS cmem
-    EXPORT cmemTargets
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-    PUBLIC_HEADER DESTINATION include
-)
 
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a
@@ -181,6 +237,7 @@ install(FILES
 
 install(FILES
     include/cmem.h
+    include/cmem_diag.h
     include/cmem.hpp
     include/cmem_pmr.hpp
     include/cmem_override.h
@@ -225,18 +282,26 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmem.pc
     DESTINATION lib/pkgconfig
 )
 
-# 测试可执行文件
-add_executable(unit_tests tests/test_main.c)
-target_link_libraries(unit_tests PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(unit_tests format-check check-mermaid)
+if(CMEM_ENABLE_DIAGNOSTICS)
+    # 测试可执行文件
+    add_executable(unit_tests tests/test_main.c)
+    target_link_libraries(unit_tests PRIVATE cmem pthread ${RT_LIBRARY})
+    add_dependencies(unit_tests format-check check-mermaid)
 
-add_executable(advanced_tests tests/test_advanced.c)
-target_link_libraries(advanced_tests PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(advanced_tests format-check check-mermaid)
+    add_executable(advanced_tests tests/test_advanced.c)
+    target_link_libraries(advanced_tests PRIVATE cmem pthread ${RT_LIBRARY})
+    add_dependencies(advanced_tests format-check check-mermaid)
 
-add_executable(cpp_tests tests/test_cpp.cpp)
-target_link_libraries(cpp_tests PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(cpp_tests format-check check-mermaid)
+    add_executable(cpp_tests tests/test_cpp.cpp)
+    target_link_libraries(cpp_tests PRIVATE cmem pthread ${RT_LIBRARY})
+    add_dependencies(cpp_tests format-check check-mermaid)
+
+    # CTest 集成
+    enable_testing()
+    add_test(NAME CUnitTests COMMAND unit_tests)
+    add_test(NAME CAdvancedUnitTests COMMAND advanced_tests)
+    add_test(NAME CppUnitTests COMMAND cpp_tests)
+endif()
 
 add_executable(benchmark benchmarks/bench_main.c)
 target_link_libraries(benchmark PRIVATE cmem pthread ${RT_LIBRARY})
@@ -251,18 +316,20 @@ add_executable(example_embedded examples/example_embedded.c)
 target_link_libraries(example_embedded PRIVATE cmem pthread ${RT_LIBRARY})
 add_dependencies(example_embedded format-check check-mermaid)
 
-add_executable(example_leak_analysis examples/example_leak_analysis.c)
-target_link_libraries(example_leak_analysis PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(example_leak_analysis format-check check-mermaid)
+if(CMEM_ENABLE_DIAGNOSTICS)
+    add_executable(example_leak_analysis examples/example_leak_analysis.c)
+    target_link_libraries(example_leak_analysis PRIVATE cmem pthread ${RT_LIBRARY})
+    add_dependencies(example_leak_analysis format-check check-mermaid)
 
-add_executable(example_arena_tree examples/example_arena_tree.c)
-target_link_libraries(example_arena_tree PRIVATE cmem pthread ${RT_LIBRARY})
-add_dependencies(example_arena_tree format-check check-mermaid)
+    add_executable(example_arena_tree examples/example_arena_tree.c)
+    target_link_libraries(example_arena_tree PRIVATE cmem pthread ${RT_LIBRARY})
+    add_dependencies(example_arena_tree format-check check-mermaid)
 
-add_executable(cmem-inspect tools/cmem-inspect/cmem-inspect.c tools/common/cmem-diag-output.c)
-target_link_libraries(cmem-inspect PRIVATE cmem pthread ${RT_LIBRARY})
-target_include_directories(cmem-inspect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/common)
-add_dependencies(cmem-inspect format-check check-mermaid)
+    add_executable(cmem-inspect tools/cmem-inspect/cmem-inspect.c tools/common/cmem-diag-output.c)
+    target_link_libraries(cmem-inspect PRIVATE cmem pthread ${RT_LIBRARY})
+    target_include_directories(cmem-inspect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/common)
+    add_dependencies(cmem-inspect format-check check-mermaid)
+endif()
 
 add_executable(cmem-analyze tools/cmem-analyze/cmem-analyze.c tools/cmem-analyze/cmem-analyze-parser.c tools/common/cmem-diag-output.c)
 target_link_libraries(cmem-analyze PRIVATE pthread ${RT_LIBRARY})
@@ -288,11 +355,7 @@ add_custom_target(fuzz
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-# CTest 集成
-enable_testing()
-add_test(NAME CUnitTests COMMAND unit_tests)
-add_test(NAME CAdvancedUnitTests COMMAND advanced_tests)
-add_test(NAME CppUnitTests COMMAND cpp_tests)
+
 
 # 可选：安装示例程序
 # install(PROGRAMS example_basic example_embedded example_leak_analysis example_arena_tree DESTINATION bin)

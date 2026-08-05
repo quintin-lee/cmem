@@ -322,6 +322,7 @@ class MemoryPool
         mp_set_memory_limit(pool_, max_bytes);
     }
 
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     /**
      * @brief Audits heap integrity by checking canary redzones and header magic.
      *
@@ -437,6 +438,7 @@ class MemoryPool
     {
         return mp_check_leaks(pool_);
     }
+#endif
 
     /**
      * @brief Retrieves detailed metadata for a single allocation.

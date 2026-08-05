@@ -1183,6 +1183,7 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
     if (!pool) {
         return;
     }
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     pool_lock(pool);
     pool->alloc_latency_sum_ns += latency_ns;
     pool->alloc_latency_count++;
@@ -1196,6 +1197,9 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
     }
     pool->alloc_latency_histogram[idx]++;
     pool_unlock(pool);
+#else
+    (void)latency_ns;
+#endif
 }
 
 /**
@@ -1205,6 +1209,7 @@ void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns)
  */
 uint64_t mp_get_latency_p99(memory_pool_t *pool)
 {
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     if (!pool || pool->alloc_latency_count == 0) {
         return 0;
     }
@@ -1224,6 +1229,10 @@ uint64_t mp_get_latency_p99(memory_pool_t *pool)
     }
     pool_rdunlock(pool);
     return p99_ns;
+#else
+    (void)pool;
+    return 0;
+#endif
 }
 
 /**
@@ -1232,6 +1241,7 @@ uint64_t mp_get_latency_p99(memory_pool_t *pool)
  */
 uint64_t mp_get_latency_avg(memory_pool_t *pool)
 {
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     if (!pool || pool->alloc_latency_count == 0) {
         return 0;
     }
@@ -1239,6 +1249,10 @@ uint64_t mp_get_latency_avg(memory_pool_t *pool)
     uint64_t avg = pool->alloc_latency_sum_ns / pool->alloc_latency_count;
     pool_rdunlock(pool);
     return avg;
+#else
+    (void)pool;
+    return 0;
+#endif
 }
 
 /**
@@ -1250,11 +1264,13 @@ void mp_reset_latency_stats(memory_pool_t *pool)
     if (!pool) {
         return;
     }
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     pool_lock(pool);
     memset(pool->alloc_latency_histogram, 0, sizeof(pool->alloc_latency_histogram));
     pool->alloc_latency_count = 0;
     pool->alloc_latency_sum_ns = 0;
     pool_unlock(pool);
+#endif
 }
 
 /**
@@ -1276,9 +1292,11 @@ void mp_reset_stats(memory_pool_t *pool)
     pool->window_start_time.tv_sec = 0;
     pool->window_start_time.tv_nsec = 0;
     memset(pool->stats.size_histogram, 0, sizeof(pool->stats.size_histogram));
+#if !defined(CMEM_DISABLE_DIAGNOSTICS)
     memset(pool->alloc_latency_histogram, 0, sizeof(pool->alloc_latency_histogram));
     pool->alloc_latency_count = 0;
     pool->alloc_latency_sum_ns = 0;
+#endif
     pool_unlock(pool);
 }
 

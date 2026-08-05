@@ -66,8 +66,21 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# 静态库
-lib: format-check $(OBJS)
+CORE_SRC = src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_event.c src/cmem_compress.c
+CORE_OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CORE_SRC))
+
+# 静态库 (核心分配器)
+lib_core: format-check $(CORE_OBJS)
+	ar rcs $(BUILD_DIR)/libcmem_core.a $(CORE_OBJS)
+	@echo "Built static library: $(BUILD_DIR)/libcmem_core.a"
+
+# 静态库 (诊断扩展库)
+lib_diag: format-check $(BUILD_DIR)/cmem_diag.o
+	ar rcs $(BUILD_DIR)/libcmem_diag.a $(BUILD_DIR)/cmem_diag.o
+	@echo "Built static library: $(BUILD_DIR)/libcmem_diag.a"
+
+# 静态库 (全功能合并库)
+lib: format-check $(OBJS) lib_core lib_diag
 	ar rcs $(BUILD_DIR)/$(LIBNAME) $(OBJS)
 	cp $(BUILD_DIR)/$(LIBNAME) $(BUILD_DIR)/$(LIBNAME:.a=-$(VERSION).a)
 	@echo "Built static library: $(BUILD_DIR)/$(LIBNAME)"
@@ -184,6 +197,7 @@ install-shared: lib_shared | $(BUILD_DIR)
 	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so
 	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so.1
 	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
+	install -m 644 include/cmem_diag.h $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
 	install -m 644 include/cmem.hpp $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
 	install -m 644 include/cmem_pmr.hpp $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
 	install -m 644 include/cmem_override.h $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
@@ -197,6 +211,7 @@ uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/libcmem.so.1
 	rm -f $(DESTDIR)$(LIBDIR)/$(SONAME)
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_override.h

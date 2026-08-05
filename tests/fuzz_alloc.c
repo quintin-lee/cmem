@@ -42,7 +42,9 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
 
     static void *slots[256];
     static size_t slot_count = 0;
+#ifndef CMEM_DISABLE_DIAGNOSTICS
     static char event_log_buf[4096];
+#endif
 
     switch (op) {
     case 0x00: {
@@ -143,6 +145,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
     }
 
     case 0x0A: {
+#ifndef CMEM_DISABLE_DIAGNOSTICS
         mp_stats_t stats;
         mp_get_stats(g_pool, &stats);
         (void)stats;
@@ -154,6 +157,7 @@ static void consume_fuzz_input(const uint8_t *data, size_t size)
         mp_dump_json_stats(g_pool, event_log_buf, sizeof(event_log_buf));
         mp_export_prometheus_metrics(g_pool, event_log_buf, sizeof(event_log_buf));
         mp_analyze_leaks(g_pool, event_log_buf, sizeof(event_log_buf));
+#endif
         break;
     }
 
