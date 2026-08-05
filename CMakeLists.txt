@@ -46,6 +46,13 @@ if(CLANG_FORMAT)
         COMMAND ${CLANG_FORMAT} --dry-run --Werror
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem.h
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_diag.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_ring.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_tlsf.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_snapshot.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_metrics.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_arena.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_frame.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_typed_pool.h
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem.hpp
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_pmr.hpp
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_override.h
@@ -238,6 +245,13 @@ install(FILES
 install(FILES
     include/cmem.h
     include/cmem_diag.h
+    include/cmem_ring.h
+    include/cmem_tlsf.h
+    include/cmem_snapshot.h
+    include/cmem_metrics.h
+    include/cmem_arena.h
+    include/cmem_frame.h
+    include/cmem_typed_pool.h
     include/cmem.hpp
     include/cmem_pmr.hpp
     include/cmem_override.h

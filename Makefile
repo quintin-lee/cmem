@@ -182,6 +182,14 @@ install: lib | $(BUILD_DIR)
 	install -m 644 $(BUILD_DIR)/$(LIBNAME) $(DESTDIR)$(LIBDIR)/$(LIBNAME)
 	install -m 644 $(BUILD_DIR)/$(LIBNAME:.a=-$(VERSION).a) $(DESTDIR)$(LIBDIR)/$(LIBNAME:.a=-$(VERSION).a)
 	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
+	install -m 644 include/cmem_diag.h $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
+	install -m 644 include/cmem_ring.h $(DESTDIR)$(INCLUDEDIR)/cmem_ring.h
+	install -m 644 include/cmem_tlsf.h $(DESTDIR)$(INCLUDEDIR)/cmem_tlsf.h
+	install -m 644 include/cmem_snapshot.h $(DESTDIR)$(INCLUDEDIR)/cmem_snapshot.h
+	install -m 644 include/cmem_metrics.h $(DESTDIR)$(INCLUDEDIR)/cmem_metrics.h
+	install -m 644 include/cmem_arena.h $(DESTDIR)$(INCLUDEDIR)/cmem_arena.h
+	install -m 644 include/cmem_frame.h $(DESTDIR)$(INCLUDEDIR)/cmem_frame.h
+	install -m 644 include/cmem_typed_pool.h $(DESTDIR)$(INCLUDEDIR)/cmem_typed_pool.h
 	install -m 644 include/cmem.hpp $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
 	install -m 644 include/cmem_pmr.hpp $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
 	install -m 644 include/cmem_override.h $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
@@ -198,6 +206,13 @@ install-shared: lib_shared | $(BUILD_DIR)
 	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libcmem.so.1
 	install -m 644 include/cmem.h $(DESTDIR)$(INCLUDEDIR)/cmem.h
 	install -m 644 include/cmem_diag.h $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
+	install -m 644 include/cmem_ring.h $(DESTDIR)$(INCLUDEDIR)/cmem_ring.h
+	install -m 644 include/cmem_tlsf.h $(DESTDIR)$(INCLUDEDIR)/cmem_tlsf.h
+	install -m 644 include/cmem_snapshot.h $(DESTDIR)$(INCLUDEDIR)/cmem_snapshot.h
+	install -m 644 include/cmem_metrics.h $(DESTDIR)$(INCLUDEDIR)/cmem_metrics.h
+	install -m 644 include/cmem_arena.h $(DESTDIR)$(INCLUDEDIR)/cmem_arena.h
+	install -m 644 include/cmem_frame.h $(DESTDIR)$(INCLUDEDIR)/cmem_frame.h
+	install -m 644 include/cmem_typed_pool.h $(DESTDIR)$(INCLUDEDIR)/cmem_typed_pool.h
 	install -m 644 include/cmem.hpp $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
 	install -m 644 include/cmem_pmr.hpp $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
 	install -m 644 include/cmem_override.h $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
@@ -212,6 +227,13 @@ uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/$(SONAME)
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.h
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_diag.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_ring.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_tlsf.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_snapshot.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_metrics.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_arena.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_frame.h
+	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_typed_pool.h
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem.hpp
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_pmr.hpp
 	rm -f $(DESTDIR)$(INCLUDEDIR)/cmem_override.h
