@@ -19,12 +19,14 @@
 
 #include "cmem.h"
 #include "cmem_internal.h"
-#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <sched.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#endif
 
 /**
  * @brief Return the ID of the CPU the calling thread is running on.
