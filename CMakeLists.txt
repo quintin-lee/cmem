@@ -366,7 +366,7 @@ if(CMEM_ENABLE_DIAGNOSTICS)
         find_library(ASAN_LIB asan)
         if(ASAN_LIB)
             set_tests_properties(CUnitTests CAdvancedUnitTests CppUnitTests PROPERTIES
-                ENVIRONMENT "LD_PRELOAD=${ASAN_LIB}")
+                ENVIRONMENT "LD_PRELOAD=${ASAN_LIB};LSAN_OPTIONS=detect_leaks=0")
         endif()
     endif()
 endif()

@@ -1,0 +1,7 @@
+# LeakSanitizer suppressions for cmem
+# cmem has its own leak detection; LSAN cannot run under ptrace in CI
+# These suppressions prevent false positives from cmem's internal allocations.
+
+# test_report_leaks_on_destroy intentionally leaks memory to test the
+# MP_FLAG_REPORT_LEAKS_ON_DESTROY feature
+leak:test_report_leaks_on_destroy

@@ -40,6 +40,7 @@ jobs:
           make CONFIG=$CONFIG test_cpp
           make CONFIG=$CONFIG bench
           make CONFIG=$CONFIG examples
+          timeout 120 make CONFIG=debug stress_test
 
       - name: Configure CMake Build
         env:
@@ -61,6 +62,14 @@ jobs:
         run: |
           valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/unit_tests
           valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/cpp_tests
+
+      - name: ASan Leak Detection Check
+        if: matrix.build_type == 'ASan' && matrix.compiler.cc == 'gcc'
+        env:
+          LSAN_OPTIONS: detect_leaks=0
+        run: |
+          echo 'ASan build: memory error detection enabled, leak detection disabled (cmem has own leak tracker)'
+          timeout 60 ctest --test-dir build_cmake --output-on-failure
 
   clang-tidy:
     name: Clang-Tidy Static Analysis

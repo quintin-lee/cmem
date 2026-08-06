@@ -32,4 +32,4 @@ jobs:
 
       - name: Run Tests under UBSan
         run: |
-          timeout 60 ctest --test-dir build_ubsan --output-on-failure || true
+          timeout 60 ctest --test-dir build_ubsan --output-on-failure

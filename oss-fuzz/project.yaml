@@ -1,0 +1,15 @@
+project:
+  name: cmem
+  repo: "github.com/quintin/cmem"
+  language: c
+  primary_branch: master
+  bug_count_to_disable fuzzing: 10
+  sanitizers:
+    default: [address, undefined, memory]
+  fuzzing_engines:
+    - libfuzzer
+  coverage_reporter: none
+  contact_emails:
+    - "2449164852@qq.com"
+  auto_cc:
+    - "2449164852@qq.com"
