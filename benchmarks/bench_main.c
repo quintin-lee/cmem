@@ -21,7 +21,14 @@
 
 #define BENCH_FAST_PATH_ITERS 1000000
 #define BENCH_SIZE_FIXED 32
-#define BENCH_SIZE_TLSF 4096 /* TLSF-class element size for batch benchmark */
+#define BENCH_SIZE_TLSF 4096                  /* TLSF-class element size for batch benchmark */
+#define BENCH_BATCH_SCALE_MAX_ELEMS 256       /* largest batch in scaling matrix */
+#define BENCH_BATCH_OS_SIZE (5 * 1024 * 1024) /* OS-tier element size */
+#define BENCH_BATCH_OS_ELEMS 8                /* elements per OS-tier batch */
+#define BENCH_BATCH_OS_ITERS 200              /* OS-tier batch rounds */
+#define BENCH_BATCH_MIXED_SIZE_MID 512        /* middle-size element in mixed rounds */
+#define BENCH_BATCH_MIXED_ITERS 5000          /* mixed-size rounds */
+#define BENCH_BATCH_THREAD_ALLOCS 100000      /* per-thread allocs in MT batch bench */
 #define BENCH_SIZE_MIXED_SPREAD 224
 #define BENCH_SIZE_LARGE_BASE 4096
 #define BENCH_SIZE_LARGE_SPREAD 16384
@@ -259,6 +266,12 @@ void bench_batch_apis(void);
 void bench_thread_scaling(void);
 void bench_compressed_storage(void);
 void bench_allocation_patterns(void);
+void bench_batch_scaling(void);
+void bench_batch_multithreaded(void);
+void bench_batch_free_path(void);
+void bench_batch_mixed_sizes(void);
+void bench_batch_os_tier(void);
+void bench_batch_fastpath(void);
 
 /**
  * @brief Entry point for cmem performance benchmarks.
@@ -275,6 +288,12 @@ int main(void)
     bench_fast_path();
     bench_size_distribution();
     bench_batch_apis();
+    bench_batch_scaling();
+    bench_batch_multithreaded();
+    bench_batch_free_path();
+    bench_batch_mixed_sizes();
+    bench_batch_os_tier();
+    bench_batch_fastpath();
     bench_thread_scaling();
     bench_compressed_storage();
     bench_allocation_patterns();
@@ -672,6 +691,340 @@ void bench_batch_apis()
     printf("  TS batch speedup: %.2fx\n", time_ts_single / time_ts_batch);
 
     mp_destroy(ts_pool);
+
+    mp_destroy(pool);
+    free(ptrs);
+}
+
+/* Batch size scaling matrix: slab (32B) and TLSF (4KB) x 4/16/64/256 elems. */
+void bench_batch_scaling(void)
+{
+    printf("\n--- Benchmark 8b: Batch Size Scaling (32B slab / 4KB TLSF) ---\n");
+    static const size_t elem_variants[] = {4, 16, 64, 256};
+    static const size_t size_variants[] = {BENCH_SIZE_FIXED, BENCH_SIZE_TLSF};
+    static const char *size_names[] = {"32B", "4KB"};
+    void **ptrs = (void **)malloc(sizeof(void *) * BENCH_BATCH_SCALE_MAX_ELEMS);
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
+    bench_warmup(pool);
+
+    for (size_t si = 0; si < 2; si++) {
+        size_t esize = size_variants[si];
+        printf("  %s:\n", size_names[si]);
+        printf("    elems | single Mops | batch Mops | speedup | malloc Mops\n");
+        for (size_t vi = 0; vi < 4; vi++) {
+            size_t elems = elem_variants[vi];
+            double start = get_time_sec();
+            for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+                for (size_t i = 0; i < elems; i++) {
+                    ptrs[i] = mp_alloc(pool, esize);
+                    bench_escape(ptrs[i]);
+                }
+                for (size_t i = 0; i < elems; i++) {
+                    mp_free(pool, ptrs[i]);
+                }
+            }
+            double time_single = get_time_sec() - start;
+
+            start = get_time_sec();
+            for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+                size_t got = mp_alloc_batch(pool, esize, ptrs, elems);
+                if (got != elems) {
+                    fprintf(stderr, "scaling batch returned %zu (expected %zu)\n", got, elems);
+                }
+                for (size_t i = 0; i < elems; i++) {
+                    bench_escape(ptrs[i]);
+                }
+                mp_free_batch(pool, ptrs, elems);
+            }
+            double time_batch = get_time_sec() - start;
+
+            start = get_time_sec();
+            for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+                for (size_t i = 0; i < elems; i++) {
+                    ptrs[i] = malloc(esize);
+                    bench_escape(ptrs[i]);
+                }
+                for (size_t i = 0; i < elems; i++) {
+                    free(ptrs[i]);
+                }
+            }
+            double time_malloc = get_time_sec() - start;
+
+            double total_ops = (double)BENCH_BATCH_COUNT * (double)elems;
+            printf("    %4zu  | %10.2f  | %9.2f  | %6.2fx  | %9.2f\n",
+                   elems,
+                   (total_ops / time_single) / MILLION_OPS,
+                   (total_ops / time_batch) / MILLION_OPS,
+                   time_single / time_batch,
+                   (total_ops / time_malloc) / MILLION_OPS);
+        }
+    }
+
+    mp_destroy(pool);
+    free(ptrs);
+}
+
+typedef struct {
+    memory_pool_t *pool;
+    int alloc_count;
+    int batch_elems;
+} bench_batch_arg_t;
+
+static void *bench_batch_thread_func(void *arg)
+{
+    bench_batch_arg_t *ta = (bench_batch_arg_t *)arg;
+    if (ta->batch_elems > 0) {
+        void **ptrs = (void **)malloc(sizeof(void *) * (size_t)ta->batch_elems);
+        if (!ptrs) {
+            return NULL;
+        }
+        int rounds = ta->alloc_count / ta->batch_elems;
+        for (int r = 0; r < rounds; r++) {
+            size_t got = mp_alloc_batch(ta->pool, BENCH_SIZE_FIXED, ptrs, ta->batch_elems);
+            if (got != (size_t)ta->batch_elems) {
+                fprintf(stderr, "MT batch returned %zu (expected %d)\n", got, ta->batch_elems);
+            }
+            for (int j = 0; j < ta->batch_elems; j++) {
+                bench_escape(ptrs[j]);
+            }
+            mp_free_batch(ta->pool, ptrs, ta->batch_elems);
+        }
+        free(ptrs);
+    } else {
+        for (int i = 0; i < ta->alloc_count; i++) {
+            void *ptr = mp_alloc(ta->pool, BENCH_SIZE_FIXED);
+            bench_escape(ptr);
+            mp_free(ta->pool, ptr);
+        }
+    }
+    return NULL;
+}
+
+static double
+bench_batch_run(memory_pool_t *pool, int threads, int allocs_per_thread, int batch_elems)
+{
+    pthread_t *threads_arr = (pthread_t *)malloc(sizeof(pthread_t) * (size_t)threads);
+    bench_batch_arg_t *args =
+        (bench_batch_arg_t *)malloc(sizeof(bench_batch_arg_t) * (size_t)threads);
+    if (!threads_arr || !args) {
+        free(threads_arr);
+        free(args);
+        return -1.0;
+    }
+    for (int i = 0; i < threads; i++) {
+        args[i].pool = pool;
+        args[i].alloc_count = allocs_per_thread;
+        args[i].batch_elems = batch_elems;
+        pthread_create(&threads_arr[i], NULL, bench_batch_thread_func, &args[i]);
+    }
+    double start = get_time_sec();
+    for (int i = 0; i < threads; i++) {
+        pthread_join(threads_arr[i], NULL);
+    }
+    double time = get_time_sec() - start;
+    free(threads_arr);
+    free(args);
+    return (double)threads * (double)allocs_per_thread / time / MILLION_OPS;
+}
+
+/* Multi-thread scaling on a lock-bound THREAD_SAFE pool: batch vs single. */
+void bench_batch_multithreaded(void)
+{
+    printf("\n--- Benchmark 8c: Multi-threaded Batch (TS pool, 1/2/4/8 threads, 32B) ---\n");
+    static const int thread_counts[] = {1, 2, 4, 8};
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+    bench_warmup(pool);
+    printf("  threads | single Mops | batch Mops | speedup | single eff | batch eff\n");
+    double single_1 = bench_batch_run(pool, 1, BENCH_BATCH_THREAD_ALLOCS, 0);
+    double batch_1 = bench_batch_run(pool, 1, BENCH_BATCH_THREAD_ALLOCS, BENCH_BATCH_ELEMS);
+    for (size_t ti = 0; ti < 4; ti++) {
+        int tc = thread_counts[ti];
+        double m_single = bench_batch_run(pool, tc, BENCH_BATCH_THREAD_ALLOCS, 0);
+        double m_batch = bench_batch_run(pool, tc, BENCH_BATCH_THREAD_ALLOCS, BENCH_BATCH_ELEMS);
+        printf("  %5d  | %10.2f  | %9.2f  | %6.2fx  | %9.2f  | %8.2f\n",
+               tc,
+               m_single,
+               m_batch,
+               m_batch / m_single,
+               m_single / single_1,
+               m_batch / batch_1);
+    }
+    mp_destroy(pool);
+}
+
+/* Free-path: mp_free_batch vs per-element mp_free (alloc side untimed). */
+void bench_batch_free_path(void)
+{
+    printf("\n--- Benchmark 8d: Free Path (mp_free_batch vs per-elem mp_free, 32B) ---\n");
+    void **ptrs = (void **)malloc(sizeof(void *) * BENCH_BATCH_ELEMS);
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
+    bench_warmup(pool);
+
+    double start = get_time_sec();
+    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
+        }
+        mp_free_batch(pool, ptrs, BENCH_BATCH_ELEMS);
+    }
+    double time_batch = get_time_sec() - start;
+
+    start = get_time_sec();
+    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            mp_free(pool, ptrs[i]);
+        }
+    }
+    double time_single = get_time_sec() - start;
+
+    size_t total_ops = (size_t)BENCH_BATCH_COUNT * (size_t)BENCH_BATCH_ELEMS;
+    printf("  free batch  : %.2f Mops/sec\n", (total_ops / time_batch) / MILLION_OPS);
+    printf("  free single : %.2f Mops/sec\n", (total_ops / time_single) / MILLION_OPS);
+    printf("  free speedup: %.2fx\n", time_single / time_batch);
+
+    mp_destroy(pool);
+    free(ptrs);
+}
+
+/* Mixed-size round: 32B x64 + 512B x16 + 4KB x4, batch vs per-element. */
+void bench_batch_mixed_sizes(void)
+{
+    printf("\n--- Benchmark 8e: Mixed-Size Batch (32B x64 + 512B x16 + 4KB x4/round) ---\n");
+    void **ptrs = (void **)malloc(sizeof(void *) * 64);
+    memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
+    bench_warmup(pool);
+
+    double start = get_time_sec();
+    for (int r = 0; r < BENCH_BATCH_MIXED_ITERS; r++) {
+        size_t got = mp_alloc_batch(pool, BENCH_SIZE_FIXED, ptrs, 64);
+        if (got != 64) {
+            fprintf(stderr, "mixed 32B batch returned %zu (expected 64)\n", got);
+        }
+        mp_free_batch(pool, ptrs, 64);
+        got = mp_alloc_batch(pool, BENCH_BATCH_MIXED_SIZE_MID, ptrs, 16);
+        if (got != 16) {
+            fprintf(stderr, "mixed 512B batch returned %zu (expected 16)\n", got);
+        }
+        mp_free_batch(pool, ptrs, 16);
+        got = mp_alloc_batch(pool, BENCH_SIZE_TLSF, ptrs, 4);
+        if (got != 4) {
+            fprintf(stderr, "mixed 4KB batch returned %zu (expected 4)\n", got);
+        }
+        mp_free_batch(pool, ptrs, 4);
+    }
+    double time_batch = get_time_sec() - start;
+
+    start = get_time_sec();
+    for (int r = 0; r < BENCH_BATCH_MIXED_ITERS; r++) {
+        for (int i = 0; i < 64; i++) {
+            void *p = mp_alloc(pool, BENCH_SIZE_FIXED);
+            bench_escape(p);
+            mp_free(pool, p);
+        }
+        for (int i = 0; i < 16; i++) {
+            void *p = mp_alloc(pool, BENCH_BATCH_MIXED_SIZE_MID);
+            bench_escape(p);
+            mp_free(pool, p);
+        }
+        for (int i = 0; i < 4; i++) {
+            void *p = mp_alloc(pool, BENCH_SIZE_TLSF);
+            bench_escape(p);
+            mp_free(pool, p);
+        }
+    }
+    double time_single = get_time_sec() - start;
+
+    size_t total_ops = (size_t)BENCH_BATCH_MIXED_ITERS * (64 + 16 + 4);
+    printf("  mixed batch  : %.2f Mops/sec\n", (total_ops / time_batch) / MILLION_OPS);
+    printf("  mixed single : %.2f Mops/sec\n", (total_ops / time_single) / MILLION_OPS);
+    printf("  mixed speedup: %.2fx\n", time_single / time_batch);
+
+    mp_destroy(pool);
+    free(ptrs);
+}
+
+/* OS-tier: 5 MB elements x8 per batch, 200 rounds, single vs batch. */
+void bench_batch_os_tier(void)
+{
+    printf("\n--- Benchmark 8f: OS-Tier Batch (5MB elems x8, 200 rounds) ---\n");
+    void **ptrs = (void **)malloc(sizeof(void *) * BENCH_BATCH_OS_ELEMS);
+    memory_pool_t *pool = mp_create(64 * 1024 * 1024, MP_FLAG_THREAD_LOCAL_CACHE);
+    bench_warmup(pool);
+
+    double start = get_time_sec();
+    for (int r = 0; r < BENCH_BATCH_OS_ITERS; r++) {
+        for (int i = 0; i < BENCH_BATCH_OS_ELEMS; i++) {
+            ptrs[i] = mp_alloc(pool, BENCH_BATCH_OS_SIZE);
+            bench_escape(ptrs[i]);
+        }
+        for (int i = 0; i < BENCH_BATCH_OS_ELEMS; i++) {
+            mp_free(pool, ptrs[i]);
+        }
+    }
+    double time_single = get_time_sec() - start;
+
+    start = get_time_sec();
+    for (int r = 0; r < BENCH_BATCH_OS_ITERS; r++) {
+        size_t got = mp_alloc_batch(pool, BENCH_BATCH_OS_SIZE, ptrs, BENCH_BATCH_OS_ELEMS);
+        if (got != BENCH_BATCH_OS_ELEMS) {
+            fprintf(stderr, "OS batch returned %zu (expected %d)\n", got, BENCH_BATCH_OS_ELEMS);
+        }
+        for (int i = 0; i < BENCH_BATCH_OS_ELEMS; i++) {
+            bench_escape(ptrs[i]);
+        }
+        mp_free_batch(pool, ptrs, BENCH_BATCH_OS_ELEMS);
+    }
+    double time_batch = get_time_sec() - start;
+
+    size_t total_ops = (size_t)BENCH_BATCH_OS_ITERS * (size_t)BENCH_BATCH_OS_ELEMS;
+    printf("  OS single : %.2f Mops/sec\n", (total_ops / time_single) / MILLION_OPS);
+    printf("  OS batch  : %.2f Mops/sec\n", (total_ops / time_batch) / MILLION_OPS);
+    printf("  OS speedup: %.2fx\n", time_single / time_batch);
+
+    mp_destroy(pool);
+    free(ptrs);
+}
+
+/* FAST_PATH pool: 32B single vs batch (skips metadata/active-list). */
+void bench_batch_fastpath(void)
+{
+    printf("\n--- Benchmark 8g: FAST_PATH Pool (32B single vs batch) ---\n");
+    void **ptrs = (void **)malloc(sizeof(void *) * BENCH_BATCH_ELEMS);
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_FAST_PATH);
+    bench_warmup(pool);
+
+    double start = get_time_sec();
+    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
+            bench_escape(ptrs[i]);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            mp_free(pool, ptrs[i]);
+        }
+    }
+    double time_single = get_time_sec() - start;
+
+    start = get_time_sec();
+    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+        size_t got = mp_alloc_batch(pool, BENCH_SIZE_FIXED, ptrs, BENCH_BATCH_ELEMS);
+        if (got != BENCH_BATCH_ELEMS) {
+            fprintf(stderr, "FAST batch returned %zu (expected %d)\n", got, BENCH_BATCH_ELEMS);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            bench_escape(ptrs[i]);
+        }
+        mp_free_batch(pool, ptrs, BENCH_BATCH_ELEMS);
+    }
+    double time_batch = get_time_sec() - start;
+
+    size_t total_ops = (size_t)BENCH_BATCH_COUNT * (size_t)BENCH_BATCH_ELEMS;
+    printf("  FAST single : %.2f Mops/sec\n", (total_ops / time_single) / MILLION_OPS);
+    printf("  FAST batch  : %.2f Mops/sec\n", (total_ops / time_batch) / MILLION_OPS);
+    printf("  FAST speedup: %.2fx\n", time_single / time_batch);
 
     mp_destroy(pool);
     free(ptrs);
