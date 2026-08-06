@@ -36,14 +36,14 @@
  * CMEM_CPU_CACHE_REFRESH calls. A stale index is benign: per-CPU lists
  * are guarded by atomic CAS, so popping from a previous CPU's list is
  * still correct — only cache affinity is slightly reduced. This avoids
- * the sched_getcpu() syscall on every allocation.
+ * the SYS_getcpu syscall (cached in TLS).
  *
  * macOS/Windows have no sched_getcpu(); a constant is returned there
  * since the per-CPU lists are treated as a single logical list.
  *
  * @return CPU index (>= 0), or 0 on platforms without sched_getcpu().
  */
-#define CMEM_CPU_CACHE_REFRESH 1024
+#define CMEM_CPU_CACHE_REFRESH 8192
 
 int cmem_current_cpu(void)
 {
@@ -56,7 +56,10 @@ int cmem_current_cpu(void)
     static MP_THREAD_LOCAL int refresh_countdown = 0;
 
     if (cpu_cache < 0 || refresh_countdown == 0) {
-        int cpu = sched_getcpu();
+        int cpu = 0;
+        if (syscall(SYS_getcpu, &cpu, NULL, NULL) != 0) {
+            cpu = 0;
+        }
         cpu_cache = cpu < 0 ? 0 : cpu;
         refresh_countdown = CMEM_CPU_CACHE_REFRESH;
     }
@@ -265,7 +268,10 @@ int cmem_cpu_to_node(int cpu)
 int cmem_numa_current_node(void)
 {
 #if defined(__linux__) && !defined(__APPLE__)
-    int cpu = sched_getcpu();
+    int cpu = 0;
+    if (syscall(SYS_getcpu, &cpu, NULL, NULL) != 0) {
+        cpu = 0;
+    }
     if (cpu < 0) {
         return -1;
     }

@@ -2053,6 +2053,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
     if ((pool->flags & MP_FLAG_STATIC_BUFFER) == 0 && size <= SLAB_MAX_SIZE) {
         tls_cache_validate_owner(pool);
+        remote_free_harvest_all(pool);
         uint8_t class_idx = get_slab_class_index(pool, size);
         mp_slab_slot_t *slot = NULL;
 
@@ -2072,16 +2073,9 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             }
         }
 
-        /* Tier 3: Bottom-level Slab replenishment via tls_cache_refill() / slab_alloc_slot() */
+        /* Tier 3: Combined TLS-refill + slab alloc under a single lock */
         if (!slot) {
-            tls_cache_refill(pool, class_idx);
-            if (tls_cache.counts[class_idx] > 0) {
-                slot = tls_cache.slots[class_idx];
-                tls_cache.slots[class_idx] = slot->next;
-                tls_cache.counts[class_idx]--;
-            } else {
-                slot = slab_alloc_slot(pool, class_idx);
-            }
+            slot = slab_alloc_with_tls_refill(pool, class_idx);
         }
 
         if (slot) {

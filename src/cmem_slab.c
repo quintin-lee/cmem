@@ -181,6 +181,31 @@ void remote_free_push(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *sl
         headp, &old_head, (size_t)(uintptr_t)slot, CMEM_ORDER_RELEASE, CMEM_ORDER_RELAXED));
 }
 
+void remote_free_harvest_all(memory_pool_t *pool)
+{
+    if (!pool) {
+        return;
+    }
+    for (uint8_t i = 0; i < SLAB_CLASS_COUNT; i++) {
+        cmem_atomic_size_t *headp = &pool->remote_free_queue[i];
+        size_t head = (size_t)CMEM_ATOMIC_EXCHANGE(headp, 0, CMEM_ORDER_RELAXED);
+        mp_slab_slot_t *slot = (mp_slab_slot_t *)(uintptr_t)head;
+        while (slot) {
+            if (((uintptr_t)slot & CMEM_SLAB_ALIGN_MASK) != 0 || (uintptr_t)slot < 0x10000) {
+                break;
+            }
+            mp_slab_slot_t *next = slot->next;
+            mp_block_header_t *header = (mp_block_header_t *)slot;
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_SLAB;
+            header->slab_class = i;
+            header->raw_base = (void *)slot;
+            slab_free_nolock(pool, header);
+            slot = next;
+        }
+    }
+}
+
 void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
 {
     if (!pool || class_idx >= SLAB_CLASS_COUNT) {
@@ -546,8 +571,6 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
         pthread_mutex_lock(&sc->lock);
     }
 
-    remote_free_harvest(pool, class_idx);
-
     int got = 0;
     while (got < 32) {
         mp_slab_page_t *page = sc->partial_pages;
@@ -626,6 +649,144 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
  * @param max_count Maximum number of slots requested.
  * @return Number of slots actually produced.
  */
+/**
+ * @brief Refill TLS cache and allocate one slot under a single lock acquisition.
+ *
+ * Combines tls_cache_refill and slab_alloc_slot into one critical section,
+ * eliminating the double-lock contention that occurs when the TLS cache is
+ * empty and a direct slab allocation is needed afterward.
+ *
+ * @param pool      Pool to allocate from.
+ * @param class_idx Size class index.
+ * @return Slot pointer, or NULL on failure.
+ */
+mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_idx)
+{
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+
+    /* Phase 1: Refill TLS cache (same logic as tls_cache_refill) */
+    int got = 0;
+    while (got < 32) {
+        mp_slab_page_t *page = sc->partial_pages;
+        if (!page) {
+            if (sc->empty_pages) {
+                page = sc->empty_pages;
+                sc->empty_pages = page->next;
+                if (sc->empty_pages) {
+                    sc->empty_pages->prev = NULL;
+                }
+                sc->empty_page_count--;
+
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            } else {
+                page = slab_create_page(pool, class_idx);
+                if (!page) {
+                    break;
+                }
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            }
+        }
+
+        mp_slab_slot_t *slot = page->free_list;
+        page->free_list = slot->next;
+        page->free_count--;
+
+        if (page->free_count == 0) {
+            sc->partial_pages = page->next;
+            if (page->next) {
+                page->next->prev = NULL;
+            }
+
+            page->next = sc->full_pages;
+            page->prev = NULL;
+            if (sc->full_pages) {
+                sc->full_pages->prev = page;
+            }
+            sc->full_pages = page;
+        }
+
+        slot->next = tls_cache.slots[class_idx];
+        tls_cache.slots[class_idx] = slot;
+        tls_cache.counts[class_idx]++;
+        got++;
+    }
+
+    pool->stats.slab_allocated_bytes += (size_t)got * sc->slot_size;
+
+    /* Phase 2: Pop from TLS cache */
+    mp_slab_slot_t *slot = NULL;
+    if (tls_cache.counts[class_idx] > 0) {
+        slot = tls_cache.slots[class_idx];
+        tls_cache.slots[class_idx] = slot->next;
+        tls_cache.counts[class_idx]--;
+    }
+
+    /* Phase 3: If TLS cache still empty, allocate directly from slab */
+    if (!slot) {
+        mp_slab_page_t *page = sc->partial_pages;
+        if (!page) {
+            if (sc->empty_pages) {
+                page = sc->empty_pages;
+                sc->empty_pages = page->next;
+                if (sc->empty_pages) {
+                    sc->empty_pages->prev = NULL;
+                }
+                sc->empty_page_count--;
+
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            } else {
+                page = slab_create_page(pool, class_idx);
+            }
+        }
+
+        if (page) {
+            slot = page->free_list;
+            page->free_list = slot->next;
+            page->free_count--;
+
+            if (page->free_count == 0) {
+                sc->partial_pages = page->next;
+                if (page->next) {
+                    page->next->prev = NULL;
+                }
+
+                page->next = sc->full_pages;
+                page->prev = NULL;
+                if (sc->full_pages) {
+                    sc->full_pages->prev = page;
+                }
+                sc->full_pages = page;
+            }
+
+            pool->stats.slab_allocated_bytes += sc->slot_size;
+        }
+    }
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_unlock(&sc->lock);
+    }
+
+    return slot;
+}
+
 size_t slab_alloc_batch(memory_pool_t *pool,
                         uint8_t class_idx,
                         mp_slab_slot_t **out_slots,
@@ -635,8 +796,6 @@ size_t slab_alloc_batch(memory_pool_t *pool,
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_lock(&sc->lock);
     }
-
-    remote_free_harvest(pool, class_idx);
 
     size_t produced = 0;
     while (produced < max_count) {
@@ -868,8 +1027,6 @@ void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_lock(&sc->lock);
     }
-
-    remote_free_harvest(pool, class_idx);
 
     mp_slab_slot_t *slots[MP_PERCPU_MAX_BATCH];
     int got = 0;

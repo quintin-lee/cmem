@@ -482,6 +482,37 @@ void *mp_reallocarray_loc(memory_pool_t *pool,
 }
 
 /**
+ * @brief Reallocate an array of memory blocks in batch.
+ *
+ * For each pointer, attempts in-place expansion when possible.
+ * When in-place expansion is not feasible, performs alloc+memcpy+free per element.
+ * Successfully reallocated pointers are updated in-place in the ptrs array;
+ * failed entries are set to NULL.
+ *
+ * @param pool      Pointer to the memory pool
+ * @param ptrs      Array of pointers to reallocate (updated in-place on success)
+ * @param new_sizes Array of new sizes in bytes (one per pointer)
+ * @param count     Number of entries in the arrays
+ * @return Number of successfully reallocated blocks
+ */
+size_t mp_realloc_batch(memory_pool_t *pool, void **ptrs, size_t *new_sizes, size_t count)
+{
+    if (!pool || !ptrs || !new_sizes || count == 0) {
+        return 0;
+    }
+
+    size_t success = 0;
+    for (size_t i = 0; i < count; i++) {
+        ptrs[i] = mp_realloc(pool, ptrs[i], new_sizes[i]);
+        if (ptrs[i]) {
+            success++;
+        }
+    }
+
+    return success;
+}
+
+/**
  * @brief Duplicates a null-terminated string into the memory pool with location tracking.
  * @param pool Pointer to the memory pool
  * @param str Source string to duplicate
