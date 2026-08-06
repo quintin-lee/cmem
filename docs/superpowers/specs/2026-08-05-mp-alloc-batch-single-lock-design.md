@@ -2,7 +2,7 @@
 
 ## Overview
 
-Refactor `mp_alloc_batch` in `src/cmem_event.c` so a batch of N same-sized allocations acquires each lock at most once per batch instead of once per element. Slab-backed requests additionally pull up to N slots in a single critical section (new `slab_alloc_batch` primitive in `src/cmem_slab.c`), and the shared stats/active-list update is aggregated into one critical section. All pool configurations (cache-aligned, arena routing, memory limit, OOM fallback, emergency buffer, fast path) are supported inside the batch fast path with behavior identical to N consecutive `mp_alloc` calls.
+Refactor `mp_alloc_batch` in `src/cmem_event.c` so a batch of N same-sized allocations acquires each lock at most once per batch instead of once per element. Slab-backed requests additionally pull up to N slots in a single critical section (new `slab_alloc_batch` primitive in `src/cmem_slab.c`), and the shared stats/active-list update is aggregated into one critical section. All pool configurations (cache-aligned, arena routing, memory limit, OOM fallback, emergency buffer, per-CPU freelist, fast path) are supported inside the batch fast path with observable behavior matching N consecutive `mp_alloc` calls, except for three explicitly documented deviations (Section 4).
 
 ## Detailed Requirements
 
@@ -18,25 +18,32 @@ size_t slab_alloc_batch(memory_pool_t *pool, uint8_t class_idx,
 - Accumulates `stats.slab_allocated_bytes += n * slot_size`; unlocks; returns the number of slots actually produced (`0..max_count`).
 - Prefix semantics: if the pool is exhausted partway, the prefix produced is returned.
 
-### 2. Rewritten `mp_alloc_batch` (`src/cmem_event.c:2227`)
+### 2. Rewritten `mp_alloc_batch` (`src/cmem_event.c:2227` → new body)
 
 Control flow, in order:
 
 1. **Validation**: `pool`, `out_ptrs`, `count > 0`, `size > 0` (returns 0 on invalid, matching current behavior).
-2. **Arena routing** (once, not per element): if `num_arenas > 0`, resolve `mp_get_thread_bound_arena(pool)`; if non-NULL and different from `pool`, recurse into `mp_alloc_batch` on that arena.
-3. **Memory limit** (once): if `max_memory_limit > 0`, read `active_bytes` under `pool_rdlock` and compute `k = min(count, (limit - active_bytes) / size)`:
-   - `k == 0`: if `fallback_to_sys_alloc_on_oom`, trigger one `MP_EVENT_OOM` and continue as if unlimited (current per-element semantics: fallback ignores the limit); else use the single-use emergency buffer path (at most one element) and return 0 or 1.
-   - `k > 0`: allocate exactly `k` elements via the paths below; the remaining elements are not attempted (prefix result).
-4. **Cache-aligned** (`MP_FLAG_CACHE_ALIGNED`): internally request `size + 64 + header + canary` per element through the same batch paths, then align each returned payload to 64, relocate the header by copy (`*new_header = *orig_header`, preserving `raw_base = original slot`), and relink into the active list under the single stats critical section — replicating `mp_aligned_alloc` (`src/cmem_event.c:2561`) per element.
-5. **Slab path** (`size <= SLAB_MAX_SIZE` and not `STATIC_BUFFER`):
-   - Validate TLS cache owner once.
+2. **Entry checks (once)**: if `pool->dirty` or `circuit_breaker_tripped`, return 0 — matching the `mp_alloc_internal` early returns (`src/cmem_event.c:1973-1977`).
+3. **Arena routing** (once, not per element): if `num_arenas > 0`, resolve `mp_get_thread_bound_arena(pool)`; if non-NULL and different from `pool`, recurse into `mp_alloc_batch` on that arena.
+4. **Memory limit** (once). Let `total_size` = user `size` for non-aligned pools, or `size + 64 + header + canary` for `MP_FLAG_CACHE_ALIGNED` (matching per-element accounting). Under `pool_rdlock`, if `active_bytes + total_size > limit` (i.e., even one element does not fit):
+   - If `fallback_to_sys_alloc_on_oom`: trigger one `MP_EVENT_OOM`, then proceed to allocate **all `count`** elements via the normal paths (per-element semantics: fallback ignores the limit and continues).
+   - Else: trigger one `MP_EVENT_OOM`, then attempt the single-use emergency buffer (if available and `size + header + canary <= emergency_size`): if it fits, return 1 (the emergency element); otherwise return 0. This matches per-element behavior (first exceeding element consumes the emergency buffer).
+5. **Memory limit, partially fitting** (`active_bytes + total_size <= limit` but `k = (limit - active_bytes) / total_size < count`):
+   - Allocate `k` elements via the paths below (prefix).
+   - If `k < count`: fire `MP_EVENT_OOM` once, then attempt the emergency buffer once (same conditions as step 4); if it fits, allocate the emergency element and return `k + 1`; else return `k`. This matches per-element behavior where the element after the k fitting ones exceeds, fires OOM, and consumes the emergency buffer (or returns NULL → loop stops). If `fallback_to_sys_alloc_on_oom` is set, skip the emergency attempt and instead continue allocating the remaining `count - k` elements via the normal paths (per-element fallback-continue).
+   - In all cases the result is a contiguous prefix, and `out_ptrs[0..k-1]` hold the batch elements.
+6. **Cache-aligned** (`MP_FLAG_CACHE_ALIGNED`): internally request `total_size` per element through the same batch paths, then align each returned payload to 64, relocate the header by copy (`*new_header = *orig_header`, preserving `raw_base = original slot`), and relink into the active list under the single stats critical section — replicating `mp_aligned_alloc` (`src/cmem_event.c:2616`) per element. `total_size` is used for limit accounting, `active_bytes`, and the histogram bucket; user `size` is used for the circuit-breaker quota (matching per-element).
+7. **Slab path** (`size <= SLAB_MAX_SIZE` and not `STATIC_BUFFER`):
+   - Call `tls_cache_validate_owner(pool)` **once** before Phase A (its flush-on-owner-change runs if the calling thread changed).
    - Phase A (lock-free): pop `min(need, tls_cache.counts[class_idx])` slots from the TLS cache.
-   - Phase B: for the remainder, call `slab_alloc_batch` (one class lock per batch).
-   - Phase C (lock-free): format the block header per element exactly as `mp_alloc_internal` does (`alloc_type=ALLOC_TYPE_SLAB`, `slab_class`, `requested_size`, `usable_size`, `raw_base`, `subpool`, `magic` unless `MP_FLAG_FAST_PATH`, canary byte, zero-fill per flags).
-6. **TLSF path** (`size <= TLSF_MAX_SIZE` or `STATIC_BUFFER`): one `pool_lock`; inside it loop `tlsf_alloc(pool, size)` × need (it does not lock internally); `pool_unlock`.
-7. **OS path** (`size > TLSF_MAX_SIZE`): loop `sys_mem_alloc` per element (no pool lock involved); format headers.
-8. **Aggregated stats critical section** (one `pool_lock` when `MP_FLAG_THREAD_SAFE`): for all n elements — `active_list_add` unless `MP_FLAG_FAST_PATH`, `active_bytes += n*size`, peak update, `active_allocations += n`, `total_alloc_ops += n`, `size_histogram[bucket] += n`, watermark callback check once, per-element `trigger_event(MP_EVENT_ALLOC)` (preserves per-element event semantics); `pool_unlock`.
-9. **Circuit breaker**: accumulate `thread_quota.alloc_bytes += n*size` once, apply the same trip check as `mp_alloc`.
+   - Phase B (lock-free, per-CPU tier): if the pool uses a per-CPU freelist (`MP_FLAG_PERCPU_FREELIST`), pop from the per-CPU freelist until miss or `need` met, using the same pop/refill logic as the per-element tier (`percpu_pop`/`percpu_refill`, `src/cmem_event.c:2066-2073`).
+   - Phase C: for the remainder, call `slab_alloc_batch` (one class lock per batch).
+   - Phase D (lock-free): format the block header per element exactly as `mp_alloc_internal` does (`alloc_type=ALLOC_TYPE_SLAB`, `slab_class`, `requested_size`, `usable_size`, `raw_base`, `subpool`, `magic` unless `MP_FLAG_FAST_PATH`, canary byte, zero-fill per flags).
+8. **TLSF path** (`size <= TLSF_MAX_SIZE` or `STATIC_BUFFER`): one `pool_lock`; inside it loop `tlsf_alloc(pool, total_size)` × need (it does not lock internally); `pool_unlock`.
+9. **OS path** (`size > TLSF_MAX_SIZE`): loop `sys_mem_alloc` per element (no pool lock involved); format headers; update `os_allocated_bytes += n * total_size` and `total_pool_size += n * total_size` in the loop (same fields and unlocked updates as the per-element OS branch, `src/cmem_event.c:2154-2155`).
+10. **Aggregated stats critical section** (one `pool_lock` when `MP_FLAG_THREAD_SAFE`): for all n elements — `active_list_add` unless `MP_FLAG_FAST_PATH`, `active_bytes += n*size` (or `n*total_size` for aligned), peak update, `active_allocations += n`, `total_alloc_ops += n`, `size_histogram[get_slab_class_index(total_size)] += n`; `pool_unlock`.
+11. **Post-unlock callbacks** (NEVER inside the lock — `pool_lock` is a non-recursive `pthread_rwlock_wrlock` and a re-entrant callback would self-deadlock): after the stats section unlocks, collect the `n` `(ptr, size)` pairs and fire per-element `trigger_event(MP_EVENT_ALLOC)` in order, then run `check_watermark_after_change` once — matching the current post-`pool_unlock` placement (`src/cmem_event.c:2217-2222`).
+12. **Circuit breaker**: accumulate `thread_quota.alloc_bytes += total_size` per element *within* the batch; when the quota crosses the trip threshold, stop the batch and return the current prefix count (matching per-element behavior, where the next call would see `circuit_breaker_tripped` and return NULL).
 
 ### 3. Lock overhead per batch (THREAD_SAFE pool, N elements)
 
@@ -44,35 +51,45 @@ Control flow, in order:
 |---|---|---|
 | Slab, TLS cache hit | N × pool_lock | 0 locks + 1 pool_lock |
 | Slab, TLS cache miss | N × (class_lock + pool_lock) | 1 class_lock + 1 pool_lock |
-| TLSF | 2N pool_lock | 1 pool_lock |
-| OS | 0 (no locks) | 0 (no locks) |
+| TLSF | 2N pool_lock | 2 pool_lock |
+| OS | N × pool_lock (stats section) | 1 pool_lock (stats section) |
 
-### 4. Behavior preservation (identical to N × mp_alloc)
+### 4. Behavior preservation and documented deviations
 
-- Prefix semantics: returns count of actually allocated elements; stops at first failure.
-- Per-element `MP_EVENT_ALLOC` events; `MP_EVENT_OOM` on limit breach.
-- Canary / zero-fill / poison handling, `MP_FLAG_FAST_PATH` header minimization, emergency buffer, dirty check and circuit-breaker trip semantics unchanged.
-- `mp_free_batch` is NOT in scope (remains a loop over `mp_free`).
+Behavior identical to N × mp_alloc for: prefix semantics, per-element `MP_EVENT_ALLOC` events (fired after unlock, in order), `MP_EVENT_OOM` on limit breach, emergency buffer single-use, cache-aligned relocation, arena routing, canary/zero-fill/poison handling, `MP_FLAG_FAST_PATH` header minimization, dirty check, and circuit-breaker trip semantics.
+
+**Documented deviations** (intentional, must be covered by tests):
+1. **TLS cache warmth**: a batch drains the TLS cache (Phase A) and pops the remainder directly into `out_slots[]` (Phase C) without refilling the cache. A subsequent single `mp_alloc` may hit the class lock once more before the cache is warm again. No functional change — only a warm-cache heuristic difference. Under high batch traffic, `tls_cache_refill`'s per-element refill benefit is replaced by the direct bulk pop.
+2. **`slab_allocated_bytes` accounting**: per-element counts refilled-but-cached slots (refill-time accounting); the batch counts only delivered slots (`n * slot_size`). This is a public `mp_stats_t` field (`cmem.h:211`); the batch value is the number of bytes actually handed out.
+3. **Deferred event observation**: a *re-entrant* `MP_EVENT_ALLOC` callback observes `active_allocations == n` (batch) instead of `i+1` (per-element), because events are deferred until after the whole batch allocates. Event order is preserved.
+
+`mp_free_batch` is NOT in scope (remains a loop over `mp_free`).
+
+### 5. Concurrency semantics
+
+- The limit check (step 4/5) is a snapshot read of `active_bytes` under `pool_rdlock`. Under concurrent THREAD_SAFE allocation, a batch may admit slightly more than the strict per-element re-check would. This matches the existing check-then-act race of per-element allocation (documented, not a regression).
 
 ## File Changes Summary
 
 - **Modify `src/cmem_slab.c`**: add `slab_alloc_batch` (bulk-pop under one class lock).
 - **Modify `src/cmem_internal.h`**: declare `slab_alloc_batch` (near line 547).
-- **Modify `src/cmem_event.c`**: rewrite `mp_alloc_batch` (line 2227) per the control flow above.
-- **Modify `tests/test_main.c`**: keep Test 9; add new tests (sequential test numbers, no collision with Test 38):
-  - THREAD_SAFE pool, slab sizes (e.g. 8/64/512), full batch success + `active_allocations` accounting.
-  - TLSF sizes (e.g. 1024, 4096, 1 MiB) and OS size (> 4 MiB) batches.
+- **Modify `src/cmem_event.c`**: rewrite `mp_alloc_batch` (line 2269) per the control flow above.
+- **Modify `tests/test_main.c`**: keep Test 9; add new tests with sequential numbers **starting at 40** (Tests 38 and 39 are taken):
+  - THREAD_SAFE pool, slab sizes (8/64/512), full batch success + `active_allocations` accounting.
+  - TLSF sizes (1024, 4096, 1 MiB) and OS size (> 4 MiB) batches + `os_allocated_bytes` accounting.
   - Partial failure / prefix truncation (exhaust pool mid-batch).
-  - `MP_FLAG_CACHE_ALIGNED` batch alignment.
-  - `max_memory_limit` + emergency buffer batch; OOM fallback batch.
+  - `MP_FLAG_CACHE_ALIGNED` batch alignment + accounting.
+  - `max_memory_limit` partial-fit → `k` prefix; emergency-buffer single element (`k+1`); full-limit-exceeded → 1 or 0; OOM-fallback → full count.
   - `MP_FLAG_FAST_PATH` batch (no active list).
   - Arena routing (pool with `num_arenas > 0`).
+  - Per-CPU freelist pool batch.
+  - Circuit-breaker trip mid-batch → prefix truncation.
 - **Modify `benchmarks/bench_main.c`**: extend batch benchmark (line 581) to also cover THREAD_SAFE pool and TLSF-class sizes; report throughput vs. per-element loop baseline.
 
 ## Verification Plan
 
 1. **Compilation & formatting**: `make format-check` clean; `make clean && make test` passes (unit + advanced + C++ PMR, ASan/UBSan); CMake build (`cmake -B build_cmake -G Ninja && cmake --build build_cmake && ctest --test-dir build_cmake`) passes; clang-tidy clean.
 2. **Unit tests**: all existing tests pass unchanged; new batch tests (above) pass.
-3. **Correctness under sanitizers**: ASan/UBSan clean on new batch paths (cache-aligned relocation, TLSF loop, prefix truncation).
+3. **Correctness under sanitizers**: ASan/UBSan clean on new batch paths (cache-aligned relocation, TLSF loop, prefix truncation, emergency/limit paths).
 4. **Performance**: `./build/benchmark` batch throughput improves over the per-element loop baseline for THREAD_SAFE slab/TLSF batches; no regression for OS path or non-batch paths.
 5. **Fuzz/stress sanity**: `fuzz_alloc` (uses `mp_alloc_batch` with size 16) runs clean; 15-second stress smoke (`gcc -DSTRESS_DURATION_SEC=15 ... tests/stress_test.c src/*.c -pthread -o /tmp/stress_verify && /tmp/stress_verify`).
