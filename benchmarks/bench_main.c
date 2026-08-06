@@ -21,6 +21,7 @@
 
 #define BENCH_FAST_PATH_ITERS 1000000
 #define BENCH_SIZE_FIXED 32
+#define BENCH_SIZE_TLSF 4096 /* TLSF-class element size for batch benchmark */
 #define BENCH_SIZE_MIXED_SPREAD 224
 #define BENCH_SIZE_LARGE_BASE 4096
 #define BENCH_SIZE_LARGE_SPREAD 16384
@@ -599,6 +600,78 @@ void bench_batch_apis()
            (total_ops / time_batch) / MILLION_OPS,
            (time_batch / total_ops) * BENCH_NSEC_PER_OP);
     printf("  Batch speedup: %.2fx\n", time_single / time_batch);
+
+    /* TLSF-class size (4 KB) on the same pool */
+    start = get_time_sec();
+    for (int batch_idx = 0; batch_idx < BENCH_BATCH_COUNT; batch_idx++) {
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            ptrs[i] = mp_alloc(pool, BENCH_SIZE_TLSF);
+            bench_escape(ptrs[i]);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            mp_free(pool, ptrs[i]);
+        }
+    }
+    double time_tlsf_single = get_time_sec() - start;
+
+    start = get_time_sec();
+    for (int batch_idx = 0; batch_idx < BENCH_BATCH_COUNT; batch_idx++) {
+        size_t got = mp_alloc_batch(pool, BENCH_SIZE_TLSF, ptrs, BENCH_BATCH_ELEMS);
+        if (got != BENCH_BATCH_ELEMS) {
+            fprintf(
+                stderr, "mp_alloc_batch(4KB) returned %zu (expected %d)\n", got, BENCH_BATCH_ELEMS);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            bench_escape(ptrs[i]);
+        }
+        mp_free_batch(pool, ptrs, BENCH_BATCH_ELEMS);
+    }
+    double time_tlsf_batch = get_time_sec() - start;
+    printf("  TLSF 4KB single : %.4f sec (%.2f Mops/sec)\n",
+           time_tlsf_single,
+           (total_ops / time_tlsf_single) / MILLION_OPS);
+    printf("  TLSF 4KB batch  : %.4f sec (%.2f Mops/sec)\n",
+           time_tlsf_batch,
+           (total_ops / time_tlsf_batch) / MILLION_OPS);
+    printf("  TLSF 4KB speedup: %.2fx\n", time_tlsf_single / time_tlsf_batch);
+
+    /* THREAD_SAFE pool (lock-bound): batch should amortize pool_lock */
+    memory_pool_t *ts_pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+    bench_warmup(ts_pool);
+    start = get_time_sec();
+    for (int batch_idx = 0; batch_idx < BENCH_BATCH_COUNT; batch_idx++) {
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            ptrs[i] = mp_alloc(ts_pool, BENCH_SIZE_FIXED);
+            bench_escape(ptrs[i]);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            mp_free(ts_pool, ptrs[i]);
+        }
+    }
+    double time_ts_single = get_time_sec() - start;
+
+    start = get_time_sec();
+    for (int batch_idx = 0; batch_idx < BENCH_BATCH_COUNT; batch_idx++) {
+        size_t got = mp_alloc_batch(ts_pool, BENCH_SIZE_FIXED, ptrs, BENCH_BATCH_ELEMS);
+        if (got != BENCH_BATCH_ELEMS) {
+            fprintf(
+                stderr, "mp_alloc_batch(TS) returned %zu (expected %d)\n", got, BENCH_BATCH_ELEMS);
+        }
+        for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
+            bench_escape(ptrs[i]);
+        }
+        mp_free_batch(ts_pool, ptrs, BENCH_BATCH_ELEMS);
+    }
+    double time_ts_batch = get_time_sec() - start;
+    printf("  TS single loops : %.4f sec (%.2f Mops/sec)\n",
+           time_ts_single,
+           (total_ops / time_ts_single) / MILLION_OPS);
+    printf("  TS batch APIs   : %.4f sec (%.2f Mops/sec)\n",
+           time_ts_batch,
+           (total_ops / time_ts_batch) / MILLION_OPS);
+    printf("  TS batch speedup: %.2fx\n", time_ts_single / time_ts_batch);
+
+    mp_destroy(ts_pool);
 
     mp_destroy(pool);
     free(ptrs);
