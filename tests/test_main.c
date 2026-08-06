@@ -1291,6 +1291,195 @@ void test_batch_alloc_and_compact()
     TEST_PASS("test_batch_alloc_and_compact");
 }
 
+#define BATCH_OS_SIZE (5u * 1024u * 1024u) /* OS-tier element size for batch test */
+
+/**
+ * @brief Tests batch allocation across slab / TLSF / OS tiers.
+ */
+void test_batch_alloc_tiers()
+{
+    printf("\n--- Test 40: Batch Allocation Across Allocator Tiers ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    {
+        void *ptrs[128];
+        size_t count = mp_alloc_batch(pool, 8, ptrs, 128);
+        assert(count == 128);
+        for (size_t i = 0; i < count; i++) {
+            assert(ptrs[i] != NULL);
+        }
+        mp_stats_t stats;
+        mp_get_stats(pool, &stats);
+        assert(stats.active_allocations == 128);
+        mp_free_batch(pool, ptrs, count);
+        mp_get_stats(pool, &stats);
+        assert(stats.active_allocations == 0);
+    }
+    {
+        void *ptrs[100];
+        size_t count = mp_alloc_batch(pool, 64, ptrs, 100);
+        assert(count == 100);
+        mp_free_batch(pool, ptrs, count);
+    }
+    {
+        void *ptrs[50];
+        size_t count = mp_alloc_batch(pool, 512, ptrs, 50);
+        assert(count == 50);
+        mp_free_batch(pool, ptrs, count);
+    }
+    {
+        void *ptrs[20];
+        size_t count = mp_alloc_batch(pool, 1024, ptrs, 20);
+        assert(count == 20);
+        mp_free_batch(pool, ptrs, count);
+    }
+    {
+        void *ptrs[10];
+        size_t count = mp_alloc_batch(pool, 4096, ptrs, 10);
+        assert(count == 10);
+        mp_free_batch(pool, ptrs, count);
+    }
+    {
+        void *ptrs[4];
+        size_t count = mp_alloc_batch(pool, 1024 * 1024, ptrs, 4);
+        assert(count == 4);
+        mp_free_batch(pool, ptrs, count);
+    }
+    {
+        void *ptrs[3];
+        mp_stats_t before;
+        mp_get_stats(pool, &before);
+        size_t count = mp_alloc_batch(pool, BATCH_OS_SIZE, ptrs, 3);
+        assert(count == 3);
+        mp_stats_t after;
+        mp_get_stats(pool, &after);
+        assert(after.os_allocated_bytes == before.os_allocated_bytes + 3 * BATCH_OS_SIZE);
+        assert(after.active_allocations == before.active_allocations + 3);
+        mp_free_batch(pool, ptrs, count);
+        mp_get_stats(pool, &after);
+        assert(after.active_allocations == before.active_allocations);
+    }
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("test_batch_alloc_tiers");
+}
+
+#define BATCH_LIMIT_PARTIAL 2500u /* limit 2500: fits 4 x 512, not 5 */
+#define BATCH_LIMIT_SMALL 100u    /* limit 100: nothing fits */
+#define BATCH_QUOTA 200u          /* thread quota: trips after 4 x 64 */
+#define BATCH_EMERGENCY_RESERVE 4096u
+
+/**
+ * @brief Tests batch allocation with cache-alignment, memory limit,
+ *        emergency reserve, OOM fallback, fast path, per-CPU freelists,
+ *        multi-arena routing, and circuit breaker.
+ */
+void test_batch_alloc_configs()
+{
+    printf("\n--- Test 41: Batch Allocation Configurations ---\n");
+
+    {
+        /* (a) Cache-aligned payloads */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_CACHE_ALIGNED | MP_FLAG_THREAD_SAFE);
+        void *ptrs[64];
+        size_t count = mp_alloc_batch(pool, 32, ptrs, 64);
+        assert(count == 64);
+        for (size_t i = 0; i < count; i++) {
+            assert(((uintptr_t)ptrs[i] & 63u) == 0);
+            memset(ptrs[i], 0xAB, 32);
+        }
+        mp_free_batch(pool, ptrs, count);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+    {
+        /* (b) Memory-limit partial fit + emergency buffer: k=4, +1 emergency */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+        bool ok = mp_enable_emergency_reserve(pool, BATCH_EMERGENCY_RESERVE);
+        assert(ok);
+        mp_set_memory_limit(pool, BATCH_LIMIT_PARTIAL);
+        void *ptrs[8];
+        size_t count = mp_alloc_batch(pool, 512, ptrs, 8);
+        assert(count == 5); /* 4 fit under the limit, 1 emergency element */
+        mp_free_batch(pool, ptrs, count);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+    {
+        /* (c) Limit fully exceeded, emergency too small: return 0 */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+        bool ok = mp_enable_emergency_reserve(pool, 512);
+        assert(ok);
+        mp_set_memory_limit(pool, BATCH_LIMIT_SMALL);
+        void *ptrs[4];
+        size_t count = mp_alloc_batch(pool, 1024, ptrs, 4);
+        assert(count == 0);
+        mp_destroy(pool);
+    }
+    {
+        /* (d) OOM fallback ignores the limit: full count */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+        mp_set_memory_limit(pool, BATCH_LIMIT_SMALL);
+        mp_set_fallback_on_oom(pool, true);
+        void *ptrs[4];
+        size_t count = mp_alloc_batch(pool, 1024, ptrs, 4);
+        assert(count == 4);
+        mp_free_batch(pool, ptrs, count);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+    {
+        /* (e) Fast path */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_FAST_PATH);
+        void *ptrs[32];
+        size_t count = mp_alloc_batch(pool, 64, ptrs, 32);
+        assert(count == 32);
+        mp_free_batch(pool, ptrs, count);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+    {
+        /* (f) Per-CPU freelist */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_PERCPU_FREELIST);
+        void *ptrs[32];
+        size_t count = mp_alloc_batch(pool, 64, ptrs, 32);
+        assert(count == 32);
+        mp_free_batch(pool, ptrs, count);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+    {
+        /* (g) Multi-arena routing (recurses into the bound arena) */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+        bool ok = mp_enable_multi_arena(pool, 2);
+        assert(ok);
+        mp_bind_thread_to_arena(pool, 0);
+        void *ptrs[16];
+        size_t count = mp_alloc_batch(pool, 64, ptrs, 16);
+        assert(count == 16);
+        mp_free_batch(pool, ptrs, count);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+    {
+        /* (h) Circuit breaker trips mid-batch (4 x 64 = 256 >= 200) */
+        memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+        mp_set_thread_quota(pool, BATCH_QUOTA);
+        mp_set_circuit_breaker(pool, true);
+        void *ptrs[10];
+        size_t count = mp_alloc_batch(pool, 64, ptrs, 10);
+        assert(count == 4);
+        assert(mp_is_circuit_breaker_tripped(pool) == true);
+        mp_free_batch(pool, ptrs, count);
+        mp_reset_thread_quota(pool);
+        assert(mp_check_leaks(pool) == true);
+        mp_destroy(pool);
+    }
+
+    TEST_PASS("test_batch_alloc_configs");
+}
+
 /**
  * @brief Tests leak analysis report and heap audit features.
  */
@@ -1769,6 +1958,8 @@ int main()
     test_guard_pages_protection();
     test_allocation_histogram();
     test_batch_alloc_and_compact();
+    test_batch_alloc_tiers();
+    test_batch_alloc_configs();
     test_memory_budget_and_oom();
     test_leak_analysis_and_heap_audit();
     test_child_arenas_and_html_export();
