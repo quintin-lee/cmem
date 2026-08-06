@@ -714,7 +714,7 @@ void bench_batch_scaling(void)
         for (size_t vi = 0; vi < 4; vi++) {
             size_t elems = elem_variants[vi];
             double start = get_time_sec();
-            for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+            for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
                 for (size_t i = 0; i < elems; i++) {
                     ptrs[i] = mp_alloc(pool, esize);
                     bench_escape(ptrs[i]);
@@ -726,7 +726,7 @@ void bench_batch_scaling(void)
             double time_single = get_time_sec() - start;
 
             start = get_time_sec();
-            for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+            for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
                 size_t got = mp_alloc_batch(pool, esize, ptrs, elems);
                 if (got != elems) {
                     fprintf(stderr, "scaling batch returned %zu (expected %zu)\n", got, elems);
@@ -739,7 +739,7 @@ void bench_batch_scaling(void)
             double time_batch = get_time_sec() - start;
 
             start = get_time_sec();
-            for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+            for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
                 for (size_t i = 0; i < elems; i++) {
                     ptrs[i] = malloc(esize);
                     bench_escape(ptrs[i]);
@@ -779,7 +779,7 @@ static void *bench_batch_thread_func(void *arg)
             return NULL;
         }
         int rounds = ta->alloc_count / ta->batch_elems;
-        for (int r = 0; r < rounds; r++) {
+        for (int round = 0; round < rounds; round++) {
             size_t got = mp_alloc_batch(ta->pool, BENCH_SIZE_FIXED, ptrs, ta->batch_elems);
             if (got != (size_t)ta->batch_elems) {
                 fprintf(stderr, "MT batch returned %zu (expected %d)\n", got, ta->batch_elems);
@@ -861,7 +861,7 @@ void bench_batch_free_path(void)
     bench_warmup(pool);
 
     double start = get_time_sec();
-    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+    for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
         for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
             ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
         }
@@ -870,7 +870,7 @@ void bench_batch_free_path(void)
     double time_batch = get_time_sec() - start;
 
     start = get_time_sec();
-    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+    for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
         for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
             ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
         }
@@ -921,7 +921,7 @@ void bench_batch_mixed_sizes(void)
     bench_warmup(pool);
 
     double start = get_time_sec();
-    for (int r = 0; r < BENCH_BATCH_MIXED_ITERS; r++) {
+    for (int round = 0; round < BENCH_BATCH_MIXED_ITERS; round++) {
         size_t got = mp_alloc_batch(pool, BENCH_SIZE_FIXED, ptrs, 64);
         if (got != 64) {
             fprintf(stderr, "mixed 32B batch returned %zu (expected 64)\n", got);
@@ -941,21 +941,21 @@ void bench_batch_mixed_sizes(void)
     double time_batch = get_time_sec() - start;
 
     start = get_time_sec();
-    for (int r = 0; r < BENCH_BATCH_MIXED_ITERS; r++) {
+    for (int round = 0; round < BENCH_BATCH_MIXED_ITERS; round++) {
         for (int i = 0; i < 64; i++) {
-            void *p = mp_alloc(pool, BENCH_SIZE_FIXED);
-            bench_escape(p);
-            mp_free(pool, p);
+            void *ptr = mp_alloc(pool, BENCH_SIZE_FIXED);
+            bench_escape(ptr);
+            mp_free(pool, ptr);
         }
         for (int i = 0; i < 16; i++) {
-            void *p = mp_alloc(pool, BENCH_BATCH_MIXED_SIZE_MID);
-            bench_escape(p);
-            mp_free(pool, p);
+            void *ptr = mp_alloc(pool, BENCH_BATCH_MIXED_SIZE_MID);
+            bench_escape(ptr);
+            mp_free(pool, ptr);
         }
         for (int i = 0; i < 4; i++) {
-            void *p = mp_alloc(pool, BENCH_SIZE_TLSF);
-            bench_escape(p);
-            mp_free(pool, p);
+            void *ptr = mp_alloc(pool, BENCH_SIZE_TLSF);
+            bench_escape(ptr);
+            mp_free(pool, ptr);
         }
     }
     double time_single = get_time_sec() - start;
@@ -978,7 +978,7 @@ void bench_batch_os_tier(void)
     bench_warmup(pool);
 
     double start = get_time_sec();
-    for (int r = 0; r < BENCH_BATCH_OS_ITERS; r++) {
+    for (int round = 0; round < BENCH_BATCH_OS_ITERS; round++) {
         for (int i = 0; i < BENCH_BATCH_OS_ELEMS; i++) {
             ptrs[i] = mp_alloc(pool, BENCH_BATCH_OS_SIZE);
             bench_escape(ptrs[i]);
@@ -990,7 +990,7 @@ void bench_batch_os_tier(void)
     double time_single = get_time_sec() - start;
 
     start = get_time_sec();
-    for (int r = 0; r < BENCH_BATCH_OS_ITERS; r++) {
+    for (int round = 0; round < BENCH_BATCH_OS_ITERS; round++) {
         size_t got = mp_alloc_batch(pool, BENCH_BATCH_OS_SIZE, ptrs, BENCH_BATCH_OS_ELEMS);
         if (got != BENCH_BATCH_OS_ELEMS) {
             fprintf(stderr, "OS batch returned %zu (expected %d)\n", got, BENCH_BATCH_OS_ELEMS);
@@ -1020,7 +1020,7 @@ void bench_batch_fastpath(void)
     bench_warmup(pool);
 
     double start = get_time_sec();
-    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+    for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
         for (int i = 0; i < BENCH_BATCH_ELEMS; i++) {
             ptrs[i] = mp_alloc(pool, BENCH_SIZE_FIXED);
             bench_escape(ptrs[i]);
@@ -1032,7 +1032,7 @@ void bench_batch_fastpath(void)
     double time_single = get_time_sec() - start;
 
     start = get_time_sec();
-    for (int b = 0; b < BENCH_BATCH_COUNT; b++) {
+    for (int batch = 0; batch < BENCH_BATCH_COUNT; batch++) {
         size_t got = mp_alloc_batch(pool, BENCH_SIZE_FIXED, ptrs, BENCH_BATCH_ELEMS);
         if (got != BENCH_BATCH_ELEMS) {
             fprintf(stderr, "FAST batch returned %zu (expected %d)\n", got, BENCH_BATCH_ELEMS);

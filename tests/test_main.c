@@ -1599,23 +1599,23 @@ void test_batch_free_mixed_tiers()
     memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
 
     void *ptrs[13];
-    size_t n = 0;
-    size_t ca = mp_alloc_batch(pool, 32, &ptrs[n], 8);
+    size_t elem_count = 0;
+    size_t ca = mp_alloc_batch(pool, 32, &ptrs[elem_count], 8);
     assert(ca == 8);
-    n += ca;
-    ca = mp_alloc_batch(pool, 4096, &ptrs[n], 4);
+    elem_count += ca;
+    ca = mp_alloc_batch(pool, 4096, &ptrs[elem_count], 4);
     assert(ca == 4);
-    n += ca;
-    ptrs[n] = mp_alloc(pool, BATCH_FREE_OS_SIZE);
-    assert(ptrs[n] != NULL);
-    n++;
+    elem_count += ca;
+    ptrs[elem_count] = mp_alloc(pool, BATCH_FREE_OS_SIZE);
+    assert(ptrs[elem_count] != NULL);
+    elem_count++;
 
     mp_stats_t before;
     mp_get_stats(pool, &before);
     assert(before.active_allocations == 13);
 
-    mp_free_batch(pool, ptrs, n);
-    for (size_t i = 0; i < n; i++) {
+    mp_free_batch(pool, ptrs, elem_count);
+    for (size_t i = 0; i < elem_count; i++) {
         assert(ptrs[i] == NULL);
     }
     mp_stats_t after;
