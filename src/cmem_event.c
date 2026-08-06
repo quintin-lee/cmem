@@ -2405,7 +2405,6 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
         return 0;
     }
 
-    /* Arena routing: delegate to the bound arena, exactly like mp_alloc. */
     if (pool->num_arenas > 0) {
         memory_pool_t *arena = mp_get_thread_bound_arena(pool);
         if (arena && arena != pool) {

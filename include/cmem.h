@@ -1005,6 +1005,8 @@ typedef struct {
     memory_pool_t *owner_pool;
     mp_slab_slot_t *slots[CMEM_SLAB_CLASS_COUNT];
     uint16_t counts[CMEM_SLAB_CLASS_COUNT];
+    memory_pool_t *bound_arena; /**< Multi-arena bound child (NULL = not bound) */
+
 } thread_cache_t;
 
 typedef struct mp_block_header {

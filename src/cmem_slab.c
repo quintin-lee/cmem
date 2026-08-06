@@ -47,7 +47,7 @@ const uint8_t cmem_size_to_class[513] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 /* 257..512 -> class 6 */
 };
 
-MP_THREAD_LOCAL thread_cache_t tls_cache = {NULL, {0}, {0}};
+MP_THREAD_LOCAL thread_cache_t tls_cache = {NULL, {0}, {0}, NULL};
 MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
 
 /* Forward declaration: slab_free_nolock is defined after remote_free_harvest
@@ -108,11 +108,37 @@ void tls_cache_validate_owner(memory_pool_t *pool)
             tls_cache_flush_pool(tls_cache.owner_pool);
         }
         tls_cache.owner_pool = pool;
+        /* Auto-cache multi-arena binding: when entering a child arena for
+         * the first time, record the master pool so tls_cache_get_bound_arena()
+         * can bypass the master pool rwlock on subsequent calls. */
+        if (pool->is_multi_arena_child && pool->master_pool) {
+            tls_cache.bound_arena = pool;
+            tls_cache.owner_pool = pool->master_pool;
+        } else {
+            tls_cache.bound_arena = NULL;
+        }
         for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
             tls_cache.slots[i] = NULL;
             tls_cache.counts[i] = 0;
         }
     }
+}
+
+/**
+ * @brief Return the multi-arena child pool bound to the current thread,
+ * or NULL if the thread is not bound to any multi-arena.
+ *
+ * Checks the TLS-cached bound_arena first (fast path, no locks, no
+ * atomic operations). Falls back to the tls_arena_map for safety on
+ * the first call or when the cache is invalidated.
+ */
+memory_pool_t *tls_cache_get_bound_arena(void)
+{
+    if (tls_cache.bound_arena != NULL) {
+        return tls_cache.bound_arena;
+    }
+    /* Fallback: use the existing binding table lookup. */
+    return mp_get_thread_bound_arena(tls_cache.owner_pool);
 }
 
 /**
