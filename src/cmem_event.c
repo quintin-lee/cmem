@@ -2753,9 +2753,12 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
  */
 static void flush_slab_block(memory_pool_t *pool, mp_block_header_t **hdrs, size_t block_count)
 {
-    /* Re-validate the TLS cache owner: fallback mp_free calls during the
-     * classification pass may have switched the cache to another pool. */
-    tls_cache_validate_owner(pool);
+    /* Re-validate the TLS cache owner only when it changed: fallback mp_free
+     * calls during the classification pass may have switched it to another
+     * pool. The owner check is a plain read; validate is the expensive path. */
+    if (tls_cache.owner_pool != pool) {
+        tls_cache_validate_owner(pool);
+    }
 
     /* Phase A: poison fill (lock-free, before the stats update like mp_free). */
     if (pool->flags & MP_FLAG_POISON_ON_FREE) {
