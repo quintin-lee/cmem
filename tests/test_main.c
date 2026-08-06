@@ -1480,6 +1480,296 @@ void test_batch_alloc_configs()
     TEST_PASS("test_batch_alloc_configs");
 }
 
+#define BATCH_FREE_COUNT 512u                   /* elements in the THREAD_SAFE semantics test */
+#define BATCH_FREE_OS_SIZE (6u * 1024u * 1024u) /* OS-tier element in the mixed test */
+#define BATCH_FREE_OVERFLOW 600u                /* > TLS_CACHE_MAX_SLOTS (256) to force overflow */
+#define BATCH_CORRUPT_MAGIC 0xDEADBEEFu         /* magic stamp for the corrupt test */
+#define BATCH_POISON_BYTE 0xDDu                 /* matches internal MP_POISON_BYTE */
+
+/**
+ * @brief Tests mp_free_batch semantics on a THREAD_SAFE pool: pointers are
+ *        nulled, accounting is aggregated exactly, and the pool is leak-free.
+ */
+void test_batch_free_semantics()
+{
+    printf("\n--- Test 42: Batch Free Semantics ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    {
+        void *ptrs[BATCH_FREE_COUNT];
+        size_t count = mp_alloc_batch(pool, 32, ptrs, BATCH_FREE_COUNT);
+        assert(count == BATCH_FREE_COUNT);
+        for (size_t i = 0; i < count; i++) {
+            assert(ptrs[i] != NULL);
+        }
+        mp_stats_t stats;
+        mp_get_stats(pool, &stats);
+        assert(stats.active_allocations == BATCH_FREE_COUNT);
+
+        mp_free_batch(pool, ptrs, count);
+        for (size_t i = 0; i < count; i++) {
+            assert(ptrs[i] == NULL);
+        }
+        mp_get_stats(pool, &stats);
+        assert(stats.active_allocations == 0);
+        assert(stats.active_bytes == 0);
+        assert(stats.total_free_ops == BATCH_FREE_COUNT);
+        assert(mp_check_leaks(pool) == true);
+    }
+    {
+        /* NULL entries inside the batch are skipped, not treated as errors. */
+        void *ptrs[16];
+        size_t count = mp_alloc_batch(pool, 64, ptrs, 16);
+        assert(count == 16);
+        mp_free(pool, ptrs[3]);
+        ptrs[3] = NULL;
+        mp_free_batch(pool, ptrs, count);
+        mp_stats_t stats;
+        mp_get_stats(pool, &stats);
+        assert(stats.active_allocations == 0);
+        assert(mp_check_leaks(pool) == true);
+    }
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_semantics");
+}
+
+/**
+ * @brief Proves mp_free_batch produces stats identical to N per-element
+ *        mp_free calls on an otherwise identical THREAD_SAFE pool.
+ */
+void test_batch_free_equivalence()
+{
+    printf("\n--- Test 43: Batch Free vs Per-Element Equivalence ---\n");
+    memory_pool_t *pool_a = mp_create(0, MP_FLAG_THREAD_SAFE);
+    memory_pool_t *pool_b = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    {
+        void *ptrs_a[256];
+        void *ptrs_b[256];
+        size_t ca = mp_alloc_batch(pool_a, 64, ptrs_a, 256);
+        assert(ca == 256);
+        for (size_t i = 0; i < 256; i++) {
+            ptrs_b[i] = mp_alloc(pool_b, 64);
+            assert(ptrs_b[i] != NULL);
+        }
+        mp_free_batch(pool_a, ptrs_a, 256);
+        for (size_t i = 0; i < 256; i++) {
+            mp_free(pool_b, ptrs_b[i]);
+        }
+    }
+    {
+        void *ptrs_a[8];
+        void *ptrs_b[8];
+        size_t ca = mp_alloc_batch(pool_a, 1024, ptrs_a, 8);
+        assert(ca == 8);
+        for (size_t i = 0; i < 8; i++) {
+            ptrs_b[i] = mp_alloc(pool_b, 1024);
+            assert(ptrs_b[i] != NULL);
+        }
+        mp_free_batch(pool_a, ptrs_a, 8);
+        for (size_t i = 0; i < 8; i++) {
+            mp_free(pool_b, ptrs_b[i]);
+        }
+    }
+
+    mp_stats_t stats_a;
+    mp_stats_t stats_b;
+    mp_get_stats(pool_a, &stats_a);
+    mp_get_stats(pool_b, &stats_b);
+    assert(stats_a.active_bytes == stats_b.active_bytes);
+    assert(stats_a.active_allocations == stats_b.active_allocations);
+    assert(stats_a.total_free_ops == stats_b.total_free_ops);
+    assert(stats_a.os_allocated_bytes == stats_b.os_allocated_bytes);
+    assert(mp_check_leaks(pool_a) == true);
+    assert(mp_check_leaks(pool_b) == true);
+
+    mp_destroy(pool_a);
+    mp_destroy(pool_b);
+    TEST_PASS("test_batch_free_equivalence");
+}
+
+/**
+ * @brief A single mp_free_batch call mixing slab, TLSF and OS-tier elements:
+ *        non-slab pointers fall back to per-element free with exact accounting.
+ */
+void test_batch_free_mixed_tiers()
+{
+    printf("\n--- Test 44: Batch Free Mixed Tiers ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    void *ptrs[13];
+    size_t n = 0;
+    size_t ca = mp_alloc_batch(pool, 32, &ptrs[n], 8);
+    assert(ca == 8);
+    n += ca;
+    ca = mp_alloc_batch(pool, 4096, &ptrs[n], 4);
+    assert(ca == 4);
+    n += ca;
+    ptrs[n] = mp_alloc(pool, BATCH_FREE_OS_SIZE);
+    assert(ptrs[n] != NULL);
+    n++;
+
+    mp_stats_t before;
+    mp_get_stats(pool, &before);
+    assert(before.active_allocations == 13);
+
+    mp_free_batch(pool, ptrs, n);
+    for (size_t i = 0; i < n; i++) {
+        assert(ptrs[i] == NULL);
+    }
+    mp_stats_t after;
+    mp_get_stats(pool, &after);
+    assert(after.active_allocations == 0);
+    assert(after.active_bytes == 0);
+    assert(after.os_allocated_bytes == 0);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_mixed_tiers");
+}
+
+/**
+ * @brief A corrupt header inside a batch triggers mp_free's error path; the
+ *        remaining valid elements are still freed and the pointers nulled.
+ */
+void test_batch_free_corrupt()
+{
+    printf("\n--- Test 45: Batch Free With Corrupt Header ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    void *ptrs[16];
+    size_t count = mp_alloc_batch(pool, 32, ptrs, 16);
+    assert(count == 16);
+    mp_block_header_t *bad_header =
+        (mp_block_header_t *)((uint8_t *)ptrs[7] - sizeof(mp_block_header_t));
+    bad_header->magic = BATCH_CORRUPT_MAGIC;
+
+    mp_free_batch(pool, ptrs, count);
+    assert(mp_is_pool_dirty(pool) == true);
+    for (size_t i = 0; i < count; i++) {
+        assert(ptrs[i] == NULL);
+    }
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    /* The corrupt element was never unaccounted; the other 15 were freed. */
+    assert(stats.active_allocations == 1);
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_corrupt");
+}
+
+/**
+ * @brief A subpool-redirected element inside a batch falls back to per-element
+ *        free; all pointers are nulled and the pool stays leak-free.
+ */
+void test_batch_free_subpool()
+{
+    printf("\n--- Test 46: Batch Free With Subpool Redirect ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    void *ptrs[16];
+    size_t count = mp_alloc_batch(pool, 32, ptrs, 16);
+    assert(count == 16);
+    mp_block_header_t *redir_header =
+        (mp_block_header_t *)((uint8_t *)ptrs[7] - sizeof(mp_block_header_t));
+    redir_header->subpool = (void *)pool; /* self-redirect, as OS elements do */
+
+    mp_free_batch(pool, ptrs, count);
+    for (size_t i = 0; i < count; i++) {
+        assert(ptrs[i] == NULL);
+    }
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_subpool");
+}
+
+/**
+ * @brief FAST_PATH pools account batch frees via relaxed atomics; the active
+ *        list is not maintained and the counters return to zero exactly.
+ */
+void test_batch_free_fastpath()
+{
+    printf("\n--- Test 47: Batch Free Fast Path ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_FAST_PATH | MP_FLAG_THREAD_SAFE);
+
+    void *ptrs[128];
+    size_t count = mp_alloc_batch(pool, 16, ptrs, 128);
+    assert(count == 128);
+    mp_free_batch(pool, ptrs, count);
+    for (size_t i = 0; i < count; i++) {
+        assert(ptrs[i] == NULL);
+    }
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+    assert(stats.active_bytes == 0);
+    assert(stats.total_free_ops == 128);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_fastpath");
+}
+
+/**
+ * @brief POISON_ON_FREE batch frees fill the payload with MP_POISON_BYTE; the
+ *        next allocation of the same size observes the poison before reuse.
+ */
+void test_batch_free_poison()
+{
+    printf("\n--- Test 48: Batch Free Poison Fill ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_POISON_ON_FREE);
+
+    void *ptrs[64];
+    size_t count = mp_alloc_batch(pool, 64, ptrs, 64);
+    assert(count == 64);
+    for (size_t i = 0; i < count; i++) {
+        memset(ptrs[i], 0xAB, 64);
+    }
+    mp_free_batch(pool, ptrs, count);
+
+    void *reused = mp_alloc(pool, 64);
+    assert(reused != NULL);
+    const uint8_t *bytes = (const uint8_t *)reused;
+    for (size_t i = 0; i < 64; i++) {
+        assert(bytes[i] == BATCH_POISON_BYTE);
+    }
+    mp_free(pool, reused);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_poison");
+}
+
+/**
+ * @brief Freeing more same-class slots than the TLS cache holds (256) flushes
+ *        into the per-CPU freelist and remote-free queue without losing any.
+ */
+void test_batch_free_overflow()
+{
+    printf("\n--- Test 49: Batch Free TLS Cache Overflow ---\n");
+    memory_pool_t *pool = mp_create(0, MP_FLAG_THREAD_SAFE);
+
+    void *ptrs[BATCH_FREE_OVERFLOW];
+    size_t count = mp_alloc_batch(pool, 32, ptrs, BATCH_FREE_OVERFLOW);
+    assert(count == BATCH_FREE_OVERFLOW);
+    mp_free_batch(pool, ptrs, count);
+    for (size_t i = 0; i < count; i++) {
+        assert(ptrs[i] == NULL);
+    }
+    mp_stats_t stats;
+    mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("test_batch_free_overflow");
+}
+
 /**
  * @brief Tests leak analysis report and heap audit features.
  */
@@ -1960,6 +2250,14 @@ int main()
     test_batch_alloc_and_compact();
     test_batch_alloc_tiers();
     test_batch_alloc_configs();
+    test_batch_free_semantics();
+    test_batch_free_equivalence();
+    test_batch_free_mixed_tiers();
+    test_batch_free_corrupt();
+    test_batch_free_subpool();
+    test_batch_free_fastpath();
+    test_batch_free_poison();
+    test_batch_free_overflow();
     test_memory_budget_and_oom();
     test_leak_analysis_and_heap_audit();
     test_child_arenas_and_html_export();
