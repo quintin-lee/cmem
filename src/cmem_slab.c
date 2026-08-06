@@ -187,6 +187,13 @@ void remote_free_harvest_all(memory_pool_t *pool)
         return;
     }
     for (uint8_t i = 0; i < SLAB_CLASS_COUNT; i++) {
+        /* Must hold the class lock: slab_free_nolock mutates page state
+         * (free_list, free_count, page lists) which percpu_refill and other
+         * path walkers read under this same lock. */
+        mp_slab_class_t *sc = &pool->slab_classes[i];
+        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            pthread_mutex_lock(&sc->lock);
+        }
         cmem_atomic_size_t *headp = &pool->remote_free_queue[i];
         size_t head = (size_t)CMEM_ATOMIC_EXCHANGE(headp, 0, CMEM_ORDER_RELAXED);
         mp_slab_slot_t *slot = (mp_slab_slot_t *)(uintptr_t)head;
@@ -202,6 +209,9 @@ void remote_free_harvest_all(memory_pool_t *pool)
             header->raw_base = (void *)slot;
             slab_free_nolock(pool, header);
             slot = next;
+        }
+        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            pthread_mutex_unlock(&sc->lock);
         }
     }
 }
