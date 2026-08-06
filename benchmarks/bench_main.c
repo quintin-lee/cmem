@@ -885,6 +885,29 @@ void bench_batch_free_path(void)
     printf("  free single : %.2f Mops/sec\n", (total_ops / time_single) / MILLION_OPS);
     printf("  free speedup: %.2fx\n", time_single / time_batch);
 
+    /* Thread-scaled free path on a THREAD_SAFE pool (alloc+free timed together):
+     * the batch free's single aggregated pool write lock vs per-element locks. */
+    printf("  -- THREAD_SAFE pool, 1/2/4/8 threads, batch vs single --\n");
+    static const int free_thread_counts[] = {1, 2, 4, 8};
+    memory_pool_t *ts_pool = mp_create(32 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+    bench_warmup(ts_pool);
+    printf("  threads | single Mops | batch Mops | speedup | single eff | batch eff\n");
+    double ts_single_1 = bench_batch_run(ts_pool, 1, BENCH_BATCH_THREAD_ALLOCS, 0);
+    double ts_batch_1 = bench_batch_run(ts_pool, 1, BENCH_BATCH_THREAD_ALLOCS, BENCH_BATCH_ELEMS);
+    for (size_t ti = 0; ti < 4; ti++) {
+        int tc = free_thread_counts[ti];
+        double m_single = bench_batch_run(ts_pool, tc, BENCH_BATCH_THREAD_ALLOCS, 0);
+        double m_batch = bench_batch_run(ts_pool, tc, BENCH_BATCH_THREAD_ALLOCS, BENCH_BATCH_ELEMS);
+        printf("  %5d  | %10.2f  | %9.2f  | %6.2fx  | %9.2f  | %8.2f\n",
+               tc,
+               m_single,
+               m_batch,
+               m_batch / m_single,
+               m_single / ts_single_1,
+               m_batch / ts_batch_1);
+    }
+    mp_destroy(ts_pool);
+
     mp_destroy(pool);
     free(ptrs);
 }
