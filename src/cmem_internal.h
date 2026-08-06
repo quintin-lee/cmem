@@ -551,6 +551,10 @@ extern void *slab_alloc(memory_pool_t *pool, uint8_t class_idx, size_t req_size)
 extern mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx);
 extern void slab_free(memory_pool_t *pool, mp_block_header_t *header);
 extern void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx);
+extern size_t slab_alloc_batch(memory_pool_t *pool,
+                               uint8_t class_idx,
+                               mp_slab_slot_t **out_slots,
+                               size_t max_count);
 extern void tls_cache_flush_pool(memory_pool_t *pool);
 extern void tls_cache_validate_owner(memory_pool_t *pool);
 extern void percpu_init(memory_pool_t *pool);

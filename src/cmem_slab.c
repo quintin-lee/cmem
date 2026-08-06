@@ -587,6 +587,95 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
 }
 
 /**
+ * @brief Bulk-allocate up to max_count slots for a size class.
+ *
+ * Pops slots directly from the slab tier under a single class mutex lock
+ * acquisition and writes them into out_slots[0..n-1] in allocation order.
+ * Page transitions (empty -> partial, partial -> full) are identical to
+ * tls_cache_refill. On return the caller owns all produced slots and is
+ * responsible for stamping each slot's block header.
+ *
+ * @param pool      Pool to draw slots from.
+ * @param class_idx Size class to allocate from.
+ * @param out_slots Receives up to max_count slot pointers (prefix).
+ * @param max_count Maximum number of slots requested.
+ * @return Number of slots actually produced.
+ */
+size_t slab_alloc_batch(memory_pool_t *pool,
+                        uint8_t class_idx,
+                        mp_slab_slot_t **out_slots,
+                        size_t max_count)
+{
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+
+    remote_free_harvest(pool, class_idx);
+
+    size_t produced = 0;
+    while (produced < max_count) {
+        mp_slab_page_t *page = sc->partial_pages;
+        if (!page) {
+            if (sc->empty_pages) {
+                page = sc->empty_pages;
+                sc->empty_pages = page->next;
+                if (sc->empty_pages) {
+                    sc->empty_pages->prev = NULL;
+                }
+                sc->empty_page_count--;
+
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            } else {
+                page = slab_create_page(pool, class_idx);
+                if (!page) {
+                    break;
+                }
+                page->next = sc->partial_pages;
+                page->prev = NULL;
+                if (sc->partial_pages) {
+                    sc->partial_pages->prev = page;
+                }
+                sc->partial_pages = page;
+            }
+        }
+
+        mp_slab_slot_t *slot = page->free_list;
+        page->free_list = slot->next;
+        page->free_count--;
+
+        if (page->free_count == 0) {
+            sc->partial_pages = page->next;
+            if (page->next) {
+                page->next->prev = NULL;
+            }
+
+            page->next = sc->full_pages;
+            page->prev = NULL;
+            if (sc->full_pages) {
+                sc->full_pages->prev = page;
+            }
+            sc->full_pages = page;
+        }
+
+        out_slots[produced] = slot;
+        produced++;
+    }
+
+    pool->stats.slab_allocated_bytes += produced * sc->slot_size;
+
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_unlock(&sc->lock);
+    }
+    return produced;
+}
+
+/**
  * @brief Allocate the per-CPU lock-free freelist table.
  *
  * Detects the number of online CPUs (capped at 256), reserves a
