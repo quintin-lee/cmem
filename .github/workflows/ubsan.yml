@@ -1,4 +1,4 @@
-name: ThreadSanitizer
+name: UndefinedBehaviorSanitizer
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [ master, main ]
 
 jobs:
-  tsan:
-    name: ThreadSanitizer (gcc)
+  ubsan:
+    name: UBSan (gcc)
     runs-on: ubuntu-latest
 
     steps:
@@ -20,16 +20,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc g++ cmake ninja-build
 
-      - name: Configure CMake Build with ThreadSanitizer
+      - name: Configure CMake Build with UBSan
         run: |
-          cmake -B build_tsan -G Ninja \
-            -DCMAKE_BUILD_TYPE=TSan \
+          cmake -B build_ubsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=UBSan \
             -DCMAKE_C_CLANG_TIDY=""
 
-      - name: Build with ThreadSanitizer
+      - name: Build with UBSan
         run: |
-          cmake --build build_tsan
+          cmake --build build_ubsan
 
-      - name: Run Tests under ThreadSanitizer
+      - name: Run Tests under UBSan
         run: |
-          timeout 60 ctest --test-dir build_tsan --output-on-failure || true
+          timeout 60 ctest --test-dir build_ubsan --output-on-failure || true

@@ -1,4 +1,4 @@
-name: ThreadSanitizer
+name: AddressSanitizer
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [ master, main ]
 
 jobs:
-  tsan:
-    name: ThreadSanitizer (gcc)
+  asan:
+    name: AddressSanitizer (gcc)
     runs-on: ubuntu-latest
 
     steps:
@@ -20,16 +20,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc g++ cmake ninja-build
 
-      - name: Configure CMake Build with ThreadSanitizer
+      - name: Configure CMake Build with AddressSanitizer
         run: |
-          cmake -B build_tsan -G Ninja \
-            -DCMAKE_BUILD_TYPE=TSan \
+          cmake -B build_asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=ASan \
             -DCMAKE_C_CLANG_TIDY=""
 
-      - name: Build with ThreadSanitizer
+      - name: Build with AddressSanitizer
         run: |
-          cmake --build build_tsan
+          cmake --build build_asan
 
-      - name: Run Tests under ThreadSanitizer
+      - name: Run Tests under AddressSanitizer
         run: |
-          timeout 60 ctest --test-dir build_tsan --output-on-failure || true
+          timeout 60 ctest --test-dir build_asan --output-on-failure || true
