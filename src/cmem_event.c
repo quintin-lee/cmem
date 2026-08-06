@@ -2849,8 +2849,8 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
             continue;
         }
 
-        if (header->subpool || header->alloc_type != ALLOC_TYPE_SLAB) {
-            /* Redirected or non-slab element: fall back to per-element free. */
+        if ((header->subpool && header->subpool != pool) || header->alloc_type != ALLOC_TYPE_SLAB) {
+            /* Redirected (subpool != pool) or non-slab element: fall back to per-element free. */
             mp_free(pool, ptrs[idx]);
             ptrs[idx] = NULL;
             continue;
