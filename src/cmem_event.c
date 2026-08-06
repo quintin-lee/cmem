@@ -2753,6 +2753,10 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
  */
 static void flush_slab_block(memory_pool_t *pool, mp_block_header_t **hdrs, size_t block_count)
 {
+    /* Re-validate the TLS cache owner: fallback mp_free calls during the
+     * classification pass may have switched the cache to another pool. */
+    tls_cache_validate_owner(pool);
+
     /* Phase A: poison fill (lock-free, before the stats update like mp_free). */
     if (pool->flags & MP_FLAG_POISON_ON_FREE) {
         for (size_t idx = 0; idx < block_count; idx++) {
@@ -2826,7 +2830,6 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
 
     mp_block_header_t *hdrs[CMEM_FREE_BATCH_CHUNK];
     size_t block_count = 0;
-    bool owner_validated = false;
 
     for (size_t idx = 0; idx < count; idx++) {
         if (!ptrs[idx]) {
@@ -2850,10 +2853,6 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
             continue;
         }
 
-        if (!owner_validated) {
-            tls_cache_validate_owner(pool);
-            owner_validated = true;
-        }
         hdrs[block_count++] = header;
         ptrs[idx] = NULL;
 
