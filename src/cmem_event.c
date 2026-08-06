@@ -2737,6 +2737,81 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
     return produced;
 }
 
+/* Stack-buffer capacity for one batch of same-pool SLAB frees. */
+#define CMEM_FREE_BATCH_CHUNK 256
+
+/**
+ * @brief Batch-process up to CMEM_FREE_BATCH_CHUNK same-pool SLAB headers.
+ *
+ * Aggregates the shared stats/active-list update into a single pool write
+ * lock (thread-safe, non-fast-path pools) or a lock-free loop (fast-path and
+ * non-thread-safe pools), then places every slot into the TLS cache, the
+ * per-CPU freelist, the remote-free queue or its slab page — all lock-free.
+ * Phase order is correctness-critical: the stats update reads header->next
+ * via active_list_remove, so it MUST run before slot placement, which
+ * overwrites header->next with the intrusive free-list link.
+ */
+static void flush_slab_block(memory_pool_t *pool, mp_block_header_t **hdrs, size_t block_count)
+{
+    /* Phase A: poison fill (lock-free, before the stats update like mp_free). */
+    if (pool->flags & MP_FLAG_POISON_ON_FREE) {
+        for (size_t idx = 0; idx < block_count; idx++) {
+            mp_block_header_t *header = hdrs[idx];
+            void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+            memset(payload, MP_POISON_BYTE, header->requested_size);
+        }
+    }
+
+    /* Phase B: aggregated stats. */
+    if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
+        for (size_t idx = 0; idx < block_count; idx++) {
+            mp_free_stats_update(pool, hdrs[idx]);
+        }
+    } else if (pool->flags & MP_FLAG_FAST_PATH) {
+        for (size_t idx = 0; idx < block_count; idx++) {
+            mp_block_header_t *header = hdrs[idx];
+            __atomic_fetch_sub(&pool->stats.active_bytes, header->requested_size, __ATOMIC_RELAXED);
+            __atomic_fetch_sub(&pool->stats.active_allocations, 1, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&pool->stats.total_free_ops, 1, __ATOMIC_RELAXED);
+        }
+    } else {
+        pool_lock(pool);
+        for (size_t idx = 0; idx < block_count; idx++) {
+            mp_free_stats_update(pool, hdrs[idx]);
+        }
+        pool_unlock(pool);
+    }
+
+    /* Phase C: events after unlock (pool_lock is a non-recursive wrlock). */
+    if (pool->event_cb) {
+        for (size_t idx = 0; idx < block_count; idx++) {
+            mp_block_header_t *header = hdrs[idx];
+            void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+            trigger_event(pool, MP_EVENT_FREE, payload, header->requested_size);
+        }
+    }
+
+    /* Phase D: slot placement — TLS cache, per-CPU, remote-free queue, or page. */
+    for (size_t idx = 0; idx < block_count; idx++) {
+        mp_block_header_t *header = hdrs[idx];
+        uint8_t class_idx = header->slab_class;
+        mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
+        if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
+            slot->next = tls_cache.slots[class_idx];
+            tls_cache.slots[class_idx] = slot;
+            tls_cache.counts[class_idx]++;
+        } else if (pool->percpu_freelists &&
+                   percpu_push(pool, percpu_cpu_index(), class_idx, slot)) {
+            /* Accepted onto the per-CPU freelist. */
+        } else if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            remote_free_push(pool, class_idx, slot);
+        } else {
+            /* Non-thread-safe: slab_free takes no lock, direct page return. */
+            slab_free(pool, header);
+        }
+    }
+}
+
 /**
  * @brief Free an array of pointers from a batch allocation.
  * @param pool The memory pool.
@@ -2748,11 +2823,48 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
     if (!pool || !ptrs || count == 0) {
         return;
     }
-    for (size_t i = 0; i < count; i++) {
-        if (ptrs[i]) {
-            mp_free(pool, ptrs[i]);
-            ptrs[i] = NULL;
+
+    mp_block_header_t *hdrs[CMEM_FREE_BATCH_CHUNK];
+    size_t block_count = 0;
+    bool owner_validated = false;
+
+    for (size_t idx = 0; idx < count; idx++) {
+        if (!ptrs[idx]) {
+            continue;
         }
+
+        mp_block_header_t *header =
+            (mp_block_header_t *)((uint8_t *)ptrs[idx] - sizeof(mp_block_header_t));
+
+        if (!(pool->flags & MP_FLAG_FAST_PATH) && header->magic != MP_MAGIC_HEAD) {
+            /* Corrupt header: let mp_free run its error/recovery path. */
+            mp_free(pool, ptrs[idx]);
+            ptrs[idx] = NULL;
+            continue;
+        }
+
+        if (header->subpool || header->alloc_type != ALLOC_TYPE_SLAB) {
+            /* Redirected or non-slab element: fall back to per-element free. */
+            mp_free(pool, ptrs[idx]);
+            ptrs[idx] = NULL;
+            continue;
+        }
+
+        if (!owner_validated) {
+            tls_cache_validate_owner(pool);
+            owner_validated = true;
+        }
+        hdrs[block_count++] = header;
+        ptrs[idx] = NULL;
+
+        if (block_count == CMEM_FREE_BATCH_CHUNK) {
+            flush_slab_block(pool, hdrs, block_count);
+            block_count = 0;
+        }
+    }
+
+    if (block_count > 0) {
+        flush_slab_block(pool, hdrs, block_count);
     }
 }
 
