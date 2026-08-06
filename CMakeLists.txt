@@ -121,6 +121,17 @@ if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_COVERAGE}")
 endif()
 
+# Custom build types for sanitizers
+set(CMAKE_C_FLAGS_ASAN "-fsanitize=address -g -O0" CACHE STRING "Flags for ASan build" FORCE)
+set(CMAKE_CXX_FLAGS_ASAN "-fsanitize=address -g -O0" CACHE STRING "Flags for ASan build" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_ASAN "-fsanitize=address" CACHE STRING "Linker flags for ASan build" FORCE)
+set(CMAKE_C_FLAGS_TSAN "-fsanitize=thread -g -O0" CACHE STRING "Flags for TSan build" FORCE)
+set(CMAKE_CXX_FLAGS_TSAN "-fsanitize=thread -g -O0" CACHE STRING "Flags for TSan build" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_TSAN "-fsanitize=thread" CACHE STRING "Linker flags for TSan build" FORCE)
+set(CMAKE_C_FLAGS_UBSAN "-fsanitize=undefined -g -O0" CACHE STRING "Flags for UBSan build" FORCE)
+set(CMAKE_CXX_FLAGS_UBSAN "-fsanitize=undefined -g -O0" CACHE STRING "Flags for UBSan build" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_UBSAN "-fsanitize=undefined" CACHE STRING "Linker flags for UBSan build" FORCE)
+
 # 包含目录
 include_directories(include)
 
@@ -351,6 +362,13 @@ if(CMEM_ENABLE_DIAGNOSTICS)
     add_test(NAME CUnitTests COMMAND unit_tests)
     add_test(NAME CAdvancedUnitTests COMMAND advanced_tests)
     add_test(NAME CppUnitTests COMMAND cpp_tests)
+    if(CMAKE_BUILD_TYPE STREQUAL "ASan")
+        find_library(ASAN_LIB asan)
+        if(ASAN_LIB)
+            set_tests_properties(CUnitTests CAdvancedUnitTests CppUnitTests PROPERTIES
+                ENVIRONMENT "LD_PRELOAD=${ASAN_LIB}")
+        endif()
+    endif()
 endif()
 
 add_executable(benchmark benchmarks/bench_main.c)

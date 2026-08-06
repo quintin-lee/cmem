@@ -4,10 +4,6 @@
 CC = gcc
 CXX = g++
 LDFLAGS = -pthread -lrt
-CFLAGS = -Wall -Wextra -O3 -std=c11 -D_GNU_SOURCE -I./include
-CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -D_GNU_SOURCE -I./include
-CFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c11 -D_GNU_SOURCE -I./include
-CXXFLAGS_DEBUG = -fsanitize=address,undefined -Wall -Wextra -g -O0 -std=c++17 -I./include -D_GNU_SOURCE
 
 # 版本信息（从 VERSION 文件读取）
 VERSION := $(shell cat VERSION | tr -d '[:space:]')
@@ -16,33 +12,84 @@ SONAME = libcmem.so.$(VERSION)
 CORE_SONAME = libcmem_core.so.$(VERSION)
 DIAG_SONAME = libcmem_diag.so.$(VERSION)
 
+# 构建配置（通过 CONFIG 变量选择，默认 release）
+#   release -O3 性能测试
+#   debug   -O0 -g 日常调试
+#   asan    -fsanitize=address 内存错误
+#   tsan    -fsanitize=thread 并发错误
+#   ubsan   -fsanitize=undefined 未定义行为
+CONFIG ?= release
+
+ifeq ($(CONFIG),release)
+  CFLAGS = -Wall -Wextra -O3 -std=c11 -D_GNU_SOURCE -I./include
+  CXXFLAGS = -Wall -Wextra -O3 -std=c++17 -D_GNU_SOURCE -I./include
+  BUILD_DIR = build
+else ifeq ($(CONFIG),debug)
+  CFLAGS = -Wall -Wextra -O0 -g -std=c11 -D_GNU_SOURCE -I./include
+  CXXFLAGS = -Wall -Wextra -O0 -g -std=c++17 -D_GNU_SOURCE -I./include
+  BUILD_DIR = build-debug
+else ifeq ($(CONFIG),asan)
+  CFLAGS = -Wall -Wextra -fsanitize=address -g -O0 -std=c11 -D_GNU_SOURCE -I./include
+  CXXFLAGS = -Wall -Wextra -fsanitize=address -g -O0 -std=c++17 -D_GNU_SOURCE -I./include
+  BUILD_DIR = build-asan
+else ifeq ($(CONFIG),tsan)
+  CFLAGS = -Wall -Wextra -fsanitize=thread -g -O0 -std=c11 -D_GNU_SOURCE -I./include
+  CXXFLAGS = -Wall -Wextra -fsanitize=thread -g -O0 -std=c++17 -D_GNU_SOURCE -I./include
+  BUILD_DIR = build-tsan
+else ifeq ($(CONFIG),ubsan)
+  CFLAGS = -Wall -Wextra -fsanitize=undefined -g -O0 -std=c11 -D_GNU_SOURCE -I./include
+  CXXFLAGS = -Wall -Wextra -fsanitize=undefined -g -O0 -std=c++17 -D_GNU_SOURCE -I./include
+  BUILD_DIR = build-ubsan
+else
+  $(error Unknown CONFIG=$(CONFIG). Valid values: release, debug, asan, tsan, ubsan)
+endif
+
 SRC = $(wildcard src/*.c)
+OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 TEST_SRC = tests/test_main.c
 ADV_TEST_SRC = tests/test_advanced.c
 STRESS_SRC = tests/stress_test.c
 CPP_TEST_SRC = tests/test_cpp.cpp
 BENCH_SRC = benchmarks/bench_main.c
 
-BUILD_DIR = build
-OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 PREFIX = /usr/local
 LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
 # 默认目标
-.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean check-mermaid tools
+.PHONY: all lib test test_advanced test_all test_cpp bench examples clean install uninstall package distclean help format-check stress_test coverage bench-regression static-analysis docker-build fuzz-build fuzz-run fuzz-ci fuzz-clean check-mermaid tools debug asan tsan ubsan release
 
 all: format-check check-mermaid lib test test_advanced test_cpp bench examples tools
 
+debug:
+	$(MAKE) CONFIG=debug all
+
+asan:
+	$(MAKE) CONFIG=asan all
+
+tsan:
+	$(MAKE) CONFIG=tsan all
+
+ubsan:
+	$(MAKE) CONFIG=ubsan all
+
+release:
+	$(MAKE) CONFIG=release all
+
 help:
 	@echo "cmem Makefile Targets:"
-	@echo "  all          - Build library, run all tests, benchmarks, and examples"
+	@echo "  all          - Build library, run all tests, benchmarks, and examples (CONFIG=$(CONFIG))"
+	@echo "  debug        - Build and test with Debug configuration (-O0 -g)"
+	@echo "  asan         - Build and test with AddressSanitizer (-fsanitize=address)"
+	@echo "  tsan         - Build and test with ThreadSanitizer (-fsanitize=thread)"
+	@echo "  ubsan        - Build and test with UndefinedBehaviorSanitizer (-fsanitize=undefined)"
+	@echo "  release      - Build and test with Release configuration (-O3)"
 	@echo "  lib          - Build static library $(BUILD_DIR)/$(LIBNAME)"
 	@echo "  lib_shared   - Build shared library $(BUILD_DIR)/$(SONAME)"
-	@echo "  test         - Build and run C unit tests (with ASan/UBSan)"
-	@echo "  test_advanced- Build and run C advanced unit tests (with ASan/UBSan)"
+	@echo "  test         - Build and run C unit tests"
+	@echo "  test_advanced- Build and run C advanced unit tests"
 	@echo "  test_all     - Build and run all C tests"
-	@echo "  test_cpp     - Build and run C++17 PMR/STL tests (with ASan/UBSan)"
+	@echo "  test_cpp     - Build and run C++17 PMR/STL tests"
 	@echo "  bench        - Build and run performance benchmarks"
 	@echo "  bench-regression - Run performance regression baseline"
 	@echo "  stress_test  - Build and run long-run high-concurrency stress test"
@@ -59,8 +106,9 @@ help:
 	@echo "  distclean    - Remove build artifacts and generated files"
 	@echo ""
 	@echo "Variables:"
+	@echo "  CONFIG       - Build configuration (release, debug, asan, tsan, ubsan; default: release)"
 	@echo "  PREFIX       - Installation prefix (default: /usr/local)"
-	@echo "  BUILD_DIR    - Build directory (default: build)"
+	@echo "  BUILD_DIR    - Build directory (default: build-$(CONFIG))"
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -103,17 +151,17 @@ lib_shared: format-check | $(BUILD_DIR)
 	@echo "Built shared libraries: $(BUILD_DIR)/$(SONAME), $(BUILD_DIR)/$(CORE_SONAME), $(BUILD_DIR)/$(DIAG_SONAME)"
 
 ASAN_SO := $(shell find /usr/lib /usr/lib64 /usr/lib32 -name "libasan.so*" 2>/dev/null | head -n 1)
-RUN_ASAN = $(if $(ASAN_SO),LD_PRELOAD=$(ASAN_SO),)
+RUN_ASAN = $(if $(filter asan,$(CONFIG)),$(if $(ASAN_SO),LD_PRELOAD=$(ASAN_SO),),)
 
 # C 单元测试
 test: format-check $(SRC) $(TEST_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS_DEBUG) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests $(LDFLAGS)
+	$(CC) $(CFLAGS) $(SRC) $(TEST_SRC) -o $(BUILD_DIR)/unit_tests $(LDFLAGS)
 	@echo "Running C unit tests..."
 	$(RUN_ASAN) ./$(BUILD_DIR)/unit_tests
 
 # C 高级单元测试
 test_advanced: format-check $(SRC) $(ADV_TEST_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS_DEBUG) $(SRC) $(ADV_TEST_SRC) -o $(BUILD_DIR)/advanced_tests $(LDFLAGS)
+	$(CC) $(CFLAGS) $(SRC) $(ADV_TEST_SRC) -o $(BUILD_DIR)/advanced_tests $(LDFLAGS)
 	@echo "Running C advanced unit tests..."
 	$(RUN_ASAN) ./$(BUILD_DIR)/advanced_tests
 
@@ -129,10 +177,10 @@ test_all: test test_advanced
 # C++ 测试
 test_cpp: format-check $(SRC) $(CPP_TEST_SRC) | $(BUILD_DIR)
 	@set -e; for src in $(SRC); do \
-		$(CC) $(CFLAGS_DEBUG) -c $$src -o $(BUILD_DIR)/$$(basename $$src .c).o; \
+		$(CC) $(CFLAGS) -c $$src -o $(BUILD_DIR)/$$(basename $$src .c).o; \
 	done; \
-	$(CXX) $(CXXFLAGS_DEBUG) -c $(CPP_TEST_SRC) -o $(BUILD_DIR)/test_cpp.o; \
-	$(CXX) $(CXXFLAGS_DEBUG) $(addprefix $(BUILD_DIR)/,$(notdir $(patsubst %.c,%.o,$(SRC)))) $(BUILD_DIR)/test_cpp.o -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -c $(CPP_TEST_SRC) -o $(BUILD_DIR)/test_cpp.o; \
+	$(CXX) $(CXXFLAGS) $(addprefix $(BUILD_DIR)/,$(notdir $(patsubst %.c,%.o,$(SRC)))) $(BUILD_DIR)/test_cpp.o -o $(BUILD_DIR)/cpp_tests $(LDFLAGS)
 	@echo "Running C++ tests..."
 	$(RUN_ASAN) ./$(BUILD_DIR)/cpp_tests
 
@@ -158,7 +206,7 @@ examples: format-check $(SRC) | $(BUILD_DIR)
 tools: cmem-inspect cmem-analyze
 
 cmem-inspect: lib
-	$(CC) $(CFLAGS) -I./include -I./tools/common tools/cmem-inspect/cmem-inspect.c tools/common/cmem-diag-output.c -o $(BUILD_DIR)/cmem-inspect -L./build -lcmem -lpthread $(LDFLAGS)
+	$(CC) $(CFLAGS) -I./include -I./tools/common tools/cmem-inspect/cmem-inspect.c tools/common/cmem-diag-output.c -o $(BUILD_DIR)/cmem-inspect -L$(BUILD_DIR) -lcmem -lpthread $(LDFLAGS)
 
 cmem-analyze: tools/common/cmem-diag-output.c
 	$(CC) $(CFLAGS) -I./include -I./tools/common tools/cmem-analyze/cmem-analyze.c tools/cmem-analyze/cmem-analyze-parser.c tools/common/cmem-diag-output.c -o $(BUILD_DIR)/cmem-analyze -lpthread $(LDFLAGS)
@@ -288,7 +336,7 @@ docker-build:
 
 # 清理构建产物
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) build-debug build-asan build-tsan build-ubsan
 	rm -f leak_report.txt test_report.html memory_profile.html
 	rm -f snap_a.cmem_dump snap_b.cmem_dump test_snapshot.cmem_dump
 	rm -f test_report.html snapshot_diff.txt
