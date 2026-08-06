@@ -2258,6 +2258,139 @@ void *mp_alloc(memory_pool_t *pool, size_t size)
     return ptr;
 }
 
+/* Batch allocation chunk constants (powers of two for slab/clang-tidy). */
+enum {
+    CMEM_BATCH_SLAB_CHUNK = 64, /**< Slots pulled per slab_alloc_batch call */
+    CMEM_BATCH_ALIGN_MASK = 63  /**< Cache-line alignment mask (MP_FLAG_CACHE_ALIGNED) */
+};
+
+/**
+ * @brief Stamp a slab slot's block header and return its payload pointer.
+ */
+static void *
+batch_format_slab(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *slot, size_t req_size)
+{
+    mp_block_header_t *header = (mp_block_header_t *)slot;
+    header->alloc_type = ALLOC_TYPE_SLAB;
+    header->slab_class = class_idx;
+    header->flags = 0;
+    header->requested_size = req_size;
+    header->usable_size = pool->slab_classes[class_idx].slot_size;
+    header->raw_base = slot;
+    header->subpool = pool;
+    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+        header->magic = MP_MAGIC_HEAD;
+        header->alloc_file = NULL;
+        header->alloc_line = 0;
+        header->alloc_func = NULL;
+        header->backtrace_depth = 0;
+        header->prev = NULL;
+        header->next = NULL;
+    }
+
+    void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+        uint8_t *canary = (uint8_t *)payload + req_size;
+        *canary = MP_CANARY_BYTE;
+    }
+    if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
+        memset(payload, 0, req_size);
+    }
+    return payload;
+}
+
+/**
+ * @brief Stamp the single-use emergency buffer and return its payload.
+ */
+static void *batch_format_emergency(memory_pool_t *pool, size_t req_size)
+{
+    pool->emergency_used = true;
+    mp_block_header_t *header = (mp_block_header_t *)pool->emergency_buf;
+    header->alloc_type = ALLOC_TYPE_EMERGENCY;
+    header->slab_class = 0;
+    header->flags = 0;
+    header->requested_size = req_size;
+    header->usable_size = pool->emergency_size - sizeof(mp_block_header_t);
+    header->raw_base = pool->emergency_buf;
+    header->subpool = NULL;
+    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+        header->magic = MP_MAGIC_HEAD;
+        header->alloc_file = NULL;
+        header->alloc_line = 0;
+        header->alloc_func = NULL;
+        header->backtrace_depth = 0;
+        header->prev = NULL;
+        header->next = NULL;
+    }
+
+    void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+        uint8_t *canary = (uint8_t *)payload + req_size;
+        *canary = MP_CANARY_BYTE;
+    }
+    if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
+        memset(payload, 0, req_size);
+    }
+    return payload;
+}
+
+/**
+ * @brief Stamp an OS-tier block and accumulate its accounting deltas.
+ */
+static void *batch_format_os(memory_pool_t *pool,
+                             void *raw_mem,
+                             size_t req_size,
+                             size_t os_total,
+                             size_t *os_bytes,
+                             size_t *os_pool_total)
+{
+    mp_block_header_t *header = (mp_block_header_t *)raw_mem;
+    header->alloc_type = ALLOC_TYPE_OS;
+    header->slab_class = 0;
+    header->flags = 0;
+    header->requested_size = req_size;
+    header->usable_size = req_size;
+    header->raw_base = raw_mem;
+    header->subpool = pool;
+    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+        header->magic = MP_MAGIC_HEAD;
+        header->alloc_file = NULL;
+        header->alloc_line = 0;
+        header->alloc_func = NULL;
+        header->backtrace_depth = 0;
+    }
+
+    void *payload = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+        uint8_t *canary = (uint8_t *)payload + req_size;
+        *canary = MP_CANARY_BYTE;
+    }
+    if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
+        memset(payload, 0, req_size);
+    }
+    *os_bytes += req_size;
+    *os_pool_total += os_total;
+    return payload;
+}
+
+/**
+ * @brief Accrue the calling thread's quota toward the circuit breaker.
+ *
+ * Lock-free; the caller must set pool->circuit_breaker_tripped under
+ * pool_lock (or directly when already holding it, e.g. the TLSF loop).
+ *
+ * @return true when the quota crossed the trip threshold.
+ */
+static bool batch_breaker_accrue(memory_pool_t *pool, size_t user_size)
+{
+    if (!pool->circuit_breaker_enabled) {
+        return false;
+    }
+    thread_quota.alloc_bytes += user_size;
+    thread_quota.alloc_count++;
+    return pool->thread_quota_bytes > 0 && thread_quota.alloc_bytes >= pool->thread_quota_bytes;
+}
+
 /**
  * @brief Allocate a batch of same-sized entries into a caller array.
  * @param pool The memory pool.
@@ -2268,19 +2401,340 @@ void *mp_alloc(memory_pool_t *pool, size_t size)
  */
 size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t count)
 {
-    if (!pool || !out_ptrs || count == 0) {
+    if (!pool || !out_ptrs || count == 0 || size == 0) {
         return 0;
     }
-    size_t allocated = 0;
-    for (size_t i = 0; i < count; i++) {
-        out_ptrs[i] = mp_alloc(pool, size);
-        if (out_ptrs[i]) {
-            allocated++;
-        } else {
-            break;
+
+    /* Arena routing: delegate to the bound arena, exactly like mp_alloc. */
+    if (pool->num_arenas > 0) {
+        memory_pool_t *arena = mp_get_thread_bound_arena(pool);
+        if (arena && arena != pool) {
+            return mp_alloc_batch(arena, size, out_ptrs, count);
         }
     }
-    return allocated;
+
+    /* Entry checks on the resolved pool (mirror mp_alloc_internal). */
+    if (mp_is_pool_dirty(pool) && !pool->fallback_to_sys_alloc_on_oom) {
+        return 0;
+    }
+    if (pool->circuit_breaker_enabled && pool->circuit_breaker_tripped) {
+        return 0;
+    }
+
+    const bool aligned = (pool->flags & MP_FLAG_CACHE_ALIGNED) != 0;
+    const size_t canary_len = (pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0;
+    const size_t header_sz = sizeof(mp_block_header_t);
+    const size_t total_size = aligned ? size + 64 + header_sz + canary_len : size;
+    /* Per-element parity: the limit, active_bytes, histogram bucket and event
+     * sizes charge the internal request for aligned pools but the user size
+     * for non-aligned pools (mp_aligned_alloc passes total_size into
+     * mp_alloc_internal; plain mp_alloc passes user size). The circuit
+     * breaker always uses the user size. */
+    const size_t limit_charge = aligned ? total_size : size;
+
+    /* Memory-limit decision: single snapshot, per-element limit semantics.
+     * The limit lives on mp_stats_t (pool->stats.max_memory_limit), exactly
+     * as the per-element path reads it. */
+    size_t target = count;
+    size_t oom_fire_count = 0;           /* fallback: one OOM per exceeding element */
+    bool full_exceed_oom = false;        /* full-exceed, no emergency: 1 OOM, return 0 */
+    bool limit_breach_attempted = false; /* partial-fit: element k would exceed -> 1 OOM */
+    bool emergency_only = false;
+    bool do_emergency = false;
+
+    if (pool->stats.max_memory_limit > 0) {
+        size_t active = pool->stats.active_bytes;
+        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            pool_rdlock(pool);
+            active = pool->stats.active_bytes;
+            pool_rdunlock(pool);
+        }
+        if (active + limit_charge > pool->stats.max_memory_limit) {
+            /* Even one element does not fit. */
+            if (pool->fallback_to_sys_alloc_on_oom) {
+                oom_fire_count = count;
+            } else if (pool->emergency_buf && !pool->emergency_used &&
+                       total_size + header_sz + canary_len <= pool->emergency_size) {
+                emergency_only = true;
+            } else {
+                full_exceed_oom = true;
+            }
+        } else {
+            size_t k = (pool->stats.max_memory_limit - active) / limit_charge;
+            if (k < count) {
+                if (pool->fallback_to_sys_alloc_on_oom) {
+                    oom_fire_count = count - k;
+                    target = count;
+                } else if (pool->emergency_buf && !pool->emergency_used &&
+                           total_size + header_sz + canary_len <= pool->emergency_size) {
+                    target = k;
+                    do_emergency = true;
+                    limit_breach_attempted = true;
+                } else {
+                    target = k;
+                    limit_breach_attempted = true;
+                }
+            }
+        }
+    }
+
+    /* OOM events, in per-element order:
+     * - Fallback: one MP_EVENT_OOM per independently-exceeding element.
+     * - Full-exceed without emergency: one OOM, then return 0.
+     * - Emergency-only: OOM#1 for the limit-rejected element that consumes
+     *   the emergency buffer (OOM#2 for the follow-up rejected element fires
+     *   in the emergency block below, unless the breaker trips first). */
+    for (size_t i = 0; i < oom_fire_count; i++) {
+        trigger_event(pool, MP_EVENT_OOM, NULL, limit_charge);
+    }
+    if (full_exceed_oom) {
+        trigger_event(pool, MP_EVENT_OOM, NULL, limit_charge);
+        return 0;
+    }
+    if (emergency_only) {
+        trigger_event(pool, MP_EVENT_OOM, NULL, limit_charge);
+    }
+
+    size_t n = 0;
+    bool emergency_produced = false;
+    size_t emergency_index = 0;
+    bool breaker_tripped = false;
+
+    if (!emergency_only && (pool->flags & MP_FLAG_STATIC_BUFFER) == 0 &&
+        total_size <= SLAB_MAX_SIZE) {
+        tls_cache_validate_owner(pool);
+        uint8_t class_idx = get_slab_class_index(pool, total_size);
+
+        /* Phase A: drain the thread-local cache (lock-free). */
+        size_t avail = tls_cache.counts[class_idx];
+        size_t need = target - n;
+        if (avail > need) {
+            avail = need;
+        }
+        for (size_t i = 0; i < avail; i++) {
+            mp_slab_slot_t *slot = tls_cache.slots[class_idx];
+            tls_cache.slots[class_idx] = slot->next; /* read before stamping */
+            tls_cache.counts[class_idx]--;
+            out_ptrs[n] = batch_format_slab(pool, class_idx, slot, total_size);
+            n++;
+            if (batch_breaker_accrue(pool, size)) {
+                pool_lock(pool);
+                pool->circuit_breaker_tripped = true;
+                pool_unlock(pool);
+                breaker_tripped = true;
+                break;
+            }
+        }
+
+        /* Phase B: per-CPU freelist (lock-free). */
+        if (!breaker_tripped && n < target && pool->percpu_freelists) {
+            int cpu = percpu_cpu_index();
+            while (n < target) {
+                mp_slab_slot_t *slot = percpu_pop(pool, cpu, class_idx);
+                if (!slot) {
+                    percpu_refill(pool, cpu, class_idx);
+                    slot = percpu_pop(pool, cpu, class_idx);
+                    if (!slot) {
+                        break;
+                    }
+                }
+                out_ptrs[n] = batch_format_slab(pool, class_idx, slot, total_size);
+                n++;
+                if (batch_breaker_accrue(pool, size)) {
+                    pool_lock(pool);
+                    pool->circuit_breaker_tripped = true;
+                    pool_unlock(pool);
+                    breaker_tripped = true;
+                    break;
+                }
+            }
+        }
+
+        /* Phase C: bulk pop from the slab tier (one class lock per chunk).
+         * Cap each chunk by the remaining circuit-breaker budget so the
+         * breaker can never trip with already-popped-but-unstamped slots
+         * (slab_alloc_batch removes slots from the page free lists; the
+         * popped-but-unstamped remainder would be permanently lost). cap is
+         * ceil((threshold - accrued) / user_size) and INCLUDES the crossing
+         * element, matching per-element semantics. */
+        if (!breaker_tripped && n < target) {
+            mp_slab_slot_t *slots[CMEM_BATCH_SLAB_CHUNK];
+            while (n < target) {
+                size_t want = target - n;
+                if (want > CMEM_BATCH_SLAB_CHUNK) {
+                    want = CMEM_BATCH_SLAB_CHUNK;
+                }
+                if (pool->circuit_breaker_enabled && pool->thread_quota_bytes > 0) {
+                    size_t cap =
+                        (pool->thread_quota_bytes > thread_quota.alloc_bytes)
+                            ? (pool->thread_quota_bytes - thread_quota.alloc_bytes + size - 1) /
+                                  size
+                            : 0;
+                    if (cap == 0) {
+                        /* Already over quota (thread crossed on another pool):
+                         * still produce the single crossing element and trip
+                         * THIS pool, as per-element would (its entry check runs
+                         * on this pool's tripped flag, which is still false). */
+                        want = 1;
+                    } else if (want > cap) {
+                        want = cap;
+                    }
+                }
+                size_t got = slab_alloc_batch(pool, class_idx, slots, want);
+                if (got == 0) {
+                    break;
+                }
+                for (size_t i = 0; i < got; i++) {
+                    out_ptrs[n] = batch_format_slab(pool, class_idx, slots[i], total_size);
+                    n++;
+                    if (batch_breaker_accrue(pool, size)) {
+                        pool_lock(pool);
+                        pool->circuit_breaker_tripped = true;
+                        pool_unlock(pool);
+                        breaker_tripped = true;
+                        break;
+                    }
+                }
+                if (breaker_tripped) {
+                    break;
+                }
+            }
+        }
+    } else if (!emergency_only &&
+               (total_size <= TLSF_MAX_SIZE || (pool->flags & MP_FLAG_STATIC_BUFFER))) {
+        /* TLSF: one pool lock for the whole loop (tlsf_alloc does not lock). */
+        pool_lock(pool);
+        while (n < target && !breaker_tripped) {
+            void *ptr = tlsf_alloc(pool, total_size);
+            if (!ptr) {
+                break;
+            }
+            out_ptrs[n] = ptr;
+            n++;
+            if (batch_breaker_accrue(pool, size)) {
+                pool->circuit_breaker_tripped = true; /* lock already held */
+                breaker_tripped = true;
+            }
+        }
+        pool_unlock(pool);
+    } else if (!emergency_only) {
+        /* OS tier: lock-free loop, accounting accumulated after. */
+        size_t os_total = total_size + header_sz + canary_len;
+        size_t os_bytes = 0;
+        size_t os_pool_total = 0;
+        while (n < target) {
+            void *raw_mem = sys_mem_alloc(pool, os_total, 8);
+            if (!raw_mem) {
+                break;
+            }
+            out_ptrs[n] =
+                batch_format_os(pool, raw_mem, total_size, os_total, &os_bytes, &os_pool_total);
+            n++;
+            if (batch_breaker_accrue(pool, size)) {
+                pool_lock(pool);
+                pool->circuit_breaker_tripped = true;
+                pool_unlock(pool);
+                breaker_tripped = true;
+            }
+        }
+        pool->stats.os_allocated_bytes += os_bytes;
+        pool->stats.total_pool_size += os_pool_total;
+    }
+
+    /* Partial-fit OOM#1: element k would have been attempted and rejected by
+     * the limit. Fire it only when all k elements were actually produced AND
+     * the circuit breaker has not tripped — per-element: a tripped breaker
+     * rejects the next element at the entry check BEFORE the limit check, so
+     * no OOM fires; physical exhaustion before k (j < k) also fires none. */
+    if (limit_breach_attempted && n == target && !breaker_tripped) {
+        trigger_event(pool, MP_EVENT_OOM, NULL, limit_charge);
+    }
+
+    /* Emergency element: only when the limit path requested it, all target
+     * elements were produced (prefix semantics), and the breaker has not
+     * tripped. OOM#2 fires for the follow-up rejected element unless the
+     * breaker trips on the emergency accrual (per-element: the breaker entry
+     * check precedes the limit check, so a tripped breaker suppresses the
+     * follow-up OOM). */
+    if (!breaker_tripped && (emergency_only || (do_emergency && n == target))) {
+        out_ptrs[n] = batch_format_emergency(pool, total_size);
+        emergency_index = n;
+        n++;
+        emergency_produced = true;
+        if (batch_breaker_accrue(pool, size)) {
+            pool_lock(pool);
+            pool->circuit_breaker_tripped = true;
+            pool_unlock(pool);
+        } else {
+            trigger_event(pool, MP_EVENT_OOM, NULL, limit_charge);
+        }
+    }
+
+    /* Aggregated stats + active-list + cache-alignment relink, one lock. */
+    if (n > 0) {
+        pool_lock(pool);
+        for (size_t i = 0; i < n; i++) {
+            mp_block_header_t *orig_h = (mp_block_header_t *)((uint8_t *)out_ptrs[i] - header_sz);
+            if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                active_list_add(pool, orig_h);
+            }
+            if (aligned) {
+                uintptr_t raw_addr = (uintptr_t)out_ptrs[i];
+                uintptr_t aligned_addr = (raw_addr + header_sz + CMEM_BATCH_ALIGN_MASK) &
+                                         ~(uintptr_t)CMEM_BATCH_ALIGN_MASK;
+                mp_block_header_t *new_h = (mp_block_header_t *)(aligned_addr - header_sz);
+                if (new_h != orig_h) {
+                    *new_h = *orig_h;
+                    new_h->requested_size = size;
+                    if (orig_h->prev) {
+                        orig_h->prev->next = new_h;
+                    } else {
+                        pool->active_head = new_h;
+                    }
+                    if (orig_h->next) {
+                        orig_h->next->prev = new_h;
+                    }
+                } else {
+                    new_h->requested_size = size;
+                }
+                if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                    uint8_t *canary = (uint8_t *)aligned_addr + size;
+                    *canary = MP_CANARY_BYTE;
+                }
+                out_ptrs[i] = (void *)aligned_addr;
+            }
+        }
+        pool->stats.active_bytes += n * limit_charge;
+        if (pool->stats.active_bytes > pool->stats.peak_bytes) {
+            pool->stats.peak_bytes = pool->stats.active_bytes;
+        }
+        pool->stats.active_allocations += n;
+        pool->stats.total_alloc_ops += n;
+        size_t hist_count = n - (emergency_produced ? 1 : 0);
+        if (hist_count > 0) {
+            int bucket = get_slab_class_index(pool, limit_charge);
+            if (bucket < CMEM_HISTOGRAM_BUCKETS) {
+                pool->stats.size_histogram[bucket] += hist_count;
+            }
+        }
+        bool call_watermark = pool->watermark_cb != NULL;
+        pool_unlock(pool);
+
+        /* Post-unlock callbacks (never inside the lock: non-recursive rwlock). */
+        if (pool->event_cb) {
+            for (size_t i = 0; i < n; i++) {
+                if (emergency_produced && i == emergency_index) {
+                    continue;
+                }
+                trigger_event(pool, MP_EVENT_ALLOC, out_ptrs[i], limit_charge);
+            }
+        }
+        if (call_watermark) {
+            check_watermark_after_change(pool);
+        }
+    }
+
+    return n;
 }
 
 /**
