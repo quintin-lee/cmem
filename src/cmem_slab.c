@@ -113,7 +113,6 @@ void tls_cache_validate_owner(memory_pool_t *pool)
          * can bypass the master pool rwlock on subsequent calls. */
         if (pool->is_multi_arena_child && pool->master_pool) {
             tls_cache.bound_arena = pool;
-            tls_cache.owner_pool = pool->master_pool;
         } else {
             tls_cache.bound_arena = NULL;
         }

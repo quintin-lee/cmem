@@ -10,6 +10,8 @@ obj/
 *.so
 *.dylib
 
+.gdb_history
+
 # Memory pool report & profiler output artifacts
 leak_report.txt
 test_report.html

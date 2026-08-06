@@ -1168,18 +1168,22 @@ void test_cache_aligned_alloc()
 void test_guard_pages_protection()
 {
     printf("\n--- Test 13: Page-Level Guard Pages Protection via PROT_NONE ---\n");
+    printf("  [DEBUG] step 1: mp_create\n");
     memory_pool_t *pool = mp_create(0, MP_FLAG_GUARD_PAGES);
     assert(pool != NULL);
-
+    printf("  [DEBUG] step 2: mp_alloc\n");
     void *p1 = mp_alloc(pool, 8192);
     assert(p1 != NULL);
-
+    printf("  [DEBUG] step 3: memset\n");
     memset(p1, 0xAB, 8192);
     printf("  Guard Pages memory payload read/write verified successfully!\n");
-
+    printf("  [DEBUG] step 4: mp_free\n");
     mp_free(pool, p1);
+    printf("  [DEBUG] step 5: mp_check_leaks\n");
     assert(mp_check_leaks(pool) == true);
+    printf("  [DEBUG] step 6: mp_destroy\n");
     mp_destroy(pool);
+    printf("  [DEBUG] step 7: TEST_PASS\n");
     TEST_PASS("test_guard_pages_protection");
 }
 
@@ -2245,8 +2249,12 @@ int main()
     test_realtime_throughput_meter();
     test_realloc_and_aligned();
     test_cache_aligned_alloc();
+    printf(">>> ABOUT TO RUN test_guard_pages_protection\n");
     test_guard_pages_protection();
+    printf("<<< test_guard_pages_protection DONE\n");
+    printf(">>> ABOUT TO RUN test_allocation_histogram\n");
     test_allocation_histogram();
+    printf("<<< test_allocation_histogram DONE\n");
     test_batch_alloc_and_compact();
     test_batch_alloc_tiers();
     test_batch_alloc_configs();
