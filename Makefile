@@ -167,7 +167,7 @@ test_advanced: format-check $(SRC) $(ADV_TEST_SRC) | $(BUILD_DIR)
 
 # 长时间高并发压测
 stress_test: format-check $(SRC) $(STRESS_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(SRC) $(STRESS_SRC) -o $(BUILD_DIR)/stress_test $(LDFLAGS)
+	$(CC) $(CFLAGS) $(STRESS_DEFINES) $(SRC) $(STRESS_SRC) -o $(BUILD_DIR)/stress_test $(LDFLAGS)
 	@echo "Running long-run stress test..."
 	./$(BUILD_DIR)/stress_test
 

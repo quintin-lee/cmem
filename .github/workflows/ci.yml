@@ -40,7 +40,7 @@ jobs:
           make CONFIG=$CONFIG test_cpp
           make CONFIG=$CONFIG bench
           make CONFIG=$CONFIG examples
-          timeout 30 make CONFIG=debug stress_test STRESS_DURATION_SEC=10 CFLAGS+="-DSTRESS_DURATION_SEC=10"
+          timeout 30 make CONFIG=debug stress_test STRESS_DEFINES=-DSTRESS_DURATION_SEC=10
 
       - name: Configure CMake Build
         env:
