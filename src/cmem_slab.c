@@ -164,6 +164,7 @@ bool slab_init(memory_pool_t *pool)
         pool->slab_classes[i].empty_page_count = 0;
         pool->slab_classes[i].max_empty_pages = 2;
         CMEM_ATOMIC_INIT(&pool->remote_free_queue[i], 0);
+        CMEM_ATOMIC_INIT(&pool->remote_free_pending, 0);
     }
     return true;
 }
@@ -179,6 +180,8 @@ void remote_free_push(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *sl
         slot->next = (mp_slab_slot_t *)(uintptr_t)old_head;
     } while (!CMEM_ATOMIC_COMPARE_EXCHANGE(
         headp, &old_head, (size_t)(uintptr_t)slot, CMEM_ORDER_RELEASE, CMEM_ORDER_RELAXED));
+    /* Signal that there is pending remote free work. */
+    CMEM_ATOMIC_STORE(&pool->remote_free_pending, 1, CMEM_ORDER_RELEASE);
 }
 
 void remote_free_harvest_all(memory_pool_t *pool)
@@ -186,6 +189,13 @@ void remote_free_harvest_all(memory_pool_t *pool)
     if (!pool) {
         return;
     }
+    /* Fast path: skip harvest when no remote frees are pending. */
+    if (CMEM_ATOMIC_LOAD(&pool->remote_free_pending, CMEM_ORDER_RELAXED) == 0) {
+        return;
+    }
+    /* Atomically clear the pending flag before harvesting.
+     * If new remote frees arrive during harvest, they will set it again. */
+    CMEM_ATOMIC_STORE(&pool->remote_free_pending, 0, CMEM_ORDER_RELEASE);
     for (uint8_t i = 0; i < SLAB_CLASS_COUNT; i++) {
         /* Must hold the class lock: slab_free_nolock mutates page state
          * (free_list, free_count, page lists) which percpu_refill and other

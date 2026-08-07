@@ -138,6 +138,7 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
 
     tlsf_pool_t *tpool = (tlsf_pool_t *)raw_mem;
     memset(tpool, 0, sizeof(tlsf_pool_t));
+    pthread_mutex_init(&tpool->lock, NULL);
     tpool->raw_area = (void *)((uint8_t *)raw_mem + sizeof(tlsf_pool_t));
     tpool->raw_size = size;
     tpool->owner_pool = pool;
@@ -285,27 +286,55 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
     }
 
     tlsf_pool_t *tpool = pool->tlsf_root;
+
+    /* Create the initial pool if needed (under pool_lock). */
     if (!tpool) {
         size_t init_sz = 4 * 1024 * 1024;
+        pool_lock(pool);
         pool->tlsf_root = tlsf_create_pool_custom(pool, init_sz, NULL);
         if (!pool->tlsf_root) {
+            pool_unlock(pool);
             return NULL;
         }
         tpool = pool->tlsf_root;
         pool->stats.total_pool_size += init_sz + sizeof(tlsf_pool_t);
+        pool_unlock(pool);
     }
 
     tlsf_block_t *block = NULL;
     tlsf_pool_t *target_pool = tpool;
 
+    /* Walk the pool chain, trying per-pool locks for fine-grained concurrency. */
     while (target_pool) {
+        pthread_mutex_lock(&target_pool->lock);
         block = tlsf_find_suitable_block(target_pool, total_needed);
         if (block) {
+            tlsf_remove_free_block(target_pool, block);
+            size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
+            size_t remaining = current_size - total_needed;
+            if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
+                block->size_and_flags =
+                    total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
+                tlsf_block_t *split_block = (tlsf_block_t *)((uint8_t *)block + total_needed);
+                split_block->size_and_flags = remaining | BLOCK_STATE_FREE;
+                split_block->prev_physical = block;
+                tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)split_block + remaining);
+                next_phys->prev_physical = split_block;
+                next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
+                tlsf_insert_free_block(target_pool, split_block);
+            } else {
+                block->size_and_flags &= ~BLOCK_STATE_FREE;
+                tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + current_size);
+                next_phys->size_and_flags &= ~BLOCK_STATE_PREV_FREE;
+            }
+            tpool = target_pool;
             break;
         }
+        pthread_mutex_unlock(&target_pool->lock);
         target_pool = target_pool->next;
     }
 
+    /* Expand if no suitable block was found. */
     if (!block) {
         if (pool->flags & MP_FLAG_STATIC_BUFFER) {
             return NULL;
@@ -316,43 +345,39 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         if (!new_p) {
             return NULL;
         }
+        pool_lock(pool);
         new_p->next = pool->tlsf_root;
         pool->tlsf_root = new_p;
-        target_pool = new_p;
         pool->stats.total_pool_size += expand_sz + sizeof(tlsf_pool_t);
+        pool_unlock(pool);
 
-        block = tlsf_find_suitable_block(target_pool, total_needed);
+        pthread_mutex_lock(&new_p->lock);
+        block = tlsf_find_suitable_block(new_p, total_needed);
         if (!block) {
+            pthread_mutex_unlock(&new_p->lock);
             return NULL;
         }
+        tlsf_remove_free_block(new_p, block);
+        size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
+        size_t remaining = current_size - total_needed;
+        if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
+            block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
+            tlsf_block_t *split_block = (tlsf_block_t *)((uint8_t *)block + total_needed);
+            split_block->size_and_flags = remaining | BLOCK_STATE_FREE;
+            split_block->prev_physical = block;
+            tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)split_block + remaining);
+            next_phys->prev_physical = split_block;
+            next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
+            tlsf_insert_free_block(new_p, split_block);
+        } else {
+            block->size_and_flags &= ~BLOCK_STATE_FREE;
+            tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + current_size);
+            next_phys->size_and_flags &= ~BLOCK_STATE_PREV_FREE;
+        }
+        tpool = new_p;
     }
 
-    tpool = target_pool;
-    tlsf_remove_free_block(tpool, block);
-
-    size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
-    size_t remaining = current_size - total_needed;
-
-    /* Split off a fresh free block when the remainder is worth keeping. */
-    if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
-        block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
-
-        tlsf_block_t *split_block = (tlsf_block_t *)((uint8_t *)block + total_needed);
-        split_block->size_and_flags = remaining | BLOCK_STATE_FREE;
-        split_block->prev_physical = block;
-
-        tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)split_block + remaining);
-        next_phys->prev_physical = split_block;
-        next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
-
-        tlsf_insert_free_block(tpool, split_block);
-    } else {
-        block->size_and_flags &= ~BLOCK_STATE_FREE;
-        tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + current_size);
-        next_phys->size_and_flags &= ~BLOCK_STATE_PREV_FREE;
-    }
-
-    /* Stamp the cmem metadata header that cmem.c relies on. */
+    /* Stamp the cmem metadata header. */
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)block + sizeof(tlsf_block_t));
     header->magic = MP_MAGIC_HEAD;
     header->alloc_type = ALLOC_TYPE_TLSF;
@@ -373,12 +398,12 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         uint8_t *canary = (uint8_t *)payload + req_size;
         *canary = MP_CANARY_BYTE;
     }
-
     if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
         memset(payload, 0, req_size);
     }
 
-    pool->stats.tlsf_allocated_bytes += header->usable_size;
+    __atomic_fetch_add(&pool->stats.tlsf_allocated_bytes, header->usable_size, __ATOMIC_RELAXED);
+    pthread_mutex_unlock(&tpool->lock);
     return payload;
 }
 
@@ -398,7 +423,9 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
     tlsf_pool_t *tpool = (tlsf_pool_t *)header->subpool;
 
-    pool->stats.tlsf_allocated_bytes -= header->usable_size;
+    pthread_mutex_lock(&tpool->lock);
+
+    __atomic_fetch_sub(&pool->stats.tlsf_allocated_bytes, header->usable_size, __ATOMIC_RELAXED);
 
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     block->size_and_flags |= BLOCK_STATE_FREE;
@@ -435,6 +462,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
 
     tlsf_insert_free_block(tpool, block);
+    pthread_mutex_unlock(&tpool->lock);
 }
 
 /**
@@ -507,7 +535,8 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
 
     size_t new_usable = (block->size_and_flags & BLOCK_SIZE_MASK) - sizeof(tlsf_block_t) -
                         sizeof(mp_block_header_t);
-    pool->stats.tlsf_allocated_bytes += (new_usable - header->usable_size);
+    __atomic_fetch_add(
+        &pool->stats.tlsf_allocated_bytes, (new_usable - header->usable_size), __ATOMIC_RELAXED);
     header->requested_size = new_size;
     header->usable_size = new_usable;
 

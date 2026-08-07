@@ -1498,6 +1498,7 @@ void mp_destroy(memory_pool_t *pool)
         tlsf_pool_t *tcurr = pool->tlsf_root;
         while (tcurr) {
             tlsf_pool_t *tnext = tcurr->next;
+            pthread_mutex_destroy(&tcurr->lock);
             sys_mem_free(pool, tcurr, tcurr->raw_size + sizeof(tlsf_pool_t));
             tcurr = tnext;
         }
@@ -2116,9 +2117,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
          * pool lock for lock-free allocation. */
         tls_cache_validate_owner(pool);
         if ((pool->flags & MP_FLAG_THREAD_SAFE) && !pool->is_multi_arena_child) {
-            pool_lock(pool);
             ptr = tlsf_alloc(pool, size);
-            pool_unlock(pool);
         } else {
             ptr = tlsf_alloc(pool, size);
         }
@@ -2606,8 +2605,6 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
          * pool lock for lock-free allocation. */
         tls_cache_validate_owner(pool);
         if ((pool->flags & MP_FLAG_THREAD_SAFE) && !pool->is_multi_arena_child) {
-            /* TLSF: one pool lock for the whole loop (tlsf_alloc does not lock). */
-            pool_lock(pool);
             while (produced < target && !breaker_tripped) {
                 void *ptr = tlsf_alloc(pool, total_size);
                 if (!ptr) {
@@ -2616,11 +2613,12 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
                 out_ptrs[produced] = ptr;
                 produced++;
                 if (batch_breaker_accrue(pool, size)) {
-                    pool->circuit_breaker_tripped = true; /* lock already held */
+                    pool_lock(pool);
+                    pool->circuit_breaker_tripped = true;
+                    pool_unlock(pool);
                     breaker_tripped = true;
                 }
             }
-            pool_unlock(pool);
         } else {
             /* Lock-free path: bound arena child or non-THREAD_SAFE pool. */
             while (produced < target && !breaker_tripped) {
@@ -3059,8 +3057,8 @@ void mp_free(memory_pool_t *pool, void *ptr)
         pool_unlock(pool);
         slab_free(pool, header);
     } else if (alloc_type == ALLOC_TYPE_TLSF) {
-        tlsf_free(pool, header);
         pool_unlock(pool);
+        tlsf_free(pool, header);
     } else if (alloc_type == ALLOC_TYPE_OS) {
         pool_unlock(pool);
         sys_mem_free(pool, raw_base, req_size);
