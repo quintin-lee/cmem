@@ -2053,7 +2053,11 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
     if ((pool->flags & MP_FLAG_STATIC_BUFFER) == 0 && size <= SLAB_MAX_SIZE) {
         tls_cache_validate_owner(pool);
-        remote_free_harvest_all(pool);
+        /* remote-free queues are per-thread-safe-pool only; skip harvest
+         * when there is no concurrent producer of remote-free slots. */
+        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+            remote_free_harvest_all(pool);
+        }
         uint8_t class_idx = get_slab_class_index(pool, size);
         mp_slab_slot_t *slot = NULL;
 
@@ -2108,7 +2112,10 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             }
         }
     } else if (size <= TLSF_MAX_SIZE || (pool->flags & MP_FLAG_STATIC_BUFFER)) {
-        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        /* Multi-arena child pools have a thread-private tlsf_root; skip the
+         * pool lock for lock-free allocation. */
+        tls_cache_validate_owner(pool);
+        if ((pool->flags & MP_FLAG_THREAD_SAFE) && !pool->is_multi_arena_child) {
             pool_lock(pool);
             ptr = tlsf_alloc(pool, size);
             pool_unlock(pool);
@@ -2595,21 +2602,42 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
         }
     } else if (!emergency_only &&
                (total_size <= TLSF_MAX_SIZE || (pool->flags & MP_FLAG_STATIC_BUFFER))) {
-        /* TLSF: one pool lock for the whole loop (tlsf_alloc does not lock). */
-        pool_lock(pool);
-        while (produced < target && !breaker_tripped) {
-            void *ptr = tlsf_alloc(pool, total_size);
-            if (!ptr) {
-                break;
+        /* Multi-arena child pools have a thread-private tlsf_root; skip the
+         * pool lock for lock-free allocation. */
+        tls_cache_validate_owner(pool);
+        if ((pool->flags & MP_FLAG_THREAD_SAFE) && !pool->is_multi_arena_child) {
+            /* TLSF: one pool lock for the whole loop (tlsf_alloc does not lock). */
+            pool_lock(pool);
+            while (produced < target && !breaker_tripped) {
+                void *ptr = tlsf_alloc(pool, total_size);
+                if (!ptr) {
+                    break;
+                }
+                out_ptrs[produced] = ptr;
+                produced++;
+                if (batch_breaker_accrue(pool, size)) {
+                    pool->circuit_breaker_tripped = true; /* lock already held */
+                    breaker_tripped = true;
+                }
             }
-            out_ptrs[produced] = ptr;
-            produced++;
-            if (batch_breaker_accrue(pool, size)) {
-                pool->circuit_breaker_tripped = true; /* lock already held */
-                breaker_tripped = true;
+            pool_unlock(pool);
+        } else {
+            /* Lock-free path: bound arena child or non-THREAD_SAFE pool. */
+            while (produced < target && !breaker_tripped) {
+                void *ptr = tlsf_alloc(pool, total_size);
+                if (!ptr) {
+                    break;
+                }
+                out_ptrs[produced] = ptr;
+                produced++;
+                if (batch_breaker_accrue(pool, size)) {
+                    pool_lock(pool);
+                    pool->circuit_breaker_tripped = true;
+                    pool_unlock(pool);
+                    breaker_tripped = true;
+                }
             }
         }
-        pool_unlock(pool);
     } else if (!emergency_only) {
         /* OS tier: lock-free loop, accounting accumulated after. */
         size_t os_total = total_size + header_sz + canary_len;
