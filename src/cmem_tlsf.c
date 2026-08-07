@@ -425,9 +425,10 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
     tlsf_pool_t *tpool = (tlsf_pool_t *)header->subpool;
 
-    pthread_mutex_lock(&tpool->lock);
-
+    /* Update stats atomically outside the lock to reduce hold time. */
     CMEM_ATOMIC_FETCH_SUB(&pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
+
+    pthread_mutex_lock(&tpool->lock);
 
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     block->size_and_flags |= BLOCK_STATE_FREE;
