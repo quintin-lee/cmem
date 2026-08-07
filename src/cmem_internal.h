@@ -351,8 +351,10 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
 
     mp_slab_class_t slab_classes[SLAB_CLASS_COUNT]; /**< One class per size bucket     */
     cmem_atomic_size_t
-        remote_free_queue[SLAB_CLASS_COUNT];    /**< Lock-free cross-thread remote free queues */
+        remote_free_queue[SLAB_CLASS_COUNT];      /**< Lock-free cross-thread remote free queues   */
     cmem_atomic_size_t remote_free_pending;      /**< Non-zero when any remote-free queue has entries */
+    cmem_atomic_size_t
+        remote_free_pending_class[SLAB_CLASS_COUNT]; /**< Per-class pending flag for fast skip    */
     bool use_custom_slab_sizes;                 /**< Custom class table in effect */
     size_t custom_slab_sizes[SLAB_CLASS_COUNT]; /**< Custom class sizes        */
 
