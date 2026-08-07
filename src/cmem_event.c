@@ -1941,6 +1941,24 @@ static void mp_free_stats_update(memory_pool_t *pool, mp_block_header_t *header)
 }
 
 /**
+ * @brief Lock-free stats update for the free path.
+ *
+ * Updates active_bytes / active_allocations / total_free_ops atomically
+ * without touching the active-list (which requires the pool lock).
+ * Callers must invoke active_list_remove under the pool lock themselves
+ * when MP_FLAG_THREAD_SAFE is set and the pool is not FAST_PATH.
+ * @param pool   The memory pool.
+ * @param header Block header being freed.
+ */
+static void mp_free_stats_no_lock(memory_pool_t *pool, mp_block_header_t *header)
+{
+    (void)pool;
+    CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
+}
+
+/**
  * @brief Allocate with caller source-location attribution.
  * Records file/line/function and, when tracking is on, a backtrace before
  * delegating to the size-class dispatcher.
@@ -2983,9 +3001,13 @@ void mp_free(memory_pool_t *pool, void *ptr)
                 CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
                 CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
             } else {
-                pool_lock(pool);
-                mp_free_stats_update(pool, header);
-                pool_unlock(pool);
+                /* Update atomics lock-free; lock only for active-list mutation. */
+                mp_free_stats_no_lock(pool, header);
+                if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                    pool_lock(pool);
+                    active_list_remove(pool, header);
+                    pool_unlock(pool);
+                }
             }
             if (pool->event_cb) {
                 trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
@@ -3005,9 +3027,14 @@ void mp_free(memory_pool_t *pool, void *ptr)
                 if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
                     mp_free_stats_update(pool, header);
                 } else {
-                    pool_lock(pool);
-                    mp_free_stats_update(pool, header);
-                    pool_unlock(pool);
+                    /* percpu_push is lock-free; update atomics first, then
+                     * lock only for active-list removal. */
+                    mp_free_stats_no_lock(pool, header);
+                    if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                        pool_lock(pool);
+                        active_list_remove(pool, header);
+                        pool_unlock(pool);
+                    }
                 }
                 if (pool->event_cb) {
                     trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
@@ -3017,9 +3044,14 @@ void mp_free(memory_pool_t *pool, void *ptr)
         }
 
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
-            pool_lock(pool);
-            mp_free_stats_update(pool, header);
-            pool_unlock(pool);
+            /* remote_free_push is lock-free (CAS on atomic head).
+             * Update atomics lock-free; lock only for active-list removal. */
+            mp_free_stats_no_lock(pool, header);
+            if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                pool_lock(pool);
+                active_list_remove(pool, header);
+                pool_unlock(pool);
+            }
             if (pool->event_cb) {
                 trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
             }
