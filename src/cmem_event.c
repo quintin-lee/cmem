@@ -3102,17 +3102,13 @@ void mp_free(memory_pool_t *pool, void *ptr)
     }
 
     if (alloc_type == ALLOC_TYPE_SLAB) {
-        pool_unlock(pool);
         slab_free(pool, header);
     } else if (alloc_type == ALLOC_TYPE_TLSF) {
-        pool_unlock(pool);
         tlsf_free(pool, header);
     } else if (alloc_type == ALLOC_TYPE_OS) {
-        pool_unlock(pool);
         sys_mem_free(pool, raw_base, req_size);
     } else if (alloc_type == ALLOC_TYPE_EMERGENCY) {
         pool->emergency_used = false;
-        pool_unlock(pool);
     }
 
     if (call_watermark) {
