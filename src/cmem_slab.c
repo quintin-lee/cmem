@@ -332,7 +332,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
         }
     }
 
-    pool->stats.total_pool_size += SLAB_PAGE_SIZE;
+    CMEM_ATOMIC_FETCH_ADD(&pool->total_pool_size, SLAB_PAGE_SIZE, CMEM_ORDER_RELAXED);
     return page;
 }
 
@@ -409,7 +409,7 @@ mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx)
         sc->full_pages = page;
     }
 
-    pool->stats.slab_allocated_bytes += sc->slot_size;
+    CMEM_ATOMIC_FETCH_ADD(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
@@ -496,10 +496,10 @@ void slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
     page->free_list = slot;
     page->free_count++;
 
-    if (pool->stats.slab_allocated_bytes >= sc->slot_size) {
-        pool->stats.slab_allocated_bytes -= sc->slot_size;
+    if (CMEM_ATOMIC_LOAD(&pool->slab_allocated_bytes, CMEM_ORDER_RELAXED) >= sc->slot_size) {
+        CMEM_ATOMIC_FETCH_SUB(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
     } else {
-        pool->stats.slab_allocated_bytes = 0;
+        CMEM_ATOMIC_STORE(&pool->slab_allocated_bytes, 0, CMEM_ORDER_RELAXED);
     }
 
     if (was_full) {
@@ -647,7 +647,8 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
         got++;
     }
 
-    pool->stats.slab_allocated_bytes += (size_t)got * sc->slot_size;
+    CMEM_ATOMIC_FETCH_ADD(
+        &pool->slab_allocated_bytes, (size_t)got * sc->slot_size, CMEM_ORDER_RELAXED);
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
@@ -744,7 +745,8 @@ mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_id
         got++;
     }
 
-    pool->stats.slab_allocated_bytes += (size_t)got * sc->slot_size;
+    CMEM_ATOMIC_FETCH_ADD(
+        &pool->slab_allocated_bytes, (size_t)got * sc->slot_size, CMEM_ORDER_RELAXED);
 
     /* Phase 2: Pop from TLS cache */
     mp_slab_slot_t *slot = NULL;
@@ -796,7 +798,7 @@ mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_id
                 sc->full_pages = page;
             }
 
-            pool->stats.slab_allocated_bytes += sc->slot_size;
+            CMEM_ATOMIC_FETCH_ADD(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
         }
     }
 
@@ -871,7 +873,8 @@ size_t slab_alloc_batch(memory_pool_t *pool,
         produced++;
     }
 
-    pool->stats.slab_allocated_bytes += produced * sc->slot_size;
+    CMEM_ATOMIC_FETCH_ADD(
+        &pool->slab_allocated_bytes, produced * sc->slot_size, CMEM_ORDER_RELAXED);
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
@@ -1102,7 +1105,8 @@ void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
         slots[got++] = slot;
     }
 
-    pool->stats.slab_allocated_bytes += (size_t)got * sc->slot_size;
+    CMEM_ATOMIC_FETCH_ADD(
+        &pool->slab_allocated_bytes, (size_t)got * sc->slot_size, CMEM_ORDER_RELAXED);
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);

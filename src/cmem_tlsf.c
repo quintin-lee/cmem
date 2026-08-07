@@ -297,7 +297,8 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             return NULL;
         }
         tpool = pool->tlsf_root;
-        pool->stats.total_pool_size += init_sz + sizeof(tlsf_pool_t);
+        CMEM_ATOMIC_FETCH_ADD(
+            &pool->total_pool_size, init_sz + sizeof(tlsf_pool_t), CMEM_ORDER_RELAXED);
         pool_unlock(pool);
     }
 
@@ -348,7 +349,8 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         pool_lock(pool);
         new_p->next = pool->tlsf_root;
         pool->tlsf_root = new_p;
-        pool->stats.total_pool_size += expand_sz + sizeof(tlsf_pool_t);
+        CMEM_ATOMIC_FETCH_ADD(
+            &pool->total_pool_size, expand_sz + sizeof(tlsf_pool_t), CMEM_ORDER_RELAXED);
         pool_unlock(pool);
 
         pthread_mutex_lock(&new_p->lock);
@@ -402,7 +404,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         memset(payload, 0, req_size);
     }
 
-    __atomic_fetch_add(&pool->stats.tlsf_allocated_bytes, header->usable_size, __ATOMIC_RELAXED);
+    CMEM_ATOMIC_FETCH_ADD(&pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
     pthread_mutex_unlock(&tpool->lock);
     return payload;
 }
@@ -425,7 +427,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
 
     pthread_mutex_lock(&tpool->lock);
 
-    __atomic_fetch_sub(&pool->stats.tlsf_allocated_bytes, header->usable_size, __ATOMIC_RELAXED);
+    CMEM_ATOMIC_FETCH_SUB(&pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
 
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     block->size_and_flags |= BLOCK_STATE_FREE;
@@ -535,8 +537,8 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
 
     size_t new_usable = (block->size_and_flags & BLOCK_SIZE_MASK) - sizeof(tlsf_block_t) -
                         sizeof(mp_block_header_t);
-    __atomic_fetch_add(
-        &pool->stats.tlsf_allocated_bytes, (new_usable - header->usable_size), __ATOMIC_RELAXED);
+    CMEM_ATOMIC_FETCH_ADD(
+        &pool->tlsf_allocated_bytes, (new_usable - header->usable_size), CMEM_ORDER_RELAXED);
     header->requested_size = new_size;
     header->usable_size = new_usable;
 

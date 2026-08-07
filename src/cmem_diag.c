@@ -126,13 +126,15 @@ size_t mp_analyze_leaks(memory_pool_t *pool, char *report_buf, size_t max_len)
                  "  Active Leaked Allocations  : %zu blocks\n"
                  "  Total Leaked Payload Bytes : %zu bytes (%.2f KB)\n"
                  "============================================================================\n",
-                 pool->stats.total_pool_size,
-                 (double)pool->stats.total_pool_size / CMEM_BYTES_PER_KIB,
-                 pool->stats.active_allocations,
-                 pool->stats.active_bytes,
-                 (double)pool->stats.active_bytes / CMEM_BYTES_PER_KIB);
+                 (size_t)CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED),
+                 (double)(size_t)CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED) /
+                     CMEM_BYTES_PER_KIB,
+                 (size_t)CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED),
+                 (size_t)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
+                 (double)(size_t)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) /
+                     CMEM_BYTES_PER_KIB);
 
-    if (pool->stats.active_allocations == 0) {
+    if ((size_t)CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED) == 0) {
         offset += snprintf(report_buf + offset,
                            max_len - offset,
                            "  No memory leaks detected! Clean execution.\n");
@@ -420,10 +422,11 @@ bool mp_export_binary_snapshot(memory_pool_t *pool, const char *filepath)
 
     hdr.magic = CMEM_SNAPSHOT_MAGIC;
     hdr.version = 1;
-    hdr.total_pool_size = (uint64_t)pool->stats.total_pool_size;
-    hdr.active_bytes = (uint64_t)pool->stats.active_bytes;
+    hdr.total_pool_size = (uint64_t)CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED);
+    hdr.active_bytes = (uint64_t)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED);
 
-    hdr.active_allocations = (uint64_t)pool->stats.active_allocations;
+    hdr.active_allocations =
+        (uint64_t)CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED);
 
     (void)fwrite(&hdr, sizeof(hdr), 1, fp);
 
@@ -539,8 +542,22 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
     }
     pool_rdlock(pool);
     *stats = pool->stats;
-    size_t total_sys = pool->stats.total_pool_size > 0 ? pool->stats.total_pool_size : 1;
-    stats->fragmentation_ratio = 1.0 - ((double)pool->stats.active_bytes / (double)total_sys);
+    stats->active_bytes = (size_t)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED);
+    stats->active_allocations =
+        (size_t)CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED);
+    stats->total_alloc_ops = (size_t)CMEM_ATOMIC_LOAD(&pool->total_alloc_ops, CMEM_ORDER_RELAXED);
+    stats->total_free_ops = (size_t)CMEM_ATOMIC_LOAD(&pool->total_free_ops, CMEM_ORDER_RELAXED);
+    stats->peak_bytes = (size_t)CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED);
+    stats->total_pool_size = (size_t)CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED);
+    stats->slab_allocated_bytes =
+        (size_t)CMEM_ATOMIC_LOAD(&pool->slab_allocated_bytes, CMEM_ORDER_RELAXED);
+    stats->tlsf_allocated_bytes =
+        (size_t)CMEM_ATOMIC_LOAD(&pool->tlsf_allocated_bytes, CMEM_ORDER_RELAXED);
+    stats->os_allocated_bytes =
+        (size_t)CMEM_ATOMIC_LOAD(&pool->os_allocated_bytes, CMEM_ORDER_RELAXED);
+
+    size_t total_sys = stats->total_pool_size > 0 ? stats->total_pool_size : 1;
+    stats->fragmentation_ratio = 1.0 - ((double)stats->active_bytes / (double)total_sys);
 
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -550,8 +567,8 @@ void mp_get_stats(memory_pool_t *pool, mp_stats_t *stats)
 
     double elapsed = (double)(now.tv_sec - pool->window_start_time.tv_sec) +
                      (double)(now.tv_nsec - pool->window_start_time.tv_nsec) / CMEM_NSEC_PER_SEC;
-    size_t ops = pool->stats.total_alloc_ops;
-    size_t active = pool->stats.active_bytes;
+    size_t ops = stats->total_alloc_ops;
+    size_t active = stats->active_bytes;
     if (elapsed > CMEM_MIN_ELAPSED_SEC && ops > 0) {
         stats->alloc_qps = (double)ops / elapsed;
         stats->bandwidth_mbps =
@@ -689,8 +706,8 @@ void print_arena_node(memory_pool_t *pool, int indent)
     }
     printf("|- [Arena: %s] Active Bytes: %zu B, Active Allocations: %zu\n",
            pool->arena_name,
-           pool->stats.active_bytes,
-           pool->stats.active_allocations);
+           (size_t)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
+           (size_t)CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED));
 
     memory_pool_t *child = pool->first_child;
     while (child) {
@@ -852,7 +869,8 @@ bool mp_check_leaks(memory_pool_t *pool)
     /* The compression area is pool-owned infrastructure (like the emergency
      * reserve); exclude it from the leak verdict. */
     size_t expected_internal = (pool->compressed_area != NULL) ? 1u : 0u;
-    bool clean = (pool->stats.active_allocations == expected_internal);
+    bool clean = ((size_t)CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED) ==
+                  expected_internal);
     if (!clean) {
         char report[4096];
         pool_unlock(pool);

@@ -334,7 +334,16 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     size_t emergency_used;   /**< Bytes currently drawn from the reserve     */
     bool in_emergency_state; /**< True while serving from the reserve     */
 
-    mp_stats_t stats;                  /**< Public accounting stats                */
+    cmem_atomic_size_t active_bytes;           /**< Sum of bytes in live allocations (atomic) */
+    cmem_atomic_size_t active_allocations;     /**< Count of live allocations (atomic)       */
+    cmem_atomic_size_t total_alloc_ops;        /**< Cumulative allocation count (atomic)     */
+    cmem_atomic_size_t total_free_ops;         /**< Cumulative free count (atomic)           */
+    cmem_atomic_size_t peak_bytes;             /**< Peak active bytes (atomic)               */
+    cmem_atomic_size_t total_pool_size;        /**< Total reserved bytes (atomic)            */
+    cmem_atomic_size_t slab_allocated_bytes;   /**< Slab payload bytes (atomic)              */
+    cmem_atomic_size_t tlsf_allocated_bytes;   /**< TLSF payload bytes (atomic)              */
+    cmem_atomic_size_t os_allocated_bytes;     /**< OS fallback payload bytes (atomic)       */
+    mp_stats_t stats;                  /**< Public accounting stats (legacy compat)  */
     mp_block_header_t *active_head;    /**< Head of the live-allocation linked list */
     uint64_t window_alloc_ops;         /**< Allocation ops in current sample window  */
     uint64_t window_alloc_bytes;       /**< Bytes allocated in current window      */

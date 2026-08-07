@@ -92,11 +92,12 @@ bool mp_isolate_bad_block(memory_pool_t *pool, void *ptr)
 
     pool_lock(pool);
     active_list_remove(pool, header);
-    pool->stats.active_bytes -= header->requested_size;
-    pool->stats.active_allocations--;
-    pool->stats.total_free_ops++;
-    header->magic = CMEM_FREED_MAGIC;
     pool_unlock(pool);
+    /* Stats are atomic — no lock needed. */
+    CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
+    header->magic = CMEM_FREED_MAGIC;
 
     trigger_event(pool, MP_EVENT_DOUBLE_FREE, ptr, 0);
     return true;
@@ -274,7 +275,7 @@ void mp_asan_report_error(memory_pool_t *pool, void *ptr, size_t size, bool is_w
     if (pool && pool->error_recovery_cb) {
         pool->error_recovery_cb(pool,
                                 true,
-                                pool->stats.active_bytes,
+                                CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
                                 pool->stats.max_memory_limit,
                                 pool->error_recovery_user_data);
     }
@@ -570,26 +571,29 @@ size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len)
         return 0;
     }
 
-    size_t total_alloc = pool->stats.total_alloc_ops;
-    size_t active = pool->stats.active_allocations;
-    size_t active_bytes = pool->stats.active_bytes;
-    size_t peak_bytes = pool->stats.peak_bytes;
+    size_t total_alloc = CMEM_ATOMIC_LOAD(&pool->total_alloc_ops, CMEM_ORDER_RELAXED);
+    size_t active = CMEM_ATOMIC_LOAD(&pool->active_allocations, CMEM_ORDER_RELAXED);
+    size_t active_bytes = CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED);
+    size_t peak_bytes = CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED);
 
-    int written = snprintf(out_buf,
-                           max_len,
-                           "heap: %zu %zu\n"
-                           "alloc_objects: total %zu\n"
-                           "alloc_space: total %zu\n"
-                           "inuse_objects: %zu\n"
-                           "inuse_space: %zu\n"
-                           "peak_space: %zu\n",
-                           active_bytes,
-                           active,
-                           total_alloc,
-                           total_alloc > 0 ? pool->stats.total_alloc_ops * sizeof(void *) : 0,
-                           active,
-                           active_bytes,
-                           peak_bytes);
+    int written =
+        snprintf(out_buf,
+                 max_len,
+                 "heap: %zu %zu\n"
+                 "alloc_objects: total %zu\n"
+                 "alloc_space: total %zu\n"
+                 "inuse_objects: %zu\n"
+                 "inuse_space: %zu\n"
+                 "peak_space: %zu\n",
+                 active_bytes,
+                 active,
+                 total_alloc,
+                 total_alloc > 0
+                     ? CMEM_ATOMIC_LOAD(&pool->total_alloc_ops, CMEM_ORDER_RELAXED) * sizeof(void *)
+                     : 0,
+                 active,
+                 active_bytes,
+                 peak_bytes);
 
     if (written < 0 || (size_t)written >= max_len) {
         return written < 0 ? 0 : max_len;
@@ -797,7 +801,7 @@ void mp_destroy_shared(memory_pool_t *pool, const char *shm_name)
         pthread_rwlock_destroy(&pool->rwlock);
         pthread_mutex_destroy(&pool->lock);
     }
-    size_t sz = pool->stats.total_pool_size;
+    size_t sz = CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED);
     void *shm_ptr = (void *)pool;
     munmap(shm_ptr, sz);
     if (shm_name) {
@@ -899,7 +903,7 @@ mp_create_from_buffer(void *buffer,
         return NULL;
     }
 
-    pool->stats.total_pool_size = buffer_size;
+    CMEM_ATOMIC_STORE(&pool->total_pool_size, buffer_size, CMEM_ORDER_RELAXED);
     return pool;
 }
 
@@ -977,9 +981,11 @@ double mp_pressure(memory_pool_t *pool)
     pool_rdlock(pool);
     double ratio = 0.0;
     if (pool->stats.max_memory_limit > 0) {
-        ratio = (double)pool->stats.active_bytes / (double)pool->stats.max_memory_limit;
-    } else if (pool->stats.total_pool_size > 0) {
-        ratio = (double)pool->stats.active_bytes / (double)pool->stats.total_pool_size;
+        ratio = (double)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) /
+                (double)pool->stats.max_memory_limit;
+    } else if (CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED) > 0) {
+        ratio = (double)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) /
+                (double)CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED);
     }
     pool_rdunlock(pool);
     if (ratio < 0.0) {
@@ -1023,7 +1029,7 @@ size_t mp_freeable(memory_pool_t *pool)
 
 /**
  * @brief Return the total resident size of a pool.
- * @return pool->stats.total_pool_size, or 0 when pool is NULL.
+ * @return CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED), or 0 when pool is NULL.
  */
 size_t mp_resident(memory_pool_t *pool)
 {
@@ -1031,7 +1037,7 @@ size_t mp_resident(memory_pool_t *pool)
         return 0;
     }
     pool_rdlock(pool);
-    size_t res = pool->stats.total_pool_size;
+    size_t res = CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED);
     pool_rdunlock(pool);
     return res;
 }
@@ -1084,9 +1090,10 @@ bool mp_auto_compact_check(memory_pool_t *pool)
     }
 
     pool_lock(pool);
-    double pressure = (double)pool->stats.active_bytes /
-                      (double)(pool->stats.max_memory_limit > 0 ? pool->stats.max_memory_limit
-                                                                : pool->stats.total_pool_size);
+    double pressure = (double)CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) /
+                      (double)(pool->stats.max_memory_limit > 0
+                                   ? pool->stats.max_memory_limit
+                                   : CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED));
     double frag = pool->stats.fragmentation_ratio;
     pool_unlock(pool);
 
@@ -1119,7 +1126,7 @@ bool mp_check_arena_quota(memory_pool_t *pool)
         return true;
     }
     pool_rdlock(pool);
-    bool ok = pool->stats.active_bytes <= pool->arena_quota_limit;
+    bool ok = CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) <= pool->arena_quota_limit;
     pool_rdunlock(pool);
     return ok;
 }
@@ -1284,9 +1291,11 @@ void mp_reset_stats(memory_pool_t *pool)
         return;
     }
     pool_lock(pool);
-    pool->stats.total_alloc_ops = 0;
-    pool->stats.total_free_ops = 0;
-    pool->stats.peak_bytes = pool->stats.active_bytes;
+    CMEM_ATOMIC_STORE(&pool->total_alloc_ops, 0, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&pool->total_free_ops, 0, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&pool->peak_bytes,
+                      CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
+                      CMEM_ORDER_RELAXED);
     pool->window_alloc_ops = 0;
     pool->window_alloc_bytes = 0;
     pool->window_start_time.tv_sec = 0;
@@ -1549,11 +1558,11 @@ void mp_reset(memory_pool_t *pool)
         child = child->next_sibling;
     }
 
-    pool->stats.active_bytes = 0;
-    pool->stats.active_allocations = 0;
-    pool->stats.slab_allocated_bytes = 0;
-    pool->stats.tlsf_allocated_bytes = 0;
-    pool->stats.os_allocated_bytes = 0;
+    CMEM_ATOMIC_STORE(&pool->active_bytes, 0, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&pool->active_allocations, 0, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&pool->slab_allocated_bytes, 0, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&pool->tlsf_allocated_bytes, 0, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_STORE(&pool->os_allocated_bytes, 0, CMEM_ORDER_RELAXED);
     pool->active_head = NULL;
 
     for (int cls = 0; cls < SLAB_CLASS_COUNT; cls++) {
@@ -1688,8 +1697,8 @@ size_t mp_reclaim_idle_pages(memory_pool_t *pool)
             cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
 #endif
             freed_bytes += SLAB_PAGE_SIZE;
-            if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
-                pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
+            if (CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED) >= SLAB_PAGE_SIZE) {
+                CMEM_ATOMIC_FETCH_SUB(&pool->total_pool_size, SLAB_PAGE_SIZE, CMEM_ORDER_RELAXED);
             }
         }
 
@@ -1729,8 +1738,10 @@ size_t mp_reclaim_idle_pages(memory_pool_t *pool)
                 cmem_munmap(curr->page_raw_mem, SLAB_PAGE_SIZE);
 #endif
                 freed_bytes += SLAB_PAGE_SIZE;
-                if (pool->stats.total_pool_size >= SLAB_PAGE_SIZE) {
-                    pool->stats.total_pool_size -= SLAB_PAGE_SIZE;
+                if (CMEM_ATOMIC_LOAD(&pool->total_pool_size, CMEM_ORDER_RELAXED) >=
+                    SLAB_PAGE_SIZE) {
+                    CMEM_ATOMIC_FETCH_SUB(
+                        &pool->total_pool_size, SLAB_PAGE_SIZE, CMEM_ORDER_RELAXED);
                 }
             }
             curr = next;
@@ -1861,7 +1872,7 @@ inline void check_watermark_after_change(memory_pool_t *pool)
     }
 
     size_t limit = pool->stats.max_memory_limit;
-    size_t active = pool->stats.active_bytes;
+    size_t active = CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED);
 
     if (!pool->in_high_watermark_state && pool->high_watermark_ratio > 0.0) {
         size_t high_thresh = (size_t)(pool->high_watermark_ratio * (double)limit);
@@ -1924,9 +1935,9 @@ static void mp_free_stats_update(memory_pool_t *pool, mp_block_header_t *header)
     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
         active_list_remove(pool, header);
     }
-    pool->stats.active_bytes -= header->requested_size;
-    pool->stats.active_allocations--;
-    pool->stats.total_free_ops++;
+    CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+    CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
 }
 
 /**
@@ -1983,12 +1994,14 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         bool exceed = false;
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
             pool_rdlock(pool);
-            if (pool->stats.active_bytes + size > pool->stats.max_memory_limit) {
+            if (CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) + size >
+                pool->stats.max_memory_limit) {
                 exceed = true;
             }
             pool_rdunlock(pool);
         } else {
-            if (pool->stats.active_bytes + size > pool->stats.max_memory_limit) {
+            if (CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) + size >
+                pool->stats.max_memory_limit) {
                 exceed = true;
             }
         }
@@ -2028,21 +2041,30 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                         memset(emerg_ptr, 0, size);
                     }
 
-                    if (pool->flags & MP_FLAG_THREAD_SAFE) {
-                        pool_lock(pool);
-                    }
                     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+                        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                            pool_lock(pool);
+                        }
                         active_list_add(pool, header);
+                        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+                            pool_unlock(pool);
+                        }
                     }
-                    pool->stats.active_bytes += size;
-                    if (pool->stats.active_bytes > pool->stats.peak_bytes) {
-                        pool->stats.peak_bytes = pool->stats.active_bytes;
+                    /* Atomic stats update — no pool lock needed. */
+                    size_t e_cur =
+                        CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, size, CMEM_ORDER_RELAXED);
+                    size_t e_peak = CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED);
+                    while (e_cur + size > e_peak) {
+                        if (CMEM_ATOMIC_COMPARE_EXCHANGE(&pool->peak_bytes,
+                                                         &e_peak,
+                                                         e_cur + size,
+                                                         CMEM_ORDER_RELAXED,
+                                                         CMEM_ORDER_RELAXED)) {
+                            break;
+                        }
                     }
-                    pool->stats.active_allocations++;
-                    pool->stats.total_alloc_ops++;
-                    if (pool->flags & MP_FLAG_THREAD_SAFE) {
-                        pool_unlock(pool);
-                    }
+                    CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+                    CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, 1, CMEM_ORDER_RELAXED);
                     return emerg_ptr;
                 }
                 return NULL;
@@ -2151,8 +2173,8 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
                 memset(ptr, 0, size);
             }
-            pool->stats.os_allocated_bytes += size;
-            pool->stats.total_pool_size += total_sz;
+            CMEM_ATOMIC_FETCH_ADD(&pool->os_allocated_bytes, size, CMEM_ORDER_RELAXED);
+            CMEM_ATOMIC_FETCH_ADD(&pool->total_pool_size, total_sz, CMEM_ORDER_RELAXED);
         }
     }
 
@@ -2164,54 +2186,43 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         bool call_event = false;
 
         if (!(pool->flags & MP_FLAG_FAST_PATH)) {
+            /* active_list_add requires the pool lock (list mutation).
+             * Stats are updated atomically outside the lock to avoid
+             * contending the pool_lock on the hot alloc/free path. */
             if (pool->flags & MP_FLAG_THREAD_SAFE) {
                 pool_lock(pool);
             }
             active_list_add(pool, header);
-            pool->stats.active_bytes += size;
-            if (pool->stats.active_bytes > pool->stats.peak_bytes) {
-                pool->stats.peak_bytes = pool->stats.active_bytes;
-            }
-            pool->stats.active_allocations++;
-            pool->stats.total_alloc_ops++;
-
-            int bucket = get_slab_class_index(pool, size);
-            if (bucket < CMEM_HISTOGRAM_BUCKETS) {
-                pool->stats.size_histogram[bucket]++;
-            }
-            if (pool->watermark_cb) {
-                call_watermark = true;
-            }
-            if (pool->event_cb) {
-                call_event = true;
-            }
             if (pool->flags & MP_FLAG_THREAD_SAFE) {
                 pool_unlock(pool);
             }
-        } else {
-            if (pool->flags & MP_FLAG_THREAD_SAFE) {
-                pool_lock(pool);
+        }
+        /* Atomic stats updates — no lock needed. */
+        /* Atomically update stats. active_bytes/allocs/ops use fetch_add/sub.
+         * peak_bytes uses a CAS loop to track the high-water mark. */
+        size_t cur_active = CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, size, CMEM_ORDER_RELAXED);
+        size_t cur_peak = CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED);
+        while (cur_active + size > cur_peak) {
+            if (CMEM_ATOMIC_COMPARE_EXCHANGE(&pool->peak_bytes,
+                                             &cur_peak,
+                                             cur_active + size,
+                                             CMEM_ORDER_RELAXED,
+                                             CMEM_ORDER_RELAXED)) {
+                break;
             }
-            pool->stats.active_bytes += size;
-            if (pool->stats.active_bytes > pool->stats.peak_bytes) {
-                pool->stats.peak_bytes = pool->stats.active_bytes;
-            }
-            pool->stats.active_allocations++;
-            pool->stats.total_alloc_ops++;
+        }
+        CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, 1, CMEM_ORDER_RELAXED);
 
-            int bucket = get_slab_class_index(pool, size);
-            if (bucket < CMEM_HISTOGRAM_BUCKETS) {
-                pool->stats.size_histogram[bucket]++;
-            }
-            if (pool->watermark_cb) {
-                call_watermark = true;
-            }
-            if (pool->event_cb) {
-                call_event = true;
-            }
-            if (pool->flags & MP_FLAG_THREAD_SAFE) {
-                pool_unlock(pool);
-            }
+        int bucket = get_slab_class_index(pool, size);
+        if (bucket < CMEM_HISTOGRAM_BUCKETS) {
+            pool->stats.size_histogram[bucket]++;
+        }
+        if (pool->watermark_cb) {
+            call_watermark = true;
+        }
+        if (pool->event_cb) {
+            call_event = true;
         }
 
         if (call_watermark) {
@@ -2442,10 +2453,10 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
     bool do_emergency = false;
 
     if (pool->stats.max_memory_limit > 0) {
-        size_t active = pool->stats.active_bytes;
+        size_t active = CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED);
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
             pool_rdlock(pool);
-            active = pool->stats.active_bytes;
+            active = CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED);
             pool_rdunlock(pool);
         }
         if (active + limit_charge > pool->stats.max_memory_limit) {
@@ -2656,8 +2667,8 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
                 breaker_tripped = true;
             }
         }
-        pool->stats.os_allocated_bytes += os_bytes;
-        pool->stats.total_pool_size += os_pool_total;
+        CMEM_ATOMIC_FETCH_ADD(&pool->os_allocated_bytes, os_bytes, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_ADD(&pool->total_pool_size, os_pool_total, CMEM_ORDER_RELAXED);
     }
 
     /* Partial-fit OOM#1: element max_fit would have been attempted and rejected by
@@ -2723,12 +2734,15 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
                 out_ptrs[i] = (void *)aligned_addr;
             }
         }
-        pool->stats.active_bytes += produced * limit_charge;
-        if (pool->stats.active_bytes > pool->stats.peak_bytes) {
-            pool->stats.peak_bytes = pool->stats.active_bytes;
+        CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, produced * limit_charge, CMEM_ORDER_RELAXED);
+        if (CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED) >
+            CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED)) {
+            CMEM_ATOMIC_STORE(&pool->peak_bytes,
+                              CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
+                              CMEM_ORDER_RELAXED);
         }
-        pool->stats.active_allocations += produced;
-        pool->stats.total_alloc_ops += produced;
+        CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, produced, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, produced, CMEM_ORDER_RELAXED);
         size_t hist_count = produced - (emergency_produced ? 1 : 0);
         if (hist_count > 0) {
             int bucket = get_slab_class_index(pool, limit_charge);
@@ -2796,9 +2810,9 @@ static void flush_slab_block(memory_pool_t *pool, mp_block_header_t **hdrs, size
     } else if (pool->flags & MP_FLAG_FAST_PATH) {
         for (size_t idx = 0; idx < block_count; idx++) {
             mp_block_header_t *header = hdrs[idx];
-            __atomic_fetch_sub(&pool->stats.active_bytes, header->requested_size, __ATOMIC_RELAXED);
-            __atomic_fetch_sub(&pool->stats.active_allocations, 1, __ATOMIC_RELAXED);
-            __atomic_fetch_add(&pool->stats.total_free_ops, 1, __ATOMIC_RELAXED);
+            CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+            CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+            CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
         }
     } else {
         pool_lock(pool);
@@ -2931,7 +2945,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
             if (pool->error_recovery_cb) {
                 pool->error_recovery_cb(pool,
                                         true,
-                                        pool->stats.active_bytes,
+                                        CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
                                         pool->stats.max_memory_limit,
                                         pool->error_recovery_user_data);
             }
@@ -2964,10 +2978,10 @@ void mp_free(memory_pool_t *pool, void *ptr)
             if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
                 mp_free_stats_update(pool, header);
             } else if (pool->flags & MP_FLAG_FAST_PATH) {
-                __atomic_fetch_sub(
-                    &pool->stats.active_bytes, header->requested_size, __ATOMIC_RELAXED);
-                __atomic_fetch_sub(&pool->stats.active_allocations, 1, __ATOMIC_RELAXED);
-                __atomic_fetch_add(&pool->stats.total_free_ops, 1, __ATOMIC_RELAXED);
+                CMEM_ATOMIC_FETCH_SUB(
+                    &pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+                CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+                CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
             } else {
                 pool_lock(pool);
                 mp_free_stats_update(pool, header);
@@ -3027,7 +3041,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
             if (pool->error_recovery_cb) {
                 pool->error_recovery_cb(pool,
                                         true,
-                                        pool->stats.active_bytes,
+                                        CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
                                         pool->stats.max_memory_limit,
                                         pool->error_recovery_user_data);
             }
@@ -3042,9 +3056,11 @@ void mp_free(memory_pool_t *pool, void *ptr)
 
     mp_free_stats_update(pool, header);
     if (alloc_type == ALLOC_TYPE_OS) {
-        pool->stats.os_allocated_bytes -= req_size;
-        pool->stats.total_pool_size -=
-            (req_size + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0));
+        CMEM_ATOMIC_FETCH_SUB(&pool->os_allocated_bytes, req_size, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_SUB(&pool->total_pool_size,
+                              req_size + sizeof(mp_block_header_t) +
+                                  ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0),
+                              CMEM_ORDER_RELAXED);
     }
     if (pool->watermark_cb) {
         call_watermark = true;
