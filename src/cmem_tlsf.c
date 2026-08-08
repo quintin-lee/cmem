@@ -174,7 +174,7 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
  * @param tpool TLSF arena owning the list structure.
  * @param block Block to mark free and link.
  */
-static inline void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
+void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
     int fl, sl;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
@@ -200,7 +200,7 @@ static inline void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *bloc
  * @param tpool TLSF arena owning the list.
  * @param block Free block to unlink.
  */
-static inline void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
+void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
     int fl, sl;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
