@@ -600,9 +600,6 @@ void *slab_alloc(memory_pool_t *pool,
  */
 int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
 {
-    uint8_t class_idx = header->slab_class;
-    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
-
     uintptr_t ptr_val = (uintptr_t)header->raw_base;
     uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
     mp_slab_page_t *page = (mp_slab_page_t *)page_base;
