@@ -200,7 +200,7 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
     sentinel->size_and_flags = 0;
     sentinel->prev_physical = block;
 
-    int fl, sl;
+    int fl = 0, sl = 0;
     tlsf_mapping_insert(block->size_and_flags & BLOCK_SIZE_MASK, &fl, &sl);
     tpool->fl_bitmap |= (1U << fl);
     tpool->sl_bitmap[fl] |= (1U << sl);
@@ -220,7 +220,7 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
  */
 void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
-    int fl, sl;
+    int fl = 0, sl = 0;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     tlsf_mapping_insert(size, &fl, &sl);
 
@@ -246,7 +246,7 @@ void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
  */
 void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
-    int fl, sl;
+    int fl = 0, sl = 0;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     tlsf_mapping_insert(size, &fl, &sl);
 
@@ -357,7 +357,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         if (block) {
             /* Inline tlsf_remove_free_block using already-known bucket from search. */
             size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
-            int r_fl, r_sl;
+            int r_fl = 0, r_sl = 0;
             tlsf_mapping_insert(block_size, &r_fl, &r_sl);
 
             pthread_mutex_lock(&target_pool->bucket_locks[r_fl][r_sl]);
@@ -389,7 +389,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
                 next_phys->prev_physical = split_block;
                 next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
                 /* Inline tlsf_insert_free_block for the split remainder. */
-                int s_fl, s_sl;
+                int s_fl = 0, s_sl = 0;
                 tlsf_mapping_insert(remaining, &s_fl, &s_sl);
                 /* Lock both buckets in order if they differ. */
                 if (s_fl == r_fl && s_sl == r_sl) {
@@ -445,7 +445,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         }
         /* Inline removal using computed bucket. */
         size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
-        int r_fl, r_sl;
+        int r_fl = 0, r_sl = 0;
         tlsf_mapping_insert(block_size, &r_fl, &r_sl);
         pthread_mutex_lock(&new_p->bucket_locks[r_fl][r_sl]);
         if (block->prev_free) {
@@ -475,7 +475,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             next_phys->prev_physical = split_block;
             next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
             /* Inline insertion for split remainder. */
-            int s_fl, s_sl;
+            int s_fl = 0, s_sl = 0;
             tlsf_mapping_insert(remaining, &s_fl, &s_sl);
             if (s_fl == r_fl && s_sl == r_sl) {
                 pthread_mutex_lock(&new_p->bucket_locks[s_fl][s_sl]);
@@ -607,7 +607,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + size);
     if (next_phys->size_and_flags & BLOCK_STATE_FREE) {
         size_t next_size = next_phys->size_and_flags & BLOCK_SIZE_MASK;
-        int n_fl, n_sl;
+        int n_fl = 0, n_sl = 0;
         tlsf_mapping_insert(next_size, &n_fl, &n_sl);
         TLSF_ADD_LOCK(n_fl, n_sl);
     }
@@ -617,7 +617,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
         tlsf_block_t *prev_phys = block->prev_physical;
         if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
             size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
-            int p_fl, p_sl;
+            int p_fl = 0, p_sl = 0;
             tlsf_mapping_insert(prev_size, &p_fl, &p_sl);
             TLSF_ADD_LOCK(p_fl, p_sl);
         }
@@ -633,7 +633,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     next_phys = (tlsf_block_t *)((uint8_t *)block + size);
     if (next_phys->size_and_flags & BLOCK_STATE_FREE) {
         size_t next_size = next_phys->size_and_flags & BLOCK_SIZE_MASK;
-        int n_fl, n_sl;
+        int n_fl = 0, n_sl = 0;
         tlsf_mapping_insert(next_size, &n_fl, &n_sl);
         if (next_phys->prev_free) {
             next_phys->prev_free->next_free = next_phys->next_free;
@@ -661,7 +661,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
         tlsf_block_t *prev_phys = block->prev_physical;
         if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
             size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
-            int p_fl, p_sl;
+            int p_fl = 0, p_sl = 0;
             tlsf_mapping_insert(prev_size, &p_fl, &p_sl);
             if (prev_phys->prev_free) {
                 prev_phys->prev_free->next_free = prev_phys->next_free;
@@ -688,7 +688,7 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     }
 
     /* Compute the insert bucket for the (possibly merged) block. */
-    int fl, sl;
+    int fl = 0, sl = 0;
     tlsf_mapping_insert(size, &fl, &sl);
     /* Lock the insert bucket if it wasn't already collected. */
     {
