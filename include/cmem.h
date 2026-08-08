@@ -1022,6 +1022,10 @@ typedef struct mp_slab_slot {
 #define TLSF_CACHE_SIZES 8
 #define TLSF_CACHE_MAX_SLOTS 8
 
+/* Per-thread TLSF arena for lock-free hot-path allocations (512B–4MB). */
+#define TLSF_ARENA_DEFAULT_SIZE (256 * 1024) /*< 256 KB per thread              */
+#define TLSF_ARENA_MIN_SIZE (64 * 1024)      /*< Minimum arena size in bytes    */
+
 /* Per-thread TLSF free-block cache entry. */
 typedef struct tlsf_cache_entry {
     void *block;                   /**< Cached tlsf_block_t pointer              */
@@ -1041,6 +1045,11 @@ typedef struct {
     /* Embedded entry storage: TLSF_CACHE_SIZES * TLSF_CACHE_MAX_SLOTS entries. */
     tlsf_cache_entry_t tlsf_entries[TLSF_CACHE_SIZES * TLSF_CACHE_MAX_SLOTS];
 
+    /* Per-thread TLSF arena (lock-free hot path for sizes 64B–4MB). */
+    void *tlsf_arena_raw_mem; /**< Raw memory from sys_mem_alloc (for munmap)  */
+    void *tlsf_arena_free;    /**< Head of address-ordered free list            */
+    size_t tlsf_arena_used;   /**< Bytes currently allocated from arena          */
+    size_t tlsf_arena_total;  /**< Total arena capacity (raw_size - block_hdr)   */
 } thread_cache_t;
 
 typedef struct mp_block_header {
