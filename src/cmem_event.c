@@ -1938,9 +1938,17 @@ static void mp_free_stats_update(memory_pool_t *pool, mp_block_header_t *header)
     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
         active_list_remove(pool, header);
     }
-    CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
-    CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
-    CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
+    /* Use plain writes for non-thread-safe pools to avoid atomic overhead. */
+    const bool ts = (pool->flags & MP_FLAG_THREAD_SAFE) != 0;
+    if (ts) {
+        CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
+    } else {
+        pool->active_bytes -= header->requested_size;
+        pool->active_allocations--;
+        pool->total_free_ops++;
+    }
 }
 
 /**
@@ -1955,10 +1963,17 @@ static void mp_free_stats_update(memory_pool_t *pool, mp_block_header_t *header)
  */
 static void mp_free_stats_no_lock(memory_pool_t *pool, mp_block_header_t *header)
 {
-    (void)pool;
-    CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
-    CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
-    CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
+    /* Use plain writes for non-thread-safe pools to avoid atomic overhead. */
+    const bool ts = (pool->flags & MP_FLAG_THREAD_SAFE) != 0;
+    if (ts) {
+        CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+        CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
+    } else {
+        pool->active_bytes -= header->requested_size;
+        pool->active_allocations--;
+        pool->total_free_ops++;
+    }
 }
 
 /**
