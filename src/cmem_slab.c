@@ -615,8 +615,11 @@ int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
     page->free_list = slot;
     page->free_count++;
     /* Publish the updated count atomically so lock-free readers see the
-     * correct value without acquiring the class lock. */
-    CMEM_ATOMIC_STORE(&page->page_free_count, page->free_count, CMEM_ORDER_RELEASE);
+     * correct value without acquiring the class lock. Skip for non-thread-safe
+     * pools to avoid atomic store overhead in the fast path. */
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        CMEM_ATOMIC_STORE(&page->page_free_count, page->free_count, CMEM_ORDER_RELEASE);
+    }
 
     will_be_empty = (page->free_count == page->total_slots);
 
