@@ -104,10 +104,10 @@ static inline void tlsf_mapping_insert(size_t size, int *fl, int *sl)
 static inline void tlsf_mapping_search(size_t size, int *fl, int *sl)
 {
     if (size >= (1 << TLSF_SL_SHIFT)) {
-        int f = tlsf_fls(size);
-        size_t round = (1u << (f - TLSF_SL_SHIFT)) - 1;
+        int fl_idx = tlsf_fls(size);
+        size_t round = (1u << (fl_idx - TLSF_SL_SHIFT)) - 1;
         size += round;
-        *fl = f;
+        *fl = fl_idx;
     } else {
         *fl = 0;
     }

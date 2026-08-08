@@ -2194,11 +2194,8 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         /* Multi-arena child pools have a thread-private tlsf_root; skip the
          * pool lock for lock-free allocation. */
         tls_cache_validate_owner(pool);
-        if ((pool->flags & MP_FLAG_THREAD_SAFE) && !pool->is_multi_arena_child) {
-            ptr = tlsf_alloc(pool, size);
-        } else {
-            ptr = tlsf_alloc(pool, size);
-        }
+        ptr = tlsf_alloc(pool, size);
+
     } else {
         size_t total_sz =
             size + sizeof(mp_block_header_t) + ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
