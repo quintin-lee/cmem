@@ -1570,10 +1570,6 @@ bool percpu_push(memory_pool_t *pool, int cpu, uint8_t class_idx, mp_slab_slot_t
     size_t idx = (size_t)cpu * SLAB_CLASS_COUNT + class_idx;
     mp_percpu_freelist_entry_t *entry =
         &((mp_percpu_freelist_entry_t *)pool->percpu_freelists)[idx];
-    if (entry->count >= MP_PERCPU_MAX_BATCH) {
-        return false;
-    }
-
     cmem_atomic_size_t *headp = &entry->head;
     size_t old_head;
     size_t new_head;
