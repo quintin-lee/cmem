@@ -741,15 +741,17 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
  * @param pool      Pool to draw slots from.
  * @param class_idx Size class whose thread cache needs topping up.
  */
-void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
+/**
+ * @brief Internal helper: drain up to n slots from slab pages into the TLS cache.
+ *
+ * Called under sc->lock. Returns the number of slots actually added.
+ */
+static int tls_cache_drain_slots(memory_pool_t *pool, uint8_t class_idx, int n)
 {
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
-    if (pool->flags & MP_FLAG_THREAD_SAFE) {
-        pthread_mutex_lock(&sc->lock);
-    }
-
     int got = 0;
-    while (got < 32) {
+
+    while (got < n) {
         mp_slab_page_t *page = sc->partial_pages;
         if (!page) {
             if (sc->empty_pages) {
@@ -759,7 +761,6 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
                     sc->empty_pages->prev = NULL;
                 }
                 sc->empty_page_count--;
-
                 page->next = sc->partial_pages;
                 page->prev = NULL;
                 if (sc->partial_pages) {
@@ -779,17 +780,18 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
                 sc->partial_pages = page;
             }
         }
+        if (!page) {
+            break;
+        }
 
         mp_slab_slot_t *slot = page->free_list;
         page->free_list = slot->next;
         page->free_count--;
-
         if (page->free_count == 0) {
             sc->partial_pages = page->next;
             if (page->next) {
                 page->next->prev = NULL;
             }
-
             page->next = sc->full_pages;
             page->prev = NULL;
             if (sc->full_pages) {
@@ -797,7 +799,6 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
             }
             sc->full_pages = page;
         }
-
         slot->next = tls_cache.slots[class_idx];
         tls_cache.slots[class_idx] = slot;
         tls_cache.counts[class_idx]++;
@@ -806,7 +807,16 @@ void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
 
     CMEM_ATOMIC_FETCH_ADD(
         &pool->slab_allocated_bytes, (size_t)got * sc->slot_size, CMEM_ORDER_RELAXED);
+    return got;
+}
 
+void tls_cache_refill(memory_pool_t *pool, uint8_t class_idx)
+{
+    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        pthread_mutex_lock(&sc->lock);
+    }
+    tls_cache_drain_slots(pool, class_idx, 32);
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
     }
@@ -845,65 +855,8 @@ mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_id
         pthread_mutex_lock(&sc->lock);
     }
 
-    /* Phase 1: Refill TLS cache (same logic as tls_cache_refill) */
-    int got = 0;
-    while (got < 32) {
-        mp_slab_page_t *page = sc->partial_pages;
-        if (!page) {
-            if (sc->empty_pages) {
-                page = sc->empty_pages;
-                sc->empty_pages = page->next;
-                if (sc->empty_pages) {
-                    sc->empty_pages->prev = NULL;
-                }
-                sc->empty_page_count--;
-
-                page->next = sc->partial_pages;
-                page->prev = NULL;
-                if (sc->partial_pages) {
-                    sc->partial_pages->prev = page;
-                }
-                sc->partial_pages = page;
-            } else {
-                page = slab_create_page(pool, class_idx);
-                if (!page) {
-                    break;
-                }
-                page->next = sc->partial_pages;
-                page->prev = NULL;
-                if (sc->partial_pages) {
-                    sc->partial_pages->prev = page;
-                }
-                sc->partial_pages = page;
-            }
-        }
-
-        mp_slab_slot_t *slot = page->free_list;
-        page->free_list = slot->next;
-        page->free_count--;
-
-        if (page->free_count == 0) {
-            sc->partial_pages = page->next;
-            if (page->next) {
-                page->next->prev = NULL;
-            }
-
-            page->next = sc->full_pages;
-            page->prev = NULL;
-            if (sc->full_pages) {
-                sc->full_pages->prev = page;
-            }
-            sc->full_pages = page;
-        }
-
-        slot->next = tls_cache.slots[class_idx];
-        tls_cache.slots[class_idx] = slot;
-        tls_cache.counts[class_idx]++;
-        got++;
-    }
-
-    CMEM_ATOMIC_FETCH_ADD(
-        &pool->slab_allocated_bytes, (size_t)got * sc->slot_size, CMEM_ORDER_RELAXED);
+    /* Phase 1: Refill TLS cache */
+    tls_cache_drain_slots(pool, class_idx, 32);
 
     /* Phase 2: Pop from TLS cache */
     mp_slab_slot_t *slot = NULL;
@@ -924,7 +877,6 @@ mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_id
                     sc->empty_pages->prev = NULL;
                 }
                 sc->empty_page_count--;
-
                 page->next = sc->partial_pages;
                 page->prev = NULL;
                 if (sc->partial_pages) {
@@ -935,18 +887,15 @@ mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_id
                 page = slab_create_page(pool, class_idx);
             }
         }
-
         if (page) {
             slot = page->free_list;
             page->free_list = slot->next;
             page->free_count--;
-
             if (page->free_count == 0) {
                 sc->partial_pages = page->next;
                 if (page->next) {
                     page->next->prev = NULL;
                 }
-
                 page->next = sc->full_pages;
                 page->prev = NULL;
                 if (sc->full_pages) {
@@ -954,7 +903,6 @@ mp_slab_slot_t *slab_alloc_with_tls_refill(memory_pool_t *pool, uint8_t class_id
                 }
                 sc->full_pages = page;
             }
-
             CMEM_ATOMIC_FETCH_ADD(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
         }
     }
