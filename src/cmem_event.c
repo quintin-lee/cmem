@@ -3220,6 +3220,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
     if (call_event) {
         trigger_event(pool, MP_EVENT_FREE, ptr, req_size);
     }
+    pool_unlock(pool);
 }
 
 /**
