@@ -268,14 +268,17 @@ typedef struct tlsf_block {
  * points to one `sl_bitmap` whose bits index the second-level free lists.
  */
 typedef struct tlsf_pool {
-    uint32_t fl_bitmap;                               /**< First-level free-bin bitmap           */
-    uint32_t sl_bitmap[TLSF_FL_MAX];                  /**< Second-level bitmap per first-level   */
-    tlsf_block_t *blocks[TLSF_FL_MAX][TLSF_SL_COUNT]; /**< Free-list heads per bin    */
-    void *raw_area;                                   /**< Raw base of this TLSF region          */
-    size_t raw_size;                                  /**< Size of the TLSF region               */
-    struct tlsf_pool *next;                           /**< Next TLSF arena (linked for expansion) */
-    struct memory_pool *owner_pool;                   /**< Memory pool owning this TLSF arena     */
-    pthread_mutex_t lock;                             /**< Per-pool lock for concurrent access   */
+    uint32_t fl_bitmap;                                                    /**< First-level free-bin bitmap           */
+    uint32_t sl_bitmap[TLSF_FL_MAX];                                       /**< Second-level bitmap per first-level   */
+    tlsf_block_t *blocks[TLSF_FL_MAX][TLSF_SL_COUNT];                      /**< Free-list heads per bin               */
+    void *raw_area;                                                        /**< Raw base of this TLSF region          */
+    size_t raw_size;                                                       /**< Size of the TLSF region               */
+    struct tlsf_pool *next;                                                /**< Next TLSF arena (linked for expansion) */
+    struct memory_pool *owner_pool;                                        /**< Memory pool owning this TLSF arena    */
+    pthread_mutex_t lock;                                                  /**< Per-pool lock for structural changes  */
+    /* Per-bucket locks for fine-grained concurrency.
+     * Lock ordering: always lock lower (fl, sl) first to avoid deadlocks. */
+    pthread_mutex_t bucket_locks[TLSF_FL_MAX][TLSF_SL_COUNT];             /**< Per-bucket lock */
 } tlsf_pool_t;
 
 /**

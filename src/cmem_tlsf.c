@@ -132,9 +132,39 @@ static inline void tlsf_mapping_search(size_t size, int *fl, int *sl)
  * @param custom_mem Optional pre-allocated backing buffer (NULL to alloc).
  * @return New tlsf_pool_t, or NULL on allocation failure.
  */
+/**
+ * @brief Acquire locks for two buckets in sorted order to prevent deadlocks.
+ *
+ * @param tpool  TLSF arena.
+ * @param fl1    First first-level bucket index.
+ * @param sl1    First second-level bucket index.
+ * @param fl2    Second first-level bucket index.
+ * @param sl2    Second second-level bucket index.
+ */
+static inline void tlsf_lock_buckets(tlsf_pool_t *tpool, int fl1, int sl1, int fl2, int sl2)
+{
+    if (fl1 < fl2 || (fl1 == fl2 && sl1 < sl2)) {
+        pthread_mutex_lock(&tpool->bucket_locks[fl1][sl1]);
+        pthread_mutex_lock(&tpool->bucket_locks[fl2][sl2]);
+    } else {
+        pthread_mutex_lock(&tpool->bucket_locks[fl2][sl2]);
+        pthread_mutex_lock(&tpool->bucket_locks[fl1][sl1]);
+    }
+}
+
+static inline void tlsf_unlock_buckets(tlsf_pool_t *tpool, int fl1, int sl1, int fl2, int sl2)
+{
+    if (fl1 < fl2 || (fl1 == fl2 && sl1 < sl2)) {
+        pthread_mutex_unlock(&tpool->bucket_locks[fl2][sl2]);
+        pthread_mutex_unlock(&tpool->bucket_locks[fl1][sl1]);
+    } else {
+        pthread_mutex_unlock(&tpool->bucket_locks[fl1][sl1]);
+        pthread_mutex_unlock(&tpool->bucket_locks[fl2][sl2]);
+    }
+}
+
 tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *custom_mem)
 {
-
     size = (size + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
 
     void *raw_mem = custom_mem;
@@ -148,6 +178,11 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
     tlsf_pool_t *tpool = (tlsf_pool_t *)raw_mem;
     memset(tpool, 0, sizeof(tlsf_pool_t));
     pthread_mutex_init(&tpool->lock, NULL);
+    for (int fl = 0; fl < TLSF_FL_MAX; fl++) {
+        for (int sl = 0; sl < TLSF_SL_COUNT; sl++) {
+            pthread_mutex_init(&tpool->bucket_locks[fl][sl], NULL);
+        }
+    }
     tpool->raw_area = (void *)((uint8_t *)raw_mem + sizeof(tlsf_pool_t));
     tpool->raw_size = size;
     tpool->owner_pool = pool;
@@ -314,18 +349,18 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
     tlsf_block_t *block = NULL;
     tlsf_pool_t *target_pool = tpool;
 
-    /* Walk the pool chain, trying per-pool locks for fine-grained concurrency.
-     * tlsf_find_suitable_block returns the block; we inline the bucket removal
-     * to avoid a redundant tlsf_mapping_insert call (the bucket was already
-     * computed during the search). */
+    /* Walk the pool chain, trying per-bucket locks for fine-grained concurrency.
+     * tlsf_find_suitable_block is lock-free (reads only bitmaps).
+     * We acquire bucket locks only when modifying free lists. */
     while (target_pool) {
-        pthread_mutex_lock(&target_pool->lock);
         block = tlsf_find_suitable_block(target_pool, total_needed);
         if (block) {
             /* Inline tlsf_remove_free_block using already-known bucket from search. */
             size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
             int r_fl, r_sl;
             tlsf_mapping_insert(block_size, &r_fl, &r_sl);
+
+            pthread_mutex_lock(&target_pool->bucket_locks[r_fl][r_sl]);
             if (block->prev_free) {
                 block->prev_free->next_free = block->next_free;
             } else {
@@ -340,6 +375,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
                     target_pool->fl_bitmap &= ~(1U << r_fl);
                 }
             }
+            pthread_mutex_unlock(&target_pool->bucket_locks[r_fl][r_sl]);
 
             size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
             size_t remaining = current_size - total_needed;
@@ -355,6 +391,12 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
                 /* Inline tlsf_insert_free_block for the split remainder. */
                 int s_fl, s_sl;
                 tlsf_mapping_insert(remaining, &s_fl, &s_sl);
+                /* Lock both buckets in order if they differ. */
+                if (s_fl == r_fl && s_sl == r_sl) {
+                    pthread_mutex_lock(&target_pool->bucket_locks[s_fl][s_sl]);
+                } else {
+                    tlsf_lock_buckets(target_pool, r_fl, r_sl, s_fl, s_sl);
+                }
                 split_block->next_free = target_pool->blocks[s_fl][s_sl];
                 split_block->prev_free = NULL;
                 if (target_pool->blocks[s_fl][s_sl]) {
@@ -363,6 +405,11 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
                 target_pool->blocks[s_fl][s_sl] = split_block;
                 target_pool->fl_bitmap |= (1U << s_fl);
                 target_pool->sl_bitmap[s_fl] |= (1U << s_sl);
+                if (s_fl == r_fl && s_sl == r_sl) {
+                    pthread_mutex_unlock(&target_pool->bucket_locks[s_fl][s_sl]);
+                } else {
+                    tlsf_unlock_buckets(target_pool, r_fl, r_sl, s_fl, s_sl);
+                }
             } else {
                 block->size_and_flags &= ~BLOCK_STATE_FREE;
                 tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + current_size);
@@ -371,7 +418,6 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             tpool = target_pool;
             break;
         }
-        pthread_mutex_unlock(&target_pool->lock);
         target_pool = target_pool->next;
     }
 
@@ -393,16 +439,15 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             &pool->total_pool_size, expand_sz + sizeof(tlsf_pool_t), CMEM_ORDER_RELAXED);
         pool_unlock(pool);
 
-        pthread_mutex_lock(&new_p->lock);
         block = tlsf_find_suitable_block(new_p, total_needed);
         if (!block) {
-            pthread_mutex_unlock(&new_p->lock);
             return NULL;
         }
         /* Inline removal using computed bucket. */
         size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
         int r_fl, r_sl;
         tlsf_mapping_insert(block_size, &r_fl, &r_sl);
+        pthread_mutex_lock(&new_p->bucket_locks[r_fl][r_sl]);
         if (block->prev_free) {
             block->prev_free->next_free = block->next_free;
         } else {
@@ -417,6 +462,7 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
                 new_p->fl_bitmap &= ~(1U << r_fl);
             }
         }
+        pthread_mutex_unlock(&new_p->bucket_locks[r_fl][r_sl]);
 
         size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
         size_t remaining = current_size - total_needed;
@@ -431,6 +477,11 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             /* Inline insertion for split remainder. */
             int s_fl, s_sl;
             tlsf_mapping_insert(remaining, &s_fl, &s_sl);
+            if (s_fl == r_fl && s_sl == r_sl) {
+                pthread_mutex_lock(&new_p->bucket_locks[s_fl][s_sl]);
+            } else {
+                tlsf_lock_buckets(new_p, r_fl, r_sl, s_fl, s_sl);
+            }
             split_block->next_free = new_p->blocks[s_fl][s_sl];
             split_block->prev_free = NULL;
             if (new_p->blocks[s_fl][s_sl]) {
@@ -439,6 +490,11 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             new_p->blocks[s_fl][s_sl] = split_block;
             new_p->fl_bitmap |= (1U << s_fl);
             new_p->sl_bitmap[s_fl] |= (1U << s_sl);
+            if (s_fl == r_fl && s_sl == r_sl) {
+                pthread_mutex_unlock(&new_p->bucket_locks[s_fl][s_sl]);
+            } else {
+                tlsf_unlock_buckets(new_p, r_fl, r_sl, s_fl, s_sl);
+            }
         } else {
             block->size_and_flags &= ~BLOCK_STATE_FREE;
             tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + current_size);
@@ -473,7 +529,6 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
     }
 
     CMEM_ATOMIC_FETCH_ADD(&pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
-    pthread_mutex_unlock(&tpool->lock);
     return payload;
 }
 
@@ -496,15 +551,87 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     /* Update stats atomically outside the lock to reduce hold time. */
     CMEM_ATOMIC_FETCH_SUB(&pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
 
-    pthread_mutex_lock(&tpool->lock);
-
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
     block->size_and_flags |= BLOCK_STATE_FREE;
 
+    /* Collect buckets that need locking, then acquire in sorted order. */
+    int lock_fl[4], lock_sl[4];
+    int lock_count = 0;
+
+#define TLSF_ADD_LOCK(fl, sl)                                                                      \
+    do {                                                                                           \
+        int _fl = (fl), _sl = (sl);                                                                \
+        int _dup = 0;                                                                              \
+        for (int _i = 0; _i < lock_count; _i++) {                                                  \
+            if (lock_fl[_i] == _fl && lock_sl[_i] == _sl) {                                        \
+                _dup = 1;                                                                          \
+                break;                                                                             \
+            }                                                                                      \
+        }                                                                                          \
+        if (!_dup && lock_count < 4) {                                                             \
+            lock_fl[lock_count] = _fl;                                                             \
+            lock_sl[lock_count] = _sl;                                                             \
+            lock_count++;                                                                          \
+        }                                                                                          \
+    } while (0)
+
+#define TLSF_LOCK_BUCKET()                                                                         \
+    do {                                                                                           \
+        for (int _i = 0; _i < lock_count; _i++) {                                                  \
+            for (int _j = _i + 1; _j < lock_count; _j++) {                                         \
+                if (lock_fl[_j] < lock_fl[_i] ||                                                   \
+                    (lock_fl[_j] == lock_fl[_i] && lock_sl[_j] < lock_sl[_i])) {                   \
+                    int _tf = lock_fl[_i];                                                         \
+                    int _ts = lock_sl[_i];                                                         \
+                    lock_fl[_i] = lock_fl[_j];                                                     \
+                    lock_sl[_i] = lock_sl[_j];                                                     \
+                    lock_fl[_j] = _tf;                                                             \
+                    lock_sl[_j] = _ts;                                                             \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+        for (int _i = 0; _i < lock_count; _i++) {                                                  \
+            pthread_mutex_lock(&tpool->bucket_locks[lock_fl[_i]][lock_sl[_i]]);                    \
+        }                                                                                          \
+    } while (0)
+
+#define TLSF_UNLOCK_BUCKET()                                                                       \
+    do {                                                                                           \
+        for (int _i = lock_count - 1; _i >= 0; _i--) {                                             \
+            pthread_mutex_unlock(&tpool->bucket_locks[lock_fl[_i]][lock_sl[_i]]);                  \
+        }                                                                                          \
+    } while (0)
+
     /* Coalesce with the next physical block if it is free. */
+    /* Collect buckets for coalescing (next + prev) before acquiring any lock. */
     tlsf_block_t *next_phys = (tlsf_block_t *)((uint8_t *)block + size);
     if (next_phys->size_and_flags & BLOCK_STATE_FREE) {
-        /* Inline tlsf_remove_free_block for next_phys. */
+        size_t next_size = next_phys->size_and_flags & BLOCK_SIZE_MASK;
+        int n_fl, n_sl;
+        tlsf_mapping_insert(next_size, &n_fl, &n_sl);
+        TLSF_ADD_LOCK(n_fl, n_sl);
+    }
+
+    /* Coalesce with the previous physical block if it is free. */
+    if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
+        tlsf_block_t *prev_phys = block->prev_physical;
+        if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
+            size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
+            int p_fl, p_sl;
+            tlsf_mapping_insert(prev_size, &p_fl, &p_sl);
+            TLSF_ADD_LOCK(p_fl, p_sl);
+        }
+    }
+
+    /* Acquire all collected locks in sorted order (prevents deadlocks). */
+    TLSF_LOCK_BUCKET();
+
+    /* Perform coalescing and list modifications under lock. */
+    size = block->size_and_flags & BLOCK_SIZE_MASK;
+
+    /* Coalesce with next. */
+    next_phys = (tlsf_block_t *)((uint8_t *)block + size);
+    if (next_phys->size_and_flags & BLOCK_STATE_FREE) {
         size_t next_size = next_phys->size_and_flags & BLOCK_SIZE_MASK;
         int n_fl, n_sl;
         tlsf_mapping_insert(next_size, &n_fl, &n_sl);
@@ -525,16 +652,14 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
         size += next_size;
         block->size_and_flags =
             size | (block->size_and_flags & BLOCK_STATE_PREV_FREE) | BLOCK_STATE_FREE;
-
         tlsf_block_t *after_next = (tlsf_block_t *)((uint8_t *)block + size);
         after_next->prev_physical = block;
     }
 
-    /* Coalesce with the previous physical block if it is free. */
+    /* Coalesce with prev (if flagged). */
     if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
         tlsf_block_t *prev_phys = block->prev_physical;
         if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
-            /* Inline tlsf_remove_free_block for prev_phys. */
             size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
             int p_fl, p_sl;
             tlsf_mapping_insert(prev_size, &p_fl, &p_sl);
@@ -555,7 +680,6 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
             prev_phys->size_and_flags = (prev_size + size) |
                                         (prev_phys->size_and_flags & BLOCK_STATE_PREV_FREE) |
                                         BLOCK_STATE_FREE;
-
             tlsf_block_t *after_block = (tlsf_block_t *)((uint8_t *)prev_phys + prev_size + size);
             after_block->prev_physical = prev_phys;
             block = prev_phys;
@@ -563,12 +687,44 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
         }
     }
 
+    /* Compute the insert bucket for the (possibly merged) block. */
+    int fl, sl;
+    tlsf_mapping_insert(size, &fl, &sl);
+    /* Lock the insert bucket if it wasn't already collected. */
+    {
+        int _ins_dup = 0;
+        for (int _i = 0; _i < lock_count; _i++) {
+            if (lock_fl[_i] == fl && lock_sl[_i] == sl) {
+                _ins_dup = 1;
+                break;
+            }
+        }
+        if (!_ins_dup && lock_count < 4) {
+            lock_fl[lock_count] = fl;
+            lock_sl[lock_count] = sl;
+            lock_count++;
+            /* Re-sort to maintain lock ordering. */
+            for (int _i = 0; _i < lock_count; _i++) {
+                for (int _j = _i + 1; _j < lock_count; _j++) {
+                    if (lock_fl[_j] < lock_fl[_i] ||
+                        (lock_fl[_j] == lock_fl[_i] && lock_sl[_j] < lock_sl[_i])) {
+                        int _tf = lock_fl[_i];
+                        int _ts = lock_sl[_i];
+                        lock_fl[_i] = lock_fl[_j];
+                        lock_sl[_i] = lock_sl[_j];
+                        lock_fl[_j] = _tf;
+                        lock_sl[_j] = _ts;
+                    }
+                }
+            }
+            pthread_mutex_lock(&tpool->bucket_locks[fl][sl]);
+        }
+    }
+
     next_phys = (tlsf_block_t *)((uint8_t *)block + size);
     next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
 
-    /* Inline tlsf_insert_free_block for the (possibly merged) block. */
-    int fl, sl;
-    tlsf_mapping_insert(size, &fl, &sl);
+    /* Insert merged block into its bucket. */
     block->next_free = tpool->blocks[fl][sl];
     block->prev_free = NULL;
     if (tpool->blocks[fl][sl]) {
@@ -577,7 +733,12 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     tpool->blocks[fl][sl] = block;
     tpool->fl_bitmap |= (1U << fl);
     tpool->sl_bitmap[fl] |= (1U << sl);
-    pthread_mutex_unlock(&tpool->lock);
+
+    TLSF_UNLOCK_BUCKET();
+
+#undef TLSF_ADD_LOCK
+#undef TLSF_LOCK_BUCKET
+#undef TLSF_UNLOCK_BUCKET
 }
 
 /**

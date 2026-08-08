@@ -1508,6 +1508,11 @@ void mp_destroy(memory_pool_t *pool)
         while (tcurr) {
             tlsf_pool_t *tnext = tcurr->next;
             pthread_mutex_destroy(&tcurr->lock);
+            for (int fl = 0; fl < TLSF_FL_MAX; fl++) {
+                for (int sl = 0; sl < TLSF_SL_COUNT; sl++) {
+                    pthread_mutex_destroy(&tcurr->bucket_locks[fl][sl]);
+                }
+            }
             sys_mem_free(pool, tcurr, tcurr->raw_size + sizeof(tlsf_pool_t));
             tcurr = tnext;
         }
