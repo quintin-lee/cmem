@@ -2094,9 +2094,11 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
     if ((pool->flags & MP_FLAG_STATIC_BUFFER) == 0 && size <= SLAB_MAX_SIZE) {
         tls_cache_validate_owner(pool);
-        /* remote-free queues are per-thread-safe-pool only; skip harvest
-         * when there is no concurrent producer of remote-free slots. */
-        if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        /* Remote-free queues are per-thread-safe-pool only.
+         * Skip harvest when no cross-thread frees are pending — the
+         * atomic load is cheaper than the function call. */
+        if ((pool->flags & MP_FLAG_THREAD_SAFE) &&
+            CMEM_ATOMIC_LOAD(&pool->remote_free_pending, CMEM_ORDER_RELAXED) != 0) {
             remote_free_harvest_all(pool);
         }
         uint8_t class_idx = get_slab_class_index(pool, size);
