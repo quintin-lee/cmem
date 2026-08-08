@@ -163,6 +163,23 @@ static inline void tlsf_unlock_buckets(tlsf_pool_t *tpool, int fl1, int sl1, int
     }
 }
 
+/**
+ * @brief Map a TLSF block size to its first-level bucket index.
+ *
+ * Returns -1 if the size is too small to be a valid TLSF block (< TLSF_SL_SHIFT
+ * bits, i.e. < 16 bytes).  Sizes below TLSF_MIN_BLOCK_SIZE map to fl=0.
+ *
+ * @param size Block size (from tlsf_block_t::size_and_flags & BLOCK_SIZE_MASK).
+ * @return First-level bucket index, or -1 if too small.
+ */
+int tlsf_block_size_to_fl(size_t size)
+{
+    if (size < (size_t)(1 << TLSF_SL_SHIFT)) {
+        return 0;
+    }
+    return tlsf_fls(size);
+}
+
 tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *custom_mem)
 {
     size = (size + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;

@@ -2194,10 +2194,56 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
         /* Multi-arena child pools have a thread-private tlsf_root; route
          * through the bound arena for a lock-free allocation path. */
         tls_cache_validate_owner(pool);
-        if (tls_cache.bound_arena) {
-            ptr = tlsf_alloc(tls_cache.bound_arena, size);
+
+        /* TLSF cache hit: serve from per-thread free-block cache (lock-free). */
+        size_t total_needed = sizeof(tlsf_block_t) + sizeof(mp_block_header_t) + size +
+                              ((pool->flags & MP_FLAG_DEBUG_CANARY) ? 1 : 0);
+        total_needed = (total_needed + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
+        if (total_needed < TLSF_MIN_BLOCK_SIZE) {
+            total_needed = TLSF_MIN_BLOCK_SIZE;
+        }
+        int fl = tlsf_block_size_to_fl(total_needed);
+        int cache_idx = fl - 6;
+        if (cache_idx >= 0 && cache_idx < TLSF_CACHE_SIZES &&
+            tls_cache.tlsf_counts[(unsigned)cache_idx] > 0) {
+            tlsf_cache_entry_t *entry = tls_cache.tlsf_slots[(unsigned)cache_idx];
+            tls_cache.tlsf_slots[(unsigned)cache_idx] = entry->next;
+            tls_cache.tlsf_counts[(unsigned)cache_idx]--;
+
+            tlsf_block_t *block = (tlsf_block_t *)entry->block;
+            tlsf_pool_t *tpool = (tlsf_pool_t *)entry->tpool;
+            mp_block_header_t *header =
+                (mp_block_header_t *)((uint8_t *)block + sizeof(tlsf_block_t));
+            block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
+            header->magic = MP_MAGIC_HEAD;
+            header->alloc_type = ALLOC_TYPE_TLSF;
+            header->slab_class = 0;
+            header->flags = 0;
+            header->requested_size = size;
+            header->usable_size = total_needed - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
+            header->raw_base = block;
+            header->subpool = tpool;
+            header->alloc_file = NULL;
+            header->alloc_line = 0;
+            header->alloc_func = NULL;
+            header->backtrace_depth = 0;
+            ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                uint8_t *canary = (uint8_t *)ptr + size;
+                *canary = MP_CANARY_BYTE;
+            }
+            if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
+                memset(ptr, 0, size);
+            }
+            CMEM_ATOMIC_FETCH_ADD(
+                &tpool->owner_pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
         } else {
-            ptr = tlsf_alloc(pool, size);
+            /* Cache miss: fall through to normal tlsf_alloc path. */
+            if (tls_cache.bound_arena) {
+                ptr = tlsf_alloc(tls_cache.bound_arena, size);
+            } else {
+                ptr = tlsf_alloc(pool, size);
+            }
         }
 
     } else {
@@ -3141,7 +3187,27 @@ void mp_free(memory_pool_t *pool, void *ptr)
     if (alloc_type == ALLOC_TYPE_SLAB) {
         slab_free(pool, header);
     } else if (alloc_type == ALLOC_TYPE_TLSF) {
-        tlsf_free(pool, header);
+        /* TLSF cache push: stash the block in the per-thread cache to avoid
+         * locking on the next allocation of a similar size. */
+        tls_cache_validate_owner(pool);
+        tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
+        size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
+        int fl = tlsf_block_size_to_fl(block_size);
+        int cache_idx = fl - 6;
+        if (cache_idx >= 0 && cache_idx < TLSF_CACHE_SIZES &&
+            tls_cache.tlsf_counts[(unsigned)cache_idx] < TLSF_CACHE_MAX_SLOTS) {
+            tlsf_cache_entry_t *entry =
+                &tls_cache.tlsf_entries[(unsigned)cache_idx * TLSF_CACHE_MAX_SLOTS +
+                                        tls_cache.tlsf_counts[(unsigned)cache_idx]];
+            entry->block = block;
+            entry->tpool = header->subpool;
+            entry->next = tls_cache.tlsf_slots[(unsigned)cache_idx];
+            tls_cache.tlsf_slots[(unsigned)cache_idx] = entry;
+            tls_cache.tlsf_counts[(unsigned)cache_idx]++;
+            /* Stats already updated in tlsf_free; skip it. */
+        } else {
+            tlsf_free(pool, header);
+        }
     } else if (alloc_type == ALLOC_TYPE_OS) {
         sys_mem_free(pool, raw_base, req_size);
     } else if (alloc_type == ALLOC_TYPE_EMERGENCY) {
@@ -3186,6 +3252,20 @@ void *mp_realloc(memory_pool_t *pool, void *ptr, size_t new_size)
     }
 
     if (header->alloc_type == ALLOC_TYPE_TLSF) {
+        /* Flush TLSF cache so adjacent cached blocks return to the free list,
+         * enabling correct coalescing during in-place expand. */
+        tls_cache_validate_owner(pool);
+        for (int i = 0; i < TLSF_CACHE_SIZES; i++) {
+            while (tls_cache.tlsf_slots[i]) {
+                tlsf_cache_entry_t *entry = tls_cache.tlsf_slots[i];
+                tls_cache.tlsf_slots[i] = entry->next;
+                tlsf_block_t *blk = (tlsf_block_t *)entry->block;
+                tlsf_pool_t *tp = (tlsf_pool_t *)entry->tpool;
+                blk->size_and_flags |= BLOCK_STATE_FREE;
+                tlsf_insert_free_block(tp, blk);
+            }
+            tls_cache.tlsf_counts[i] = 0;
+        }
         pool_lock(pool);
         bool expanded = tlsf_try_inplace_expand(pool, header, new_size);
         pool_unlock(pool);

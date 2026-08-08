@@ -1017,11 +1017,28 @@ typedef struct mp_slab_slot {
 
 #define CMEM_SLAB_CLASS_COUNT 7
 
+/* Per-thread TLSF cache: covers fl indices 6-13 (64B-8KB blocks). */
+#define TLSF_CACHE_SIZES 8
+#define TLSF_CACHE_MAX_SLOTS 8
+
+/* Per-thread TLSF free-block cache entry. */
+typedef struct tlsf_cache_entry {
+    void *block;                   /**< Cached tlsf_block_t pointer              */
+    void *tpool;                   /**< tlsf_pool_t that owns this block         */
+    struct tlsf_cache_entry *next; /**< Next entry in the per-size linked list */
+} tlsf_cache_entry_t;
+
 typedef struct {
     memory_pool_t *owner_pool;
     mp_slab_slot_t *slots[CMEM_SLAB_CLASS_COUNT];
     uint16_t counts[CMEM_SLAB_CLASS_COUNT];
     memory_pool_t *bound_arena; /**< Multi-arena bound child (NULL = not bound) */
+    /* Per-size TLSF free-block caches. Each slot holds a linked list of
+     * tlsf_cache_entry_t allocated from tlsf_entries[]. */
+    tlsf_cache_entry_t *tlsf_slots[TLSF_CACHE_SIZES];
+    uint8_t tlsf_counts[TLSF_CACHE_SIZES];
+    /* Embedded entry storage: TLSF_CACHE_SIZES * TLSF_CACHE_MAX_SLOTS entries. */
+    tlsf_cache_entry_t tlsf_entries[TLSF_CACHE_SIZES * TLSF_CACHE_MAX_SLOTS];
 
 } thread_cache_t;
 

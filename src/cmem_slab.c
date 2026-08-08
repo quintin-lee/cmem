@@ -47,7 +47,7 @@ const uint8_t cmem_size_to_class[513] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 /* 257..512 -> class 6 */
 };
 
-MP_THREAD_LOCAL thread_cache_t tls_cache = {NULL, {0}, {0}, NULL};
+MP_THREAD_LOCAL thread_cache_t tls_cache = {0};
 MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
 
 /* Forward declaration: slab_free_nolock is defined after remote_free_harvest
@@ -81,6 +81,19 @@ void tls_cache_flush_pool(memory_pool_t *pool)
                 slab_free(pool, header);
             }
             tls_cache.counts[i] = 0;
+        }
+        /* Flush TLSF free-block cache: re-insert cached blocks into their
+         * original tlsf_pool free lists. */
+        for (int i = 0; i < TLSF_CACHE_SIZES; i++) {
+            while (tls_cache.tlsf_slots[i]) {
+                tlsf_cache_entry_t *entry = tls_cache.tlsf_slots[i];
+                tls_cache.tlsf_slots[i] = entry->next;
+                tlsf_block_t *block = (tlsf_block_t *)entry->block;
+                tlsf_pool_t *tpool = (tlsf_pool_t *)entry->tpool;
+                block->size_and_flags |= BLOCK_STATE_FREE;
+                tlsf_insert_free_block(tpool, block);
+            }
+            tls_cache.tlsf_counts[i] = 0;
         }
     }
 }

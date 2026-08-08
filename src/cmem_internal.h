@@ -182,6 +182,9 @@ typedef struct cmem_numa_topology {
 #define TLSF_FL_MAX 30                     /* Number of first-level log2-size buckets (<= 1GB) */
 #define TLSF_MIN_BLOCK_SIZE 32             /* Smallest block the TLSF region will manage      */
 #define TLSF_MAX_SIZE (4 * 1024 * 1024)    /* Upper byte bound routed through TLSF (4 MB) */
+#define TLSF_ALIGN_MASK 7u                 /* 8-byte alignment mask for TLSF block sizes */
+#define TLSF_CACHE_SIZES   8              /* Number of cache size classes (fl 6-13)  */
+#define TLSF_CACHE_MAX_SLOTS 8            /* Max cached blocks per size class        */
 
 /* Block-header flag bits carved from the low two bits of each TLSF block's size field. */
 #define BLOCK_STATE_FREE 0x1      /* Bit: this block is free      */
@@ -597,6 +600,7 @@ extern tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, vo
 extern void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block);
 extern void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block);
 extern tlsf_block_t *tlsf_find_suitable_block(tlsf_pool_t *tpool, size_t total_needed);
+extern int tlsf_block_size_to_fl(size_t size);
 extern void *tlsf_alloc(memory_pool_t *pool, size_t req_size);
 extern void tlsf_free(memory_pool_t *pool, mp_block_header_t *header);
 extern bool
