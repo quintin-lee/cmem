@@ -311,22 +311,6 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
         block = tlsf_find_suitable_block(target_pool, total_needed);
         if (block) {
             tlsf_remove_free_block(target_pool, block);
-            /* Lazy coalesce with previous free block (deferred from tlsf_free). */
-            if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
-                tlsf_block_t *prev_phys = block->prev_physical;
-                if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
-                    tlsf_remove_free_block(target_pool, prev_phys);
-                    size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
-                    prev_phys->size_and_flags =
-                        (prev_size + (block->size_and_flags & BLOCK_SIZE_MASK)) |
-                        (prev_phys->size_and_flags & BLOCK_STATE_PREV_FREE) | BLOCK_STATE_FREE;
-                    tlsf_block_t *after_merged =
-                        (tlsf_block_t *)((uint8_t *)prev_phys +
-                                         (prev_phys->size_and_flags & BLOCK_SIZE_MASK));
-                    after_merged->prev_physical = prev_phys;
-                    block = prev_phys;
-                }
-            }
             size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
             size_t remaining = current_size - total_needed;
             if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
@@ -376,22 +360,6 @@ void *tlsf_alloc(memory_pool_t *pool, size_t req_size)
             return NULL;
         }
         tlsf_remove_free_block(new_p, block);
-        /* Lazy coalesce with previous free block (deferred from tlsf_free). */
-        if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
-            tlsf_block_t *prev_phys = block->prev_physical;
-            if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
-                tlsf_remove_free_block(new_p, prev_phys);
-                size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
-                prev_phys->size_and_flags =
-                    (prev_size + (block->size_and_flags & BLOCK_SIZE_MASK)) |
-                    (prev_phys->size_and_flags & BLOCK_STATE_PREV_FREE) | BLOCK_STATE_FREE;
-                tlsf_block_t *after_merged =
-                    (tlsf_block_t *)((uint8_t *)prev_phys +
-                                     (prev_phys->size_and_flags & BLOCK_SIZE_MASK));
-                after_merged->prev_physical = prev_phys;
-                block = prev_phys;
-            }
-        }
         size_t current_size = block->size_and_flags & BLOCK_SIZE_MASK;
         size_t remaining = current_size - total_needed;
         if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
@@ -477,8 +445,22 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
         after_next->prev_physical = block;
     }
 
-    /* NOTE: prev-block coalescing is deferred to tlsf_alloc (lazy coalesce).
-     * The PREV_FREE flag is preserved so tlsf_alloc can detect the need. */
+    /* Coalesce with the previous physical block if it is free. */
+    if (block->size_and_flags & BLOCK_STATE_PREV_FREE) {
+        tlsf_block_t *prev_phys = block->prev_physical;
+        if (prev_phys && (prev_phys->size_and_flags & BLOCK_STATE_FREE)) {
+            tlsf_remove_free_block(tpool, prev_phys);
+            size_t prev_size = prev_phys->size_and_flags & BLOCK_SIZE_MASK;
+            prev_phys->size_and_flags = (prev_size + size) |
+                                        (prev_phys->size_and_flags & BLOCK_STATE_PREV_FREE) |
+                                        BLOCK_STATE_FREE;
+
+            tlsf_block_t *after_block = (tlsf_block_t *)((uint8_t *)prev_phys + prev_size + size);
+            after_block->prev_physical = prev_phys;
+            block = prev_phys;
+        }
+    }
+
     next_phys = (tlsf_block_t *)((uint8_t *)block + (block->size_and_flags & BLOCK_SIZE_MASK));
     next_phys->size_and_flags |= BLOCK_STATE_PREV_FREE;
 
