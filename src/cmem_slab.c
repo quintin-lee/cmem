@@ -105,6 +105,12 @@ static void make_tls_cache_key(void)
 
 void tls_cache_validate_owner(memory_pool_t *pool)
 {
+    /* Fast-path: same pool as last time — skip the pthread_setspecific
+     * syscall entirely on the hot allocation path. */
+    if (tls_cache.owner_pool == pool) {
+        return;
+    }
+
 #ifndef _WIN32
     pthread_once(&g_tls_cache_key_once, make_tls_cache_key);
     pthread_setspecific(g_tls_cache_key, (void *)1);
@@ -468,11 +474,19 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
 mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx)
 {
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
+
+    /* Fast-path: check remote-free flag before the lock to skip the
+     * remote_free_harvest call when there is nothing to reclaim.
+     * The lock is still always acquired below for the allocation itself. */
+    bool need_harvest =
+        (CMEM_ATOMIC_LOAD(&pool->remote_free_pending_class[class_idx], CMEM_ORDER_RELAXED) != 0);
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_lock(&sc->lock);
     }
 
-    remote_free_harvest(pool, class_idx);
+    if (need_harvest) {
+        remote_free_harvest(pool, class_idx);
+    }
 
     mp_slab_page_t *page = sc->partial_pages;
 
