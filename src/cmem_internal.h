@@ -183,9 +183,9 @@ typedef struct cmem_numa_topology {
 #define TLSF_MIN_BLOCK_SIZE 32             /* Smallest block the TLSF region will manage      */
 #define TLSF_MAX_SIZE (4 * 1024 * 1024)    /* Upper byte bound routed through TLSF (4 MB) */
 #define TLSF_ALIGN_MASK 7u                 /* 8-byte alignment mask for TLSF block sizes */
-#define TLSF_CACHE_MIN_FL  6              /* Minimum fl index covered by cache (64B)    */
-#define TLSF_CACHE_SIZES   8              /* Number of cache size classes (fl 6-13)  */
-#define TLSF_CACHE_MAX_SLOTS 8            /* Max cached blocks per size class        */
+#define TLSF_CACHE_MIN_FL 6                /* Minimum fl index covered by cache (64B)    */
+#define TLSF_CACHE_SIZES 8                 /* Number of cache size classes (fl 6-13)  */
+#define TLSF_CACHE_MAX_SLOTS 8             /* Max cached blocks per size class        */
 
 /* Block-header flag bits carved from the low two bits of each TLSF block's size field. */
 #define BLOCK_STATE_FREE 0x1      /* Bit: this block is free      */
@@ -204,15 +204,15 @@ typedef struct cmem_numa_topology {
  * into per-class lists, and tracks thermal/paging state.
  */
 typedef struct mp_slab_page {
-    uint8_t class_index;       /**< Slab size class this page serves         */
-    uint16_t free_count;       /**< Number of slots still free (locked)       */
+    uint8_t class_index;                /**< Slab size class this page serves         */
+    uint16_t free_count;                /**< Number of slots still free (locked)       */
     cmem_atomic_size_t page_free_count; /**< Atomic free count (lock-free read) */
-    uint16_t total_slots;      /**< Total slots carved from the page          */
-    mp_slab_slot_t *free_list; /**< Head of the page's free-object list       */
-    struct mp_slab_page *next; /**< Sibling in the class's page list          */
-    struct mp_slab_page *prev; /**< Previous sibling in the page list         */
-    void *page_raw_mem;        /**< Raw page base (for munmap and hot/cold)   */
-    bool is_hot;               /**< True when marked hot for TLB optimization */
+    uint16_t total_slots;               /**< Total slots carved from the page          */
+    mp_slab_slot_t *free_list;          /**< Head of the page's free-object list       */
+    struct mp_slab_page *next;          /**< Sibling in the class's page list          */
+    struct mp_slab_page *prev;          /**< Previous sibling in the page list         */
+    void *page_raw_mem;                 /**< Raw page base (for munmap and hot/cold)   */
+    bool is_hot;                        /**< True when marked hot for TLB optimization */
     int64_t idle_since_ts; /**< Monotonic timestamp when page became fully idle (0 = not idle) */
 } mp_slab_page_t;
 
@@ -223,7 +223,7 @@ typedef struct mp_slab_page {
  * allocations concurrently without a global pool lock.
  */
 typedef struct {
-    size_t slot_size;              /**< Bytes per slot in this class                 */
+    size_t slot_size; /**< Bytes per slot in this class                 */
     /* Pad to align lock to its own cache line (pthread_mutex_t is 40 bytes).
      * Placing lock at a cache-line boundary reduces false sharing between
      * threads contending on different slab classes. */
@@ -237,7 +237,6 @@ typedef struct {
     mp_slab_page_t *hot_pages;     /**< Pages marked hot                              */
     mp_slab_page_t *cold_pages;    /**< Pages marked cold                             */
 } mp_slab_class_t;
-
 
 extern MP_THREAD_LOCAL thread_cache_t tls_cache; /**< Per-thread slab cache (TLS)            */
 extern MP_THREAD_LOCAL mp_thread_quota_t thread_quota; /**< Per-thread quota accounting (TLS) */
@@ -272,17 +271,17 @@ typedef struct tlsf_block {
  * points to one `sl_bitmap` whose bits index the second-level free lists.
  */
 typedef struct tlsf_pool {
-    uint32_t fl_bitmap;                                                    /**< First-level free-bin bitmap           */
-    uint32_t sl_bitmap[TLSF_FL_MAX];                                       /**< Second-level bitmap per first-level   */
-    tlsf_block_t *blocks[TLSF_FL_MAX][TLSF_SL_COUNT];                      /**< Free-list heads per bin               */
-    void *raw_area;                                                        /**< Raw base of this TLSF region          */
-    size_t raw_size;                                                       /**< Size of the TLSF region               */
-    struct tlsf_pool *next;                                                /**< Next TLSF arena (linked for expansion) */
-    struct memory_pool *owner_pool;                                        /**< Memory pool owning this TLSF arena    */
-    pthread_mutex_t lock;                                                  /**< Per-pool lock for structural changes  */
+    uint32_t fl_bitmap;                               /**< First-level free-bin bitmap           */
+    uint32_t sl_bitmap[TLSF_FL_MAX];                  /**< Second-level bitmap per first-level   */
+    tlsf_block_t *blocks[TLSF_FL_MAX][TLSF_SL_COUNT]; /**< Free-list heads per bin               */
+    void *raw_area;                                   /**< Raw base of this TLSF region          */
+    size_t raw_size;                                  /**< Size of the TLSF region               */
+    struct tlsf_pool *next;                           /**< Next TLSF arena (linked for expansion) */
+    struct memory_pool *owner_pool;                   /**< Memory pool owning this TLSF arena    */
+    pthread_mutex_t lock;                             /**< Per-pool lock for structural changes  */
     /* Per-bucket locks for fine-grained concurrency.
      * Lock ordering: always lock lower (fl, sl) first to avoid deadlocks. */
-    pthread_mutex_t bucket_locks[TLSF_FL_MAX][TLSF_SL_COUNT];             /**< Per-bucket lock */
+    pthread_mutex_t bucket_locks[TLSF_FL_MAX][TLSF_SL_COUNT]; /**< Per-bucket lock */
 } tlsf_pool_t;
 
 /**
@@ -347,29 +346,29 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     size_t emergency_used;   /**< Bytes currently drawn from the reserve     */
     bool in_emergency_state; /**< True while serving from the reserve     */
 
-    cmem_atomic_size_t active_bytes;           /**< Sum of bytes in live allocations (atomic) */
-    cmem_atomic_size_t active_allocations;     /**< Count of live allocations (atomic)       */
-    cmem_atomic_size_t total_alloc_ops;        /**< Cumulative allocation count (atomic)     */
-    cmem_atomic_size_t total_free_ops;         /**< Cumulative free count (atomic)           */
-    cmem_atomic_size_t peak_bytes;             /**< Peak active bytes (atomic)               */
-    cmem_atomic_size_t total_pool_size;        /**< Total reserved bytes (atomic)            */
-    cmem_atomic_size_t slab_allocated_bytes;   /**< Slab payload bytes (atomic)              */
-    cmem_atomic_size_t tlsf_allocated_bytes;   /**< TLSF payload bytes (atomic)              */
-    cmem_atomic_size_t os_allocated_bytes;     /**< OS fallback payload bytes (atomic)       */
-    mp_stats_t stats;                  /**< Public accounting stats (legacy compat)  */
-    mp_block_header_t *active_head;    /**< Head of the live-allocation linked list */
-    uint64_t window_alloc_ops;         /**< Allocation ops in current sample window  */
-    uint64_t window_alloc_bytes;       /**< Bytes allocated in current window      */
-    struct timespec window_start_time; /**< Start of the sampling window          */
+    cmem_atomic_size_t active_bytes;         /**< Sum of bytes in live allocations (atomic) */
+    cmem_atomic_size_t active_allocations;   /**< Count of live allocations (atomic)       */
+    cmem_atomic_size_t total_alloc_ops;      /**< Cumulative allocation count (atomic)     */
+    cmem_atomic_size_t total_free_ops;       /**< Cumulative free count (atomic)           */
+    cmem_atomic_size_t peak_bytes;           /**< Peak active bytes (atomic)               */
+    cmem_atomic_size_t total_pool_size;      /**< Total reserved bytes (atomic)            */
+    cmem_atomic_size_t slab_allocated_bytes; /**< Slab payload bytes (atomic)              */
+    cmem_atomic_size_t tlsf_allocated_bytes; /**< TLSF payload bytes (atomic)              */
+    cmem_atomic_size_t os_allocated_bytes;   /**< OS fallback payload bytes (atomic)       */
+    mp_stats_t stats;                        /**< Public accounting stats (legacy compat)  */
+    mp_block_header_t *active_head;          /**< Head of the live-allocation linked list */
+    uint64_t window_alloc_ops;               /**< Allocation ops in current sample window  */
+    uint64_t window_alloc_bytes;             /**< Bytes allocated in current window      */
+    struct timespec window_start_time;       /**< Start of the sampling window          */
 
     mp_slab_class_t slab_classes[SLAB_CLASS_COUNT]; /**< One class per size bucket     */
     cmem_atomic_size_t
-        remote_free_queue[SLAB_CLASS_COUNT];      /**< Lock-free cross-thread remote free queues   */
-    cmem_atomic_size_t remote_free_pending;      /**< Non-zero when any remote-free queue has entries */
+        remote_free_queue[SLAB_CLASS_COUNT]; /**< Lock-free cross-thread remote free queues   */
+    cmem_atomic_size_t remote_free_pending;  /**< Non-zero when any remote-free queue has entries */
     cmem_atomic_size_t
         remote_free_pending_class[SLAB_CLASS_COUNT]; /**< Per-class pending flag for fast skip    */
-    bool use_custom_slab_sizes;                 /**< Custom class table in effect */
-    size_t custom_slab_sizes[SLAB_CLASS_COUNT]; /**< Custom class sizes        */
+    bool use_custom_slab_sizes;                      /**< Custom class table in effect */
+    size_t custom_slab_sizes[SLAB_CLASS_COUNT];      /**< Custom class sizes        */
 
     tlsf_pool_t *tlsf_root; /**< First TLSF arena (chained for expansion) */
 
@@ -585,6 +584,13 @@ extern size_t slab_alloc_batch(memory_pool_t *pool,
 extern void tls_cache_flush_pool(memory_pool_t *pool);
 extern void tls_cache_validate_owner(memory_pool_t *pool);
 extern memory_pool_t *tls_cache_get_bound_arena(void);
+
+/* Per-thread TLSF arena (cmem_slab.c) */
+extern bool tlsf_arena_init(memory_pool_t *pool);
+extern tlsf_block_t *tlsf_arena_alloc(size_t total_needed);
+extern void tlsf_arena_free(tlsf_block_t *block, size_t block_size);
+extern void tlsf_arena_drain(memory_pool_t *pool);
+extern void tlsf_arena_destroy(memory_pool_t *pool);
 extern void percpu_init(memory_pool_t *pool);
 extern void percpu_destroy(memory_pool_t *pool);
 extern void percpu_flush(memory_pool_t *pool);

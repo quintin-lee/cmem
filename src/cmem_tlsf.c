@@ -778,7 +778,12 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
     }
     tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
     tlsf_pool_t *tpool = (tlsf_pool_t *)header->subpool;
-    if (!block || !tpool) {
+    if (!block) {
+        return false;
+    }
+    /* Arena blocks (subpool == NULL) cannot participate in shared-pool
+     * in-place expansion — fall back to memcpy-based realloc. */
+    if (!tpool) {
         return false;
     }
 
