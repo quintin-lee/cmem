@@ -52,10 +52,7 @@ MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
 
 /* Forward declaration: slab_free_nolock is defined after remote_free_harvest
  * but must be visible to it. */
-/* Returns bit flags: 1=full→partial, 2=partial→empty. Caller applies transitions. */
-#define SLAB_TRANS_FULL_TO_PARTIAL 1
-#define SLAB_TRANS_PARTIAL_TO_EMPTY 2
-int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header);
+void slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header);
 
 void tls_cache_flush_pool(memory_pool_t *pool)
 {
@@ -228,48 +225,7 @@ void remote_free_harvest_all(memory_pool_t *pool)
             header->alloc_type = ALLOC_TYPE_SLAB;
             header->slab_class = i;
             header->raw_base = (void *)slot;
-            int trans = slab_free_nolock(pool, header);
-            /* Defer transitions; apply them after all slots for this class
-             * have been processed (batch under a single lock hold). */
-            if (trans) {
-                uintptr_t ptr_val = (uintptr_t)header->raw_base;
-                uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
-                mp_slab_page_t *pg = (mp_slab_page_t *)page_base;
-                if (trans & SLAB_TRANS_FULL_TO_PARTIAL) {
-                    if (pg->prev) {
-                        pg->prev->next = pg->next;
-                    } else {
-                        sc->full_pages = pg->next;
-                    }
-                    if (pg->next) {
-                        pg->next->prev = pg->prev;
-                    }
-                    pg->next = sc->partial_pages;
-                    pg->prev = NULL;
-                    if (sc->partial_pages) {
-                        sc->partial_pages->prev = pg;
-                    }
-                    sc->partial_pages = pg;
-                }
-                if (trans & SLAB_TRANS_PARTIAL_TO_EMPTY) {
-                    pg->idle_since_ts = cmem_now_ms();
-                    if (pg->prev) {
-                        pg->prev->next = pg->next;
-                    } else {
-                        sc->partial_pages = pg->next;
-                    }
-                    if (pg->next) {
-                        pg->next->prev = pg->prev;
-                    }
-                    pg->next = sc->empty_pages;
-                    pg->prev = NULL;
-                    if (sc->empty_pages) {
-                        sc->empty_pages->prev = pg;
-                    }
-                    sc->empty_pages = pg;
-                    sc->empty_page_count++;
-                }
-            }
+            slab_free_nolock(pool, header);
             slot = next;
         }
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
@@ -288,7 +244,6 @@ void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
         return;
     }
     /* Clear the per-class pending flag; caller holds sc->lock. */
-    mp_slab_class_t *sc = &pool->slab_classes[class_idx];
     CMEM_ATOMIC_STORE(&pool->remote_free_pending_class[class_idx], 0, CMEM_ORDER_RELEASE);
     cmem_atomic_size_t *headp = &pool->remote_free_queue[class_idx];
     size_t head = (size_t)CMEM_ATOMIC_EXCHANGE(headp, 0, CMEM_ORDER_RELAXED);
@@ -305,47 +260,7 @@ void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
         header->raw_base = (void *)slot;
         /* Callers of remote_free_harvest already hold sc->lock; use the
          * no-lock variant to avoid recursive re-locking (self-deadlock). */
-        int trans = slab_free_nolock(pool, header);
-        /* Apply deferred transitions under the already-held lock. */
-        if (trans) {
-            uintptr_t ptr_val = (uintptr_t)header->raw_base;
-            uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
-            mp_slab_page_t *pg = (mp_slab_page_t *)page_base;
-            if (trans & SLAB_TRANS_FULL_TO_PARTIAL) {
-                if (pg->prev) {
-                    pg->prev->next = pg->next;
-                } else {
-                    sc->full_pages = pg->next;
-                }
-                if (pg->next) {
-                    pg->next->prev = pg->prev;
-                }
-                pg->next = sc->partial_pages;
-                pg->prev = NULL;
-                if (sc->partial_pages) {
-                    sc->partial_pages->prev = pg;
-                }
-                sc->partial_pages = pg;
-            }
-            if (trans & SLAB_TRANS_PARTIAL_TO_EMPTY) {
-                pg->idle_since_ts = cmem_now_ms();
-                if (pg->prev) {
-                    pg->prev->next = pg->next;
-                } else {
-                    sc->partial_pages = pg->next;
-                }
-                if (pg->next) {
-                    pg->next->prev = pg->prev;
-                }
-                pg->next = sc->empty_pages;
-                pg->prev = NULL;
-                if (sc->empty_pages) {
-                    sc->empty_pages->prev = pg;
-                }
-                sc->empty_pages = pg;
-                sc->empty_page_count++;
-            }
-        }
+        slab_free_nolock(pool, header);
         slot = next;
     }
 }
@@ -579,7 +494,7 @@ void *slab_alloc(memory_pool_t *pool,
  * @param pool   Pool owning the allocation.
  * @param header The mp_block_header_t to free (alloc_type == SLAB).
  */
-int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
+void slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
 {
     uint8_t class_idx = header->slab_class;
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
@@ -588,13 +503,12 @@ int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
     uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
     mp_slab_page_t *page = (mp_slab_page_t *)page_base;
 
-    int trans_flags = 0;
-    uint16_t old_count = page->free_count;
+    bool was_full = (page->free_count == 0);
 
     mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
     slot->next = page->free_list;
     page->free_list = slot;
-    page->free_count = (uint16_t)(old_count + 1);
+    page->free_count++;
 
     if (CMEM_ATOMIC_LOAD(&pool->slab_allocated_bytes, CMEM_ORDER_RELAXED) >= sc->slot_size) {
         CMEM_ATOMIC_FETCH_SUB(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
@@ -602,17 +516,45 @@ int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
         CMEM_ATOMIC_STORE(&pool->slab_allocated_bytes, 0, CMEM_ORDER_RELAXED);
     }
 
-    /* Deferred: page list transitions are applied by the caller
-     * (slab_free / remote_free_harvest / remote_free_harvest_all)
-     * while holding sc->lock. */
-    if (old_count == 0) {
-        trans_flags |= SLAB_TRANS_FULL_TO_PARTIAL;
-    }
-    if (page->free_count == page->total_slots) {
-        trans_flags |= SLAB_TRANS_PARTIAL_TO_EMPTY;
+    if (was_full) {
+        if (page->prev) {
+            page->prev->next = page->next;
+        } else {
+            sc->full_pages = page->next;
+        }
+        if (page->next) {
+            page->next->prev = page->prev;
+        }
+
+        page->next = sc->partial_pages;
+        page->prev = NULL;
+        if (sc->partial_pages) {
+            sc->partial_pages->prev = page;
+        }
+        sc->partial_pages = page;
     }
 
-    return trans_flags;
+    if (page->free_count == page->total_slots) {
+        page->idle_since_ts = cmem_now_ms();
+
+        /* Move page from partial_pages to empty_pages */
+        if (page->prev) {
+            page->prev->next = page->next;
+        } else {
+            sc->partial_pages = page->next;
+        }
+        if (page->next) {
+            page->next->prev = page->prev;
+        }
+
+        page->next = sc->empty_pages;
+        page->prev = NULL;
+        if (sc->empty_pages) {
+            sc->empty_pages->prev = page;
+        }
+        sc->empty_pages = page;
+        sc->empty_page_count++;
+    }
 }
 
 /**
@@ -639,49 +581,7 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
         pthread_mutex_lock(&sc->lock);
     }
 
-    int trans_flags = slab_free_nolock(pool, header);
-
-    /* Apply deferred page-list transitions under the lock. */
-    if (trans_flags & SLAB_TRANS_FULL_TO_PARTIAL) {
-        uintptr_t ptr_val = (uintptr_t)header->raw_base;
-        uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
-        mp_slab_page_t *page = (mp_slab_page_t *)page_base;
-        if (page->prev) {
-            page->prev->next = page->next;
-        } else {
-            sc->full_pages = page->next;
-        }
-        if (page->next) {
-            page->next->prev = page->prev;
-        }
-        page->next = sc->partial_pages;
-        page->prev = NULL;
-        if (sc->partial_pages) {
-            sc->partial_pages->prev = page;
-        }
-        sc->partial_pages = page;
-    }
-    if (trans_flags & SLAB_TRANS_PARTIAL_TO_EMPTY) {
-        uintptr_t ptr_val = (uintptr_t)header->raw_base;
-        uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
-        mp_slab_page_t *page = (mp_slab_page_t *)page_base;
-        page->idle_since_ts = cmem_now_ms();
-        if (page->prev) {
-            page->prev->next = page->next;
-        } else {
-            sc->partial_pages = page->next;
-        }
-        if (page->next) {
-            page->next->prev = page->prev;
-        }
-        page->next = sc->empty_pages;
-        page->prev = NULL;
-        if (sc->empty_pages) {
-            sc->empty_pages->prev = page;
-        }
-        sc->empty_pages = page;
-        sc->empty_page_count++;
-    }
+    slab_free_nolock(pool, header);
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
