@@ -541,7 +541,12 @@ mp_slab_slot_t *slab_alloc_slot(memory_pool_t *pool, uint8_t class_idx)
         sc->full_pages = page;
     }
 
-    CMEM_ATOMIC_FETCH_ADD(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
+    /* Update slab allocated bytes — plain write for non-thread-safe pools. */
+    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+        CMEM_ATOMIC_FETCH_ADD(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
+    } else {
+        pool->slab_allocated_bytes += sc->slot_size;
+    }
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
@@ -658,14 +663,23 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
     uint8_t class_idx = header->slab_class;
     mp_slab_class_t *sc = &pool->slab_classes[class_idx];
 
-    /* Update stats atomically outside the lock to reduce hold time. */
-    if (CMEM_ATOMIC_LOAD(&pool->slab_allocated_bytes, CMEM_ORDER_RELAXED) >= sc->slot_size) {
-        CMEM_ATOMIC_FETCH_SUB(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
+    /* Update slab allocated bytes — plain write for non-thread-safe pools. */
+    const bool ts_slab = (pool->flags & MP_FLAG_THREAD_SAFE) != 0;
+    if (ts_slab) {
+        if (CMEM_ATOMIC_LOAD(&pool->slab_allocated_bytes, CMEM_ORDER_RELAXED) >= sc->slot_size) {
+            CMEM_ATOMIC_FETCH_SUB(&pool->slab_allocated_bytes, sc->slot_size, CMEM_ORDER_RELAXED);
+        } else {
+            CMEM_ATOMIC_STORE(&pool->slab_allocated_bytes, 0, CMEM_ORDER_RELAXED);
+        }
     } else {
-        CMEM_ATOMIC_STORE(&pool->slab_allocated_bytes, 0, CMEM_ORDER_RELAXED);
+        if (pool->slab_allocated_bytes >= sc->slot_size) {
+            pool->slab_allocated_bytes -= sc->slot_size;
+        } else {
+            pool->slab_allocated_bytes = 0;
+        }
     }
 
-    if (pool->flags & MP_FLAG_THREAD_SAFE) {
+    if (ts_slab) {
         pthread_mutex_lock(&sc->lock);
     }
 
