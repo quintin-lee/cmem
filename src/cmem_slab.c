@@ -239,6 +239,10 @@ void remote_free_harvest(memory_pool_t *pool, uint8_t class_idx)
     if (!pool || class_idx >= SLAB_CLASS_COUNT) {
         return;
     }
+    /* Fast path: skip when no remote frees are pending for this class. */
+    if (CMEM_ATOMIC_LOAD(&pool->remote_free_pending_class[class_idx], CMEM_ORDER_RELAXED) == 0) {
+        return;
+    }
     /* Clear the per-class pending flag; caller holds sc->lock. */
     CMEM_ATOMIC_STORE(&pool->remote_free_pending_class[class_idx], 0, CMEM_ORDER_RELEASE);
     cmem_atomic_size_t *headp = &pool->remote_free_queue[class_idx];
