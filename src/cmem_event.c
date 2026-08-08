@@ -1911,6 +1911,9 @@ void active_list_add(memory_pool_t *pool, mp_block_header_t *header)
  */
 void active_list_remove(memory_pool_t *pool, mp_block_header_t *header)
 {
+    if (!header) {
+        return;
+    }
     if (header->prev) {
         header->prev->next = header->next;
     } else {
@@ -2739,7 +2742,9 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
                     if (orig_h->prev) {
                         orig_h->prev->next = new_h;
                     } else {
-                        pool->active_head = new_h;
+                        if (pool->active_head == orig_h) {
+                            pool->active_head = new_h;
+                        }
                     }
                     if (orig_h->next) {
                         orig_h->next->prev = new_h;
@@ -3285,7 +3290,9 @@ void *mp_aligned_alloc(memory_pool_t *pool, size_t alignment, size_t size)
         if (orig_header->prev) {
             orig_header->prev->next = new_header;
         } else {
-            pool->active_head = new_header;
+            if (pool->active_head == orig_header) {
+                pool->active_head = new_header;
+            }
         }
         if (orig_header->next) {
             orig_header->next->prev = new_header;
