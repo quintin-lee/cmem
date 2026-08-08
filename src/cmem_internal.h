@@ -220,6 +220,10 @@ typedef struct mp_slab_page {
  */
 typedef struct {
     size_t slot_size;              /**< Bytes per slot in this class                 */
+    /* Pad to align lock to its own cache line (pthread_mutex_t is 40 bytes).
+     * Placing lock at a cache-line boundary reduces false sharing between
+     * threads contending on different slab classes. */
+    char _pad_lock[64 - sizeof(size_t)];
     pthread_mutex_t lock;          /**< Guards the class page lists (fine-grained)   */
     mp_slab_page_t *partial_pages; /**< Pages with free slots (next refill source)  */
     mp_slab_page_t *full_pages;    /**< Completely full pages                         */
