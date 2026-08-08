@@ -78,7 +78,7 @@ static inline int tlsf_ffs(uint32_t val)
  * @param fl   [out] First-level bucket index.
  * @param sl   [out] Second-level bucket index.
  */
-void tlsf_mapping_insert(size_t size, int *fl, int *sl)
+static inline void tlsf_mapping_insert(size_t size, int *fl, int *sl)
 {
     if (size < (1 << TLSF_SL_SHIFT)) {
         *fl = 0;
@@ -101,7 +101,7 @@ void tlsf_mapping_insert(size_t size, int *fl, int *sl)
  * @param fl   [out] First-level bucket index.
  * @param sl   [out] Second-level bucket index.
  */
-void tlsf_mapping_search(size_t size, int *fl, int *sl)
+static inline void tlsf_mapping_search(size_t size, int *fl, int *sl)
 {
     if (size >= (1 << TLSF_SL_SHIFT)) {
         size_t round = (1 << (*fl = tlsf_fls(size) - TLSF_SL_SHIFT)) - 1;
@@ -174,7 +174,7 @@ tlsf_pool_t *tlsf_create_pool_custom(memory_pool_t *pool, size_t size, void *cus
  * @param tpool TLSF arena owning the list structure.
  * @param block Block to mark free and link.
  */
-void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
+static inline void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
     int fl, sl;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
@@ -200,7 +200,7 @@ void tlsf_insert_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
  * @param tpool TLSF arena owning the list.
  * @param block Free block to unlink.
  */
-void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
+static inline void tlsf_remove_free_block(tlsf_pool_t *tpool, tlsf_block_t *block)
 {
     int fl, sl;
     size_t size = block->size_and_flags & BLOCK_SIZE_MASK;
