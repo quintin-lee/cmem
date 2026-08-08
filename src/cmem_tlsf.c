@@ -32,6 +32,7 @@
 #define TLSF_ALIGN_MASK 7u
 /* Index of the highest bit of the 32-bit first-level (fl) bitmap. */
 #define TLSF_HIGH_BIT_INDEX 31
+#define TLSF_BIT_MASK 31 /**< Max shift width for 32-bit bitmap masks */
 
 /**
  * @brief Find the index of the highest set bit (floor of log2).
@@ -303,14 +304,14 @@ tlsf_block_t *tlsf_find_suitable_block(tlsf_pool_t *tpool, size_t total_needed)
     tlsf_mapping_search(total_needed, &fl, &sl);
 
     /* 1) within the same first-level class, at or above the requested sl. */
-    uint32_t sl_map = tpool->sl_bitmap[fl] & (~0U << sl);
+    uint32_t sl_map = tpool->sl_bitmap[fl] & (~((uint32_t)0) << (sl & TLSF_BIT_MASK));
     if (sl_map) {
         sl = tlsf_ffs(sl_map);
         return tpool->blocks[fl][sl];
     }
 
     /* 2) move up to the next occupied first-level class. */
-    uint32_t fl_map = tpool->fl_bitmap & (~0U << (fl + 1));
+    uint32_t fl_map = tpool->fl_bitmap & (~((uint32_t)0) << ((fl + 1) & TLSF_BIT_MASK));
     if (fl_map) {
         fl = tlsf_ffs(fl_map);
         sl_map = tpool->sl_bitmap[fl];
