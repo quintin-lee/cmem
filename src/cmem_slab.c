@@ -623,49 +623,6 @@ int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
 
     will_be_empty = (page->free_count == page->total_slots);
 
-    /* Page list transitions.
-     * The caller must apply these while holding sc->lock.
-     * Stats (slab_allocated_bytes) are updated by the caller. */
-    if (was_full) {
-        if (page->prev) {
-            page->prev->next = page->next;
-        } else {
-            sc->full_pages = page->next;
-        }
-        if (page->next) {
-            page->next->prev = page->prev;
-        }
-
-        page->next = sc->partial_pages;
-        page->prev = NULL;
-        if (sc->partial_pages) {
-            sc->partial_pages->prev = page;
-        }
-        sc->partial_pages = page;
-    }
-
-    if (will_be_empty) {
-        page->idle_since_ts = cmem_now_ms();
-
-        /* Move page from partial_pages to empty_pages */
-        if (page->prev) {
-            page->prev->next = page->next;
-        } else {
-            sc->partial_pages = page->next;
-        }
-        if (page->next) {
-            page->next->prev = page->prev;
-        }
-
-        page->next = sc->empty_pages;
-        page->prev = NULL;
-        if (sc->empty_pages) {
-            sc->empty_pages->prev = page;
-        }
-        sc->empty_pages = page;
-        sc->empty_page_count++;
-    }
-
     return (was_full ? SLAB_TRANS_FULL_TO_PARTIAL : 0) |
            (will_be_empty ? SLAB_TRANS_PARTIAL_TO_EMPTY : 0);
 }
@@ -702,10 +659,47 @@ void slab_free(memory_pool_t *pool, mp_block_header_t *header)
     }
 
     int trans_flags = slab_free_nolock(pool, header);
-    /* Page transitions are already applied inside slab_free_nolock above;
-     * the returned flags are informational only (used by callers that hold
-     * the lock already, such as remote_free_harvest). */
-    (void)trans_flags;
+    /* Apply page transitions under the held lock. */
+    if (trans_flags & SLAB_TRANS_FULL_TO_PARTIAL) {
+        uintptr_t ptr_val = (uintptr_t)header->raw_base;
+        uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
+        mp_slab_page_t *pg = (mp_slab_page_t *)page_base;
+        if (pg->prev) {
+            pg->prev->next = pg->next;
+        } else {
+            sc->full_pages = pg->next;
+        }
+        if (pg->next) {
+            pg->next->prev = pg->prev;
+        }
+        pg->next = sc->partial_pages;
+        pg->prev = NULL;
+        if (sc->partial_pages) {
+            sc->partial_pages->prev = pg;
+        }
+        sc->partial_pages = pg;
+    }
+    if (trans_flags & SLAB_TRANS_PARTIAL_TO_EMPTY) {
+        uintptr_t ptr_val = (uintptr_t)header->raw_base;
+        uintptr_t page_base = ptr_val & ~(SLAB_PAGE_SIZE - 1);
+        mp_slab_page_t *pg = (mp_slab_page_t *)page_base;
+        pg->idle_since_ts = cmem_now_ms();
+        if (pg->prev) {
+            pg->prev->next = pg->next;
+        } else {
+            sc->partial_pages = pg->next;
+        }
+        if (pg->next) {
+            pg->next->prev = pg->prev;
+        }
+        pg->next = sc->empty_pages;
+        pg->prev = NULL;
+        if (sc->empty_pages) {
+            sc->empty_pages->prev = pg;
+        }
+        sc->empty_pages = pg;
+        sc->empty_page_count++;
+    }
 
     if (pool->flags & MP_FLAG_THREAD_SAFE) {
         pthread_mutex_unlock(&sc->lock);
