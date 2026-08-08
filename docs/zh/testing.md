@@ -207,6 +207,21 @@ int main() {
 | `test_reset_stats_and_preferred_size` | 统计重置和首选尺寸 |
 | `test_mp_madvise` | 跨平台 madvise |
 | `test_arena_metadata_apis` | Arena 元数据 |
+| `test_batch_free_semantics` | 批量释放语义 |
+| `test_batch_free_equivalence` | 批量释放与逐条释放等价性 |
+| `test_batch_free_mixed_tiers` | 跨 Slab/TLSF/OS 层批量释放 |
+| `test_batch_free_corrupt` | 损坏 header 的批量释放 |
+| `test_batch_free_subpool` | 跨子池批量释放 |
+| `test_batch_free_fastpath` | FAST_PATH 模式批量释放 |
+| `test_batch_free_poison` | 带 Poison 的批量释放 |
+| `test_batch_free_overflow` | 批量释放溢出保护 |
+| `test_batch_alloc_and_compact` | 批量分配 + 压缩 |
+| `test_batch_alloc_tiers` | 全层级批量分配 |
+| `test_batch_alloc_configs` | 不同标志配置的批量分配 |
+| `test_boundary_cross_allocator` | 跨分配器边界测试 |
+| `test_boundary_zero_size_all_tiers` | 全层级零尺寸分配 |
+| `test_boundary_max_size` | 最大尺寸边界测试 |
+| `test_idle_page_reclaim` | 空闲页回收 |
 
 ### 5.2 覆盖率目标
 
@@ -289,7 +304,23 @@ static void test_asan_integration(void) {
 
 ---
 
+### 6.5 线程 sanitizer (TSan)
+检测数据竞争和锁顺序反转：
+
+```bash
+make CONFIG=tsan test
+# 或使用 CMake：
+cmake -B build_tsan -G Ninja -DCMAKE_BUILD_TYPE=TSan
+cmake --build build_tsan
+ctest --test-dir build_tsan --output-on-failure
+```
+
+TSan 使用线程级竞争检测运行所有 44+ 测试用例。
+
+---
+
 ## 7. 性能测试
+
 
 ### 7.1 基准测试框架
 
@@ -362,18 +393,29 @@ jobs:
         run: sudo apt update && sudo apt install -y build-essential cmake ninja-build
       - name: Build
         run: make lib
-      - name: Test
+      - name: Test (ASan + UBSan)
         run: make test
       - name: C++ Test
         run: make test_cpp
+      - name: TSan Test
+        run: make CONFIG=tsan test
+      - name: UBSan Test
+        run: make CONFIG=ubsan test
+      - name: Release Build
+        run: make CONFIG=release all
+      - name: Format Check
+        run: make format-check
 ```
 
 ### 8.2 质量门禁
 
 - [ ] `make lib` 编译无警告，并生成带版本号的静态归档
 - [ ] `make lib_shared` 成功构建动态库且 SONAME 正确
-- [ ] `make test` 全量通过
+- [ ] `make test` 全量通过（ASan + UBSan）
+- [ ] `make CONFIG=tsan test` 零 TSan 警告通过
 - [ ] `make test_cpp` 通过
+- [ ] `make format-check` 通过
+- [ ] CMake 各构建类型（Debug、Release、ASan、TSan、UBSan）均编译成功
 - [ ] 代码符合规范
 - [ ] 新功能包含测试
 - [ ] 文档已更新

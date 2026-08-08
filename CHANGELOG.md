@@ -7,19 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **Slab Allocator Thread Safety & Lifetime Fixes**:
-  - Eliminated mid-free `cmem_munmap` call in `slab_free_nolock` to prevent use-after-free race conditions when unmapping 64KB slab pages during concurrent allocations/frees.
-  - Added POSIX `pthread_key` thread-exit destructor (`tls_cache_dtor`) to automatically flush thread-local cached slots (`tls_cache`) back to `owner_pool` on thread termination.
-  - Updated `tls_cache_validate_owner()` to flush previous pool slots before reassigning thread cache ownership.
-  - Zeroed out `header->prev` and `header->next` in `active_list_remove()` to prevent dangling linked-list pointers.
-  - Included `empty_pages` list cleanup in `mp_destroy()` and re-initialization in `mp_reset()`.
-
 ### Added
-- **Expanded Boundary Tests**:
-  - Added `test_boundary_cross_allocator`, `test_boundary_zero_size_all_tiers`, and `test_boundary_max_size` unit test cases.
-- **Diagnostic Parser Bounds Checks**:
-  - Hardened snapshot parser `cmem-analyze-parser.c` with total pool size and allocation record limit validation.
+- **Per-Thread TLSF Free-Block Cache**: Added thread-local cache (`tls_cache.tlsf_slots/counts`) for TLSF allocations, enabling lock-free hot-path allocations that bypass the TLSF global lock entirely.
+- **Per-CPU Lock-Free Freelist Optimizations**: Added per-class remote-free pending flags (`remote_free_pending_class[]`) to skip empty-class harvest; optimized `percpu_push`/`percpu_pop` paths; inlined `tlsf_mapping_search` helpers.
+- **Multi-Arena Bound-Arena Fast Path**: Added `tls_cache.bound_arena` TLS slot to cache per-thread arena binding, bypassing master-pool rwlock on subsequent allocations in child pools.
+- **Atomic Page Free-Count**: Added `page->page_free_count` atomic field for lock-free availability checks in `slab_alloc_slot`, eliminating one class-lock acquisition per allocation.
+- **CONFIG-Based Build System**: Added `make CONFIG=Debug|Release|ASan|TSan|UBSan` targets for sanitizer and debug builds; updated CI workflows.
+- **Stress Test Configuration**: Added `STRESS_DEFINES=-DSTRESS_DURATION_SEC=10` to fix CI timeout in `stress_test`.
+- **Batch Operation Tests**: Added `test_batch_free_semantics`, `test_batch_free_equivalence`, `test_batch_free_mixed_tiers`, `test_batch_free_corrupt`, `test_batch_free_subpool`, `test_batch_free_fastpath`, `test_batch_free_poison`, `test_batch_free_overflow`, `test_batch_alloc_and_compact`, `test_batch_alloc_tiers`, `test_batch_alloc_configs`, and `test_boundary_*` unit test cases.
+- **Diagnostic Parser Bounds Checks**: Hardened snapshot parser `cmem-analyze-parser.c` with total pool size and allocation record limit validation.
+
+### Fixed
+- **TSan `destroy of a locked mutex`**: Fixed missing `pool_unlock(pool)` in `mp_free()` — line 3147 acquired the lock but the function returned without releasing it, causing `mp_destroy_shared` to destroy a still-held rwlock.
+- **TSan `lock-order-inversion`**: Resolved by fixing the missing `pool_unlock`; the unreleased lock caused spurious lock-order-inversion warnings with the global cmem pool.
+- **Per-bucket lock deadlock in `tlsf_free`**: Fixed dangling unlock and recursive lock acquisition in TLSF free path.
+- **Double page transition in `slab_free_nolock`**: Removed redundant `SLAB_TRANS_FULL_TO_PARTIAL` transition that caused multithreaded crashes.
+- **Multi-threaded segfault in slab free path**: Fixed `slab_free_nolock` mid-free `cmem_munmap` call that raced with concurrent allocations.
+- **Lock-free active list segfault**: Reverted lock-free active list that caused segfault in `mp_ptr_valid`; restored mutex-protected list.
+- **TLS cache leak on thread exit**: Added `pthread_key` destructor (`tls_cache_dtor`) to flush thread-local cached slots back to `owner_pool` on thread termination; updated `tls_cache_validate_owner()` to flush previous pool slots before reassignment.
+- **Owner-pool override in multi-arena TLS cache**: Removed incorrect `owner_pool` override that corrupted cross-pool allocations.
+- **Undefined variable initialization**: Initialized `stats_buf`, `ts`, `ets` and other variables to eliminate `cppcoreguidelines-init-variables` warnings across `cmem_event.c`.
+- **Magic number warning**: Replaced literal `6` with `TLSF_CACHE_MIN_FL` constant; added `TLSF_CACHE_MIN_FL` to `.clang-tidy` magic-number ignore list.
+- **Branch clone warnings**: Eliminated `bugprone-branch-clone` and `readability-identifier-length` warnings by restructuring identical-branch conditions and renaming short identifiers.
+- **Windows/MinGW compatibility**: Added `#ifdef` guards for `atomic_flag`, POSIX includes, and `MP_THREAD_LOCAL` redefinition in `cmem_sys.c` and `cmem_internal.h`.
+- **ASan LSAN fatal error**: Fixed link-order conflict in ASan builds; hardened CI with `LSAN_OPTIONS=detect_leaks=0` for ASan jobs.
+- **Build system**: Fixed `CMEM_DISABLE_DIAGNOSTICS` scope for `cmem_core_shared` target (PRIVATE instead of PUBLIC).
+- **Batch free path**: Fixed TLS cache owner re-validation per flushed free block; let same-pool SLAB elements take the batched free path.
+- **Remote-free harvest race**: Acquired class lock in `remote_free_harvest_all` to prevent race with `percpu_refill`.
+
+### Changed
+- **Slab class lock cache-line alignment**: Aligned `slab_class_t.lock` to its own cache line (`alignas(64)`) to eliminate false sharing under high contention.
+- **Non-thread-safe pool stats**: Replaced atomic `CMEM_ATOMIC_FETCH_ADD/SUB` with plain writes for `slab_allocated_bytes`, `active_bytes`, `active_allocations`, `total_free_ops`, and `total_alloc_ops` when `MP_FLAG_THREAD_SAFE` is not set, reducing atomic overhead on the hot path.
+- **TLSF in-place expand**: Inlined `tlsf_try_inplace_expand` to eliminate call overhead in `mp_realloc`.
+- **Slab free fast paths**: Eliminated pool-lock acquisition in slab free fast paths (`tls_cache` hit, `percpu_push` hit, `remote_free_push` path) — only the fallback path acquires the lock.
+- **TLSF stats update**: Moved stats update outside `tpool` lock in `tlsf_free`.
+- **`.clang-tidy`**: Added `TLSF_CACHE_MIN_FL` (value 6) to `readability-magic-numbers` ignore list; renamed short identifiers to satisfy identifier-length rules.
+
+### Deprecated
+- **Lazy coalescing in TLSF**: Reverted lazy prev-block coalescing and deferred page transitions due to degraded multi-thread scaling; restored eager coalescing.
 
 ## [0.1.0] - 2026-08-05
 

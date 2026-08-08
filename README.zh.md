@@ -108,7 +108,7 @@ flowchart TD
 ### 4. 🔒 高并发锁机制 (RWLock & 细粒度锁)
 - **读写锁**：所有内省 API 使用读锁以实现零锁争用分析。
 - **细粒度 Slab 类锁**：每个 Slab 大小类都有自己的 `pthread_mutex_t`。
-- **线程本地缓存**：小对象分配的无锁快速路径。
+- **线程本地缓存**：Slab 和 TLSF 分配的无锁快速路径，包含 POSIX 线程退出自动清理机制（`pthread_key`）。
 
 ### 5. 🚀 C++17 PMR & STL 容器适配器
 - 包含 `#include "cmem_pmr.hpp"` 以获得 `cmem::pmr_resource` 适配器。
@@ -189,25 +189,25 @@ flowchart TD
 - **`mp_set_error_recovery_callback(pool, cb, udata)`**：注册内存错误恢复回调。
 - **`mp_isolate_bad_block(pool, ptr)`**：通过从活动跟踪中移除来隔离错误块。
 
-### 24. 🎯 线程级配额与熔断器
+### 25. 🎯 线程级配额与熔断器
 - **`mp_set_thread_quota(pool, quota_bytes)`**：设置每线程内存配额，防止单个线程耗尽池。
 - **`mp_set_circuit_breaker(pool, enable)`** / **`mp_is_circuit_breaker_tripped(pool)`**：启用/查询线程级熔断器。
 - **`mp_get_thread_allocated_bytes(pool)`** / **`mp_reset_thread_quota(pool)`**：查询/重置当前线程已分配字节数。
 
-### 25. 🧊 热/冷页分离
+### 26. 🧊 热/冷页分离
 - **`MP_FLAG_HOT_COLD_SEPARATION`**：启用热/冷页物理分离以提高 TLB 命中率。
 - **`mp_mark_page_hot(pool, page_raw_mem)`** / **`mp_mark_page_cold(pool, page_raw_mem)`**：标记页温度属性。
 - **`mp_get_hot_page_count(pool)`** / **`mp_get_cold_page_count(pool)`**：查询热/冷页数量。
 - **`mp_separate_hot_cold_pages(pool)`**：执行热/冷页物理分离。
 
-### 26. 🔒 加密内存支持
+### 27. 🔒 加密内存支持
 - **`MP_FLAG_ENCRYPTED_MEMORY`**：启用加密内存模式，带 `mlock` + `madvise(MADV_DONTDUMP)`。
 - **`mp_lock_memory(pool, addr, length)`** / **`mp_unlock_memory(pool, addr, length)`**：锁定/解锁内存页以防止交换。
 - **`mp_protect_from_dump(pool, addr, length)`**：将内存从核心转储中排除。
 - **`mp_secure_zero(pool, ptr, length)`**：易失性安全清零以防止数据残留。
 - **`mp_set_encrypted_memory(pool, enable)`**：一键加密内存模式。
 
-### 27. 🛡️ AddressSanitizer 集成
+### 28. 🛡️ AddressSanitizer 集成
 - **`MP_FLAG_ASAN_INTEGRATION`**：启用 ASan 兼容模式。
 - **`mp_asan_is_enabled()`**：检测 ASan 是否处于活动状态。
 - **`mp_asan_report_error(pool, ptr, size, is_write)`**：向 ASan 报告自定义内存错误。

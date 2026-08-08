@@ -98,6 +98,7 @@ A Two-Level Segregated Fit allocator with dual-level bitmap indexing, providing 
 - Second-level bitmap (SL): Each FL maps to 64 SLs, totaling 2048 size classes
 - Supports In-Place Expansion, avoiding memcpy
 - Automatically merges adjacent free blocks, reducing fragmentation
+- **Per-Thread TLSF Free-Block Cache**: Thread-local cache (`tls_cache.tlsf_slots/counts`) enables lock-free hot-path allocations, bypassing the TLSF global lock entirely for frequently-requested sizes
 
 **Data Structures:**
 

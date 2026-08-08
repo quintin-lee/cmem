@@ -207,6 +207,21 @@ int main() {
 | `test_reset_stats_and_preferred_size` | Stats reset and preferred size |
 | `test_mp_madvise` | Cross-platform madvise |
 | `test_arena_metadata_apis` | Arena metadata |
+| `test_batch_free_semantics` | Batch free semantics |
+| `test_batch_free_equivalence` | Batch free equivalence vs individual |
+| `test_batch_free_mixed_tiers` | Batch free across slab/tlsf/os tiers |
+| `test_batch_free_corrupt` | Batch free with corrupt headers |
+| `test_batch_free_subpool` | Batch free across sub-pools |
+| `test_batch_free_fastpath` | Batch free in FAST_PATH mode |
+| `test_batch_free_poison` | Batch free with poison on free |
+| `test_batch_free_overflow` | Batch free overflow protection |
+| `test_batch_alloc_and_compact` | Batch alloc + compaction |
+| `test_batch_alloc_tiers` | Batch alloc across all tiers |
+| `test_batch_alloc_configs` | Batch alloc with different flag configs |
+| `test_boundary_cross_allocator` | Cross-allocator boundary test |
+| `test_boundary_zero_size_all_tiers` | Zero-size across all tiers |
+| `test_boundary_max_size` | Max-size allocation boundary |
+| `test_idle_page_reclaim` | Idle page reclamation |
 
 ### 5.2 Coverage Targets
 
@@ -289,7 +304,23 @@ static void test_asan_integration(void) {
 
 ---
 
+### 6.5 ThreadSanitizer (TSan)
+Detects data races and lock-order-inversion:
+
+```bash
+make CONFIG=tsan test
+# or with CMake:
+cmake -B build_tsan -G Ninja -DCMAKE_BUILD_TYPE=TSan
+cmake --build build_tsan
+ctest --test-dir build_tsan --output-on-failure
+```
+
+TSan runs all 44+ test cases with thread-level race detection enabled.
+
+---
+
 ## 7. Performance Tests
+
 
 ### 7.1 Benchmark Framework
 
@@ -362,10 +393,18 @@ jobs:
         run: sudo apt update && sudo apt install -y build-essential cmake ninja-build
       - name: Build
         run: make lib
-      - name: Test
+      - name: Test (ASan + UBSan)
         run: make test
       - name: C++ Test
         run: make test_cpp
+      - name: TSan Test
+        run: make CONFIG=tsan test
+      - name: UBSan Test
+        run: make CONFIG=ubsan test
+      - name: Release Build
+        run: make CONFIG=release all
+      - name: Format Check
+        run: make format-check
 ```
 
 ### 8.2 Quality Gates
@@ -373,8 +412,11 @@ jobs:
 - [ ] `make lib` compiles without warnings and produces versioned static archives
 - [ ] `make lib_shared` builds shared library with correct SONAME
 - [ ] CMake build reports no clang-tidy warnings (per `.clang-tidy` configuration)
-- [ ] `make test` passes all tests
+- [ ] `make test` passes all tests (ASan + UBSan)
+- [ ] `make CONFIG=tsan test` passes with zero TSan warnings
 - [ ] `make test_cpp` passes
+- [ ] `make format-check` passes
+- [ ] CMake build succeeds for all build types (Debug, Release, ASan, TSan, UBSan)
 - [ ] Code conforms to standards
 - [ ] New features include tests
 - [ ] Documentation is updated

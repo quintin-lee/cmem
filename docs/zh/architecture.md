@@ -98,6 +98,7 @@ typedef struct {
 - 二级位图（SL）：每个 FL 对应 64 个 SL，总共 2048 个尺寸类
 - 支持原地 Expand（In-Place Expansion），避免 memcpy
 - 自动合并相邻空闲块，减少碎片
+- **线程本地 TLSF 空闲块缓存**：线程本地缓存（`tls_cache.tlsf_slots/counts`）实现无锁热路径分配，对频繁请求的尺寸绕过 TLSF 全局锁
 
 **数据结构：**
 

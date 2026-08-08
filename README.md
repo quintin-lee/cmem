@@ -93,7 +93,7 @@ flowchart TD
 ### 1. ⚡ High-Performance Tiered Allocator
 - **Slab Allocator (<= 512B)**: Fixed-size Class allocator for small objects (8B ~ 512B) with $O(1)$ alloc/free and zero external fragmentation.
 - **Fast Path Inline Allocation (`mp_alloc_fast` / `mp_free_fast`)**: Exposes inline primitives and $O(1)$ LUT for `MP_FLAG_FAST_PATH` pools, boosting small object throughput to **230+ Mops/sec** (~4.2ns per op).
-- **TLSF Allocator (512B ~ 4MB)**: Two-Level Segregated Fit with $O(1)$ bitmap search and **in-place expansion** to avoid unnecessary `memcpy`.
+- **TLSF Allocator (512B ~ 4MB)**: Two-Level Segregated Fit with $O(1)$ bitmap search, **in-place expansion**, and **per-thread free-block cache** for lock-free hot-path allocations.
 - **Direct OS Fallback (> 4MB)**: Automatically falls back to system memory mapping with Guard Pages and HugePages acceleration.
 
 ### 2. 🔍 Memory Introspection APIs
@@ -112,7 +112,7 @@ flowchart TD
 ### 4. 🔒 High-Concurrency Locking (RWLock & Fine-Grained Locks)
 - **Read-Write Lock**: All introspection APIs use read locks for zero-lock-contention profiling.
 - **Fine-Grained Slab Class Locks**: Each Slab size Class has its own `pthread_mutex_t`.
-- **Thread-Local Cache**: Lock-free fast path for small object allocations.
+- **Thread-Local Cache**: Lock-free fast path for both Slab and TLSF allocations, with automatic POSIX thread-exit cleanup (`pthread_key`).
 
 ### 5. 🚀 C++17 PMR & STL Container Adapters
 - Include `#include "cmem_pmr.hpp"` for `cmem::pmr_resource` adapter.
@@ -184,41 +184,45 @@ flowchart TD
 - **`mp_event_log_create(capacity)`** / **`mp_event_log_record(...)`** / **`mp_event_log_consume(...)`**: Lock-free Ring Buffer based structured event log for post-mortem replay.
 - **`mp_export_pprof(pool, buf, max_len)`**: Export pprof-compatible text format for flame graph generation.
 
-### 22. 🚀 Per-CPU Lock-Free Freelist
 - **`MP_FLAG_PERCPU_FREELIST`**: Enable per-CPU lock-free freelist for small object allocations to reduce lock contention.
 - **`mp_set_percpu_freelist(pool, enable)`** / **`mp_get_percpu_freelist(pool)`** / **`mp_get_percpu_cpu_count(pool)`**: Configure and query Per-CPU freelist.
 
-### 23. 🛡️ Memory Error Recovery
+### 23. 📦 Batch Allocation & Free
+- **`mp_alloc_batch(pool, size, out_ptrs, count)`**: Allocate multiple blocks of the same size in a single lock acquisition.
+- **`mp_free_batch(pool, ptrs, count)`**: Free multiple blocks in a single lock acquisition, with automatic TLS-cache return.
+- **`mp_realloc_batch(pool, ptrs, new_sizes, count)`**: Reallocate multiple blocks with a single lock.
+
+### 24. 🛡️ Memory Error Recovery
 - **`mp_mark_pool_dirty(pool)`** / **`mp_clear_pool_dirty(pool)`** / **`mp_is_pool_dirty(pool)`**: Mark/clear/query dirty pool state. New allocations are rejected after canary corruption or double free.
 - **`mp_set_error_recovery_callback(pool, cb, udata)`**: Register memory error recovery callback.
 - **`mp_isolate_bad_block(pool, ptr)`**: Isolate bad blocks by removing from active tracking.
 
-### 24. 🎯 Thread-Level Quota & Circuit Breaker
+### 25. 🎯 Thread-Level Quota & Circuit Breaker
 - **`mp_set_thread_quota(pool, quota_bytes)`**: Set per-thread memory quota to prevent a single thread from exhausting the pool.
 - **`mp_set_circuit_breaker(pool, enable)`** / **`mp_is_circuit_breaker_tripped(pool)`**: Enable/query thread-level circuit breaker.
 - **`mp_get_thread_allocated_bytes(pool)`** / **`mp_reset_thread_quota(pool)`**: Query/reset current thread allocated bytes.
 
-### 25. 🧊 Hot/Cold Page Separation
+### 26. 🧊 Hot/Cold Page Separation
 - **`MP_FLAG_HOT_COLD_SEPARATION`**: Enable hot/cold page physical separation to improve TLB hit rate.
 - **`mp_mark_page_hot(pool, page_raw_mem)`** / **`mp_mark_page_cold(pool, page_raw_mem)`**: Mark page temperature attributes.
 - **`mp_get_hot_page_count(pool)`** / **`mp_get_cold_page_count(pool)`**: Query hot/cold page counts.
 - **`mp_separate_hot_cold_pages(pool)`**: Execute hot/cold page physical separation.
 
-### 26. 🔒 Encrypted Memory Support
+### 27. 🔒 Encrypted Memory Support
 - **`MP_FLAG_ENCRYPTED_MEMORY`**: Enable encrypted memory mode with `mlock` + `madvise(MADV_DONTDUMP)`.
 - **`mp_lock_memory(pool, addr, length)`** / **`mp_unlock_memory(pool, addr, length)`**: Lock/unlock memory pages to prevent swap.
 - **`mp_protect_from_dump(pool, addr, length)`**: Exclude memory from core dumps.
 - **`mp_secure_zero(pool, ptr, length)`**: Volatile secure zero to prevent data remanence.
 - **`mp_set_encrypted_memory(pool, enable)`**: One-click encrypted memory mode.
 
-### 27. 🛡️ AddressSanitizer Integration
+### 28. 🛡️ AddressSanitizer Integration
 - **`MP_FLAG_ASAN_INTEGRATION`**: Enable ASan-compatible mode.
 - **`mp_asan_is_enabled()`**: Detect if ASan is active.
 - **`mp_asan_report_error(pool, ptr, size, is_write)`**: Report custom memory errors to ASan.
 - **`mp_asan_check_memory(pool, ptr, size)`**: Check memory region for ASan errors.
 - **`mp_set_asan_integration(pool, enable)`**: Enable/disable ASan integration.
 
-### 28. 🚀 Online Pool Expansion
+### 29. 🚀 Online Pool Expansion
 - **`mp_expand_pool(pool, additional_bytes)`**: Add capacity without service interruption by linking new TLSF pools.
 - **`mp_can_expand(pool)`**: Check if pool supports expansion.
 - **`mp_get_expandable_size(pool)`**: Query remaining expandable capacity.
