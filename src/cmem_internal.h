@@ -201,7 +201,8 @@ typedef struct cmem_numa_topology {
  */
 typedef struct mp_slab_page {
     uint8_t class_index;       /**< Slab size class this page serves         */
-    uint16_t free_count;       /**< Number of slots still free                */
+    uint16_t free_count;       /**< Number of slots still free (locked)       */
+    cmem_atomic_size_t page_free_count; /**< Atomic free count (lock-free read) */
     uint16_t total_slots;      /**< Total slots carved from the page          */
     mp_slab_slot_t *free_list; /**< Head of the page's free-object list       */
     struct mp_slab_page *next; /**< Sibling in the class's page list          */

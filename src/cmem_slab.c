@@ -438,6 +438,7 @@ mp_slab_page_t *slab_create_page(memory_pool_t *pool, uint8_t class_idx)
 
     uint8_t *ptr = (uint8_t *)page_mem + sizeof(mp_slab_page_t);
     page->free_list = (mp_slab_slot_t *)ptr;
+    CMEM_ATOMIC_STORE(&page->page_free_count, page->total_slots, CMEM_ORDER_RELAXED);
 
     /* Link every slot, point each one at the next, the last at NULL. */
     for (uint16_t i = 0; i < page->total_slots; i++) {
@@ -613,6 +614,9 @@ int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
     slot->next = page->free_list;
     page->free_list = slot;
     page->free_count++;
+    /* Publish the updated count atomically so lock-free readers see the
+     * correct value without acquiring the class lock. */
+    CMEM_ATOMIC_STORE(&page->page_free_count, page->free_count, CMEM_ORDER_RELEASE);
 
     will_be_empty = (page->free_count == page->total_slots);
 
