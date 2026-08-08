@@ -183,6 +183,7 @@ typedef struct cmem_numa_topology {
 #define TLSF_MIN_BLOCK_SIZE 32             /* Smallest block the TLSF region will manage      */
 #define TLSF_MAX_SIZE (4 * 1024 * 1024)    /* Upper byte bound routed through TLSF (4 MB) */
 #define TLSF_ALIGN_MASK 7u                 /* 8-byte alignment mask for TLSF block sizes */
+#define TLSF_CACHE_MIN_FL  6              /* Minimum fl index covered by cache (64B)    */
 #define TLSF_CACHE_SIZES   8              /* Number of cache size classes (fl 6-13)  */
 #define TLSF_CACHE_MAX_SLOTS 8            /* Max cached blocks per size class        */
 

@@ -2203,7 +2203,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             total_needed = TLSF_MIN_BLOCK_SIZE;
         }
         int fl = tlsf_block_size_to_fl(total_needed);
-        int cache_idx = fl - 6;
+        int cache_idx = fl - TLSF_CACHE_MIN_FL;
         if (cache_idx >= 0 && cache_idx < TLSF_CACHE_SIZES &&
             tls_cache.tlsf_counts[(unsigned)cache_idx] > 0) {
             tlsf_cache_entry_t *entry = tls_cache.tlsf_slots[(unsigned)cache_idx];
@@ -3193,7 +3193,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
         tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
         size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
         int fl = tlsf_block_size_to_fl(block_size);
-        int cache_idx = fl - 6;
+        int cache_idx = fl - TLSF_CACHE_MIN_FL;
         if (cache_idx >= 0 && cache_idx < TLSF_CACHE_SIZES &&
             tls_cache.tlsf_counts[(unsigned)cache_idx] < TLSF_CACHE_MAX_SLOTS) {
             tlsf_cache_entry_t *entry =

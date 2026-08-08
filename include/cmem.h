@@ -1018,6 +1018,7 @@ typedef struct mp_slab_slot {
 #define CMEM_SLAB_CLASS_COUNT 7
 
 /* Per-thread TLSF cache: covers fl indices 6-13 (64B-8KB blocks). */
+#define TLSF_CACHE_MIN_FL 6 /* Minimum fl index covered by cache (64B)    */
 #define TLSF_CACHE_SIZES 8
 #define TLSF_CACHE_MAX_SLOTS 8
 
