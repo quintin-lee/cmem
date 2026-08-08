@@ -155,15 +155,29 @@ else if (block_is_in_arena(header, tls_cache.tlsf_arena)) {
 ```
 1. Mark block as FREE in size_and_flags
 2. Update tlsf_arena_used -= block_size
-3. Insert block into free list (address-ordered singly-linked)
-4. Try coalescing with next_free neighbor:
-   a. If next_free is physically adjacent and FREE:
-      - Merge: current->size += sizeof(tlsf_block_t) + next->size
-      - Remove next from free list
-      - Repeat (chain coalescing)
-   b. If next_free is NOT adjacent: stop
+3. Insert block into address-ordered free list:
+   a. Scan free list to find correct insertion point (address > block address)
+   b. Insert before the found position (or append at end)
+4. Try coalescing:
+   a. Check NEXT neighbor in free list:
+      - If next block is physically adjacent (next_addr == current_addr + current_size):
+        * Merge: current->size += sizeof(tlsf_block_t) + next->size
+        * Remove next from free list
+        * Repeat step 4a with new next neighbor (chain coalescing)
+      - If NOT adjacent: stop
+   b. Check PREV neighbor in free list:
+      - If prev block is physically adjacent (prev_addr + prev_size == current_addr):
+        * Merge: prev->size += sizeof(tlsf_block_t) + current->size
+        * Remove current from free list (it's now part of prev)
+        * Return (merged block is now in prev's position)
+      - If NOT adjacent: stop
 5. Return
 ```
+
+**Invariants**:
+- Free list is always sorted by block address (ascending)
+- No two adjacent free blocks exist in the list (guaranteed by coalescing)
+- `tlsf_arena_used` is accurate (sum of all allocated block sizes)
 
 **Arena full detection**:
 - After free, if `tlsf_arena_used == 0` and `tlsf_arena_free` has only one block of full size, the arena is effectively empty. This is a normal state, not an error.
@@ -223,19 +237,26 @@ static void tls_cache_dtor(void *arg) {
 ### 5.3 Arena Memory Management
 
 **Arena allocation**:
-- On first use, allocate arena memory from the shared pool's OS fallback path:
+- On first use, allocate arena memory via `sys_mem_alloc` (the existing OS-level allocator):
   ```c
-  tls_cache.tlsf_arena = sys_mem_alloc(pool, TLSF_ARENA_DEFAULT_SIZE,
-                                        TLSF_ALIGN_MASK + 1);
+  tls_cache.tlsf_arena_raw_mem = sys_mem_alloc(pool, TLSF_ARENA_DEFAULT_SIZE,
+                                                TLSF_ALIGN_MASK + 1);
+  if (!tls_cache.tlsf_arena_raw_mem) return NULL;
+  tls_cache.tlsf_arena = (tlsf_pool_t *)tls_cache.tlsf_arena_raw_mem;
+  tls_cache.tlsf_arena_free = (tlsf_block_t *)
+      ((uint8_t *)tls_cache.tlsf_arena + sizeof(tlsf_pool_t));
+  tls_cache.tlsf_arena_free->size_and_flags =
+      TLSF_ARENA_DEFAULT_SIZE - sizeof(tlsf_pool_t) - sizeof(tlsf_block_t) | BLOCK_STATE_FREE;
+  tls_cache.tlsf_arena_free->prev_physical = NULL;
+  tls_cache.tlsf_arena_free->next_free = NULL;
+  tls_cache.tlsf_arena_used = 0;
+  tls_cache.tlsf_arena_total = TLSF_ARENA_DEFAULT_SIZE - sizeof(tlsf_pool_t);
   ```
-- Track arena memory pointer in `thread_cache_t` for cleanup:
-  ```c
-  void *tlsf_arena_raw_mem;  /**< Original allocation pointer for munmap */
-  ```
+- Arena memory is NOT part of any `tlsf_pool` — it's a standalone region managed directly by the thread cache.
 
 **Arena deallocation**:
 - Called during drain (pool switch or thread exit)
-- Use `sys_mem_free(pool, raw_mem, TLSF_ARENA_DEFAULT_SIZE)` to return to OS
+- Use `sys_mem_free(pool, tls_cache.tlsf_arena_raw_mem, TLSF_ARENA_DEFAULT_SIZE)` to return to OS
 
 ## 6. Integration with Existing Code
 
