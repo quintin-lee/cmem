@@ -2071,21 +2071,34 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                             pool_unlock(pool);
                         }
                     }
-                    /* Atomic stats update — no pool lock needed. */
+                    /* Stats update for emergency buffer — same atomic/plain optimization. */
+                    const bool ets = (pool->flags & MP_FLAG_THREAD_SAFE) != 0;
                     size_t e_cur =
-                        CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, size, CMEM_ORDER_RELAXED);
-                    size_t e_peak = CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED);
+                        ets ? CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, size, CMEM_ORDER_RELAXED)
+                            : (pool->active_bytes += size);
+                    size_t e_peak = ets ? CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED)
+                                        : pool->peak_bytes;
                     while (e_cur + size > e_peak) {
-                        if (CMEM_ATOMIC_COMPARE_EXCHANGE(&pool->peak_bytes,
-                                                         &e_peak,
-                                                         e_cur + size,
-                                                         CMEM_ORDER_RELAXED,
-                                                         CMEM_ORDER_RELAXED)) {
+                        if (ets) {
+                            if (CMEM_ATOMIC_COMPARE_EXCHANGE(&pool->peak_bytes,
+                                                             &e_peak,
+                                                             e_cur + size,
+                                                             CMEM_ORDER_RELAXED,
+                                                             CMEM_ORDER_RELAXED)) {
+                                break;
+                            }
+                        } else {
+                            pool->peak_bytes = e_cur + size;
                             break;
                         }
                     }
-                    CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
-                    CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, 1, CMEM_ORDER_RELAXED);
+                    if (ets) {
+                        CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+                        CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, 1, CMEM_ORDER_RELAXED);
+                    } else {
+                        pool->active_allocations++;
+                        pool->total_alloc_ops++;
+                    }
                     return emerg_ptr;
                 }
                 return NULL;
@@ -2220,22 +2233,35 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                 pool_unlock(pool);
             }
         }
-        /* Atomic stats updates — no lock needed. */
-        /* Atomically update stats. active_bytes/allocs/ops use fetch_add/sub.
-         * peak_bytes uses a CAS loop to track the high-water mark. */
-        size_t cur_active = CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, size, CMEM_ORDER_RELAXED);
-        size_t cur_peak = CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED);
+        /* Stats updates — use plain writes for non-thread-safe pools to avoid
+         * atomic op overhead on the hot path. Thread-safe pools keep atomics. */
+        const bool ts = (pool->flags & MP_FLAG_THREAD_SAFE) != 0;
+        size_t cur_active =
+            ts ? CMEM_ATOMIC_FETCH_ADD(&pool->active_bytes, size, CMEM_ORDER_RELAXED)
+               : (pool->active_bytes += size);
+        size_t cur_peak =
+            ts ? CMEM_ATOMIC_LOAD(&pool->peak_bytes, CMEM_ORDER_RELAXED) : pool->peak_bytes;
         while (cur_active + size > cur_peak) {
-            if (CMEM_ATOMIC_COMPARE_EXCHANGE(&pool->peak_bytes,
-                                             &cur_peak,
-                                             cur_active + size,
-                                             CMEM_ORDER_RELAXED,
-                                             CMEM_ORDER_RELAXED)) {
+            if (ts) {
+                if (CMEM_ATOMIC_COMPARE_EXCHANGE(&pool->peak_bytes,
+                                                 &cur_peak,
+                                                 cur_active + size,
+                                                 CMEM_ORDER_RELAXED,
+                                                 CMEM_ORDER_RELAXED)) {
+                    break;
+                }
+            } else {
+                pool->peak_bytes = cur_active + size;
                 break;
             }
         }
-        CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
-        CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, 1, CMEM_ORDER_RELAXED);
+        if (ts) {
+            CMEM_ATOMIC_FETCH_ADD(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+            CMEM_ATOMIC_FETCH_ADD(&pool->total_alloc_ops, 1, CMEM_ORDER_RELAXED);
+        } else {
+            pool->active_allocations++;
+            pool->total_alloc_ops++;
+        }
 
         int bucket = get_slab_class_index(pool, size);
         if (bucket < CMEM_HISTOGRAM_BUCKETS) {
