@@ -637,7 +637,7 @@ int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header)
     mp_slab_page_t *page = (mp_slab_page_t *)page_base;
 
     bool was_full = (page->free_count == 0);
-    bool will_be_empty;
+    bool will_be_empty = false;
 
     mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
     slot->next = page->free_list;
@@ -1240,7 +1240,7 @@ void percpu_refill(memory_pool_t *pool, int cpu, uint8_t class_idx)
         tail->next = slots[i];
         tail = slots[i];
     }
-    size_t old_head;
+    size_t old_head = 0;
     do {
         old_head = CMEM_ATOMIC_LOAD(&entry->head, CMEM_ORDER_RELAXED);
         tail->next = (mp_slab_slot_t *)old_head;
@@ -1557,8 +1557,8 @@ bool percpu_push(memory_pool_t *pool, int cpu, uint8_t class_idx, mp_slab_slot_t
     mp_percpu_freelist_entry_t *entry =
         &((mp_percpu_freelist_entry_t *)pool->percpu_freelists)[idx];
     cmem_atomic_size_t *headp = &entry->head;
-    size_t old_head;
-    size_t new_head;
+    size_t old_head = 0;
+    size_t new_head = 0;
     do {
         old_head = CMEM_ATOMIC_LOAD(headp, CMEM_ORDER_RELAXED);
         if (CMEM_ATOMIC_LOAD(&entry->count, CMEM_ORDER_RELAXED) >= MP_PERCPU_MAX_BATCH) {
