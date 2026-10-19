@@ -1018,6 +1018,50 @@ static void test_multi_arena()
     TEST_PASS("test_multi_arena");
 }
 
+typedef struct {
+    memory_pool_t *pool;
+    size_t sz;
+} race_arg_t;
+
+static void *shared_tlsf_race_worker(void *arg)
+{
+    enum { SHARED_TLSF_ITERS = 15000 };
+
+    race_arg_t *work = (race_arg_t *)arg;
+    for (int i = 0; i < SHARED_TLSF_ITERS; i++) {
+        void *ptr = mp_alloc(work->pool, work->sz);
+        assert(ptr != NULL);
+        ((volatile char *)ptr)[0] = 1;
+        mp_free(work->pool, ptr);
+    }
+    return NULL;
+}
+
+static void test_shared_tlsf_threaded_race()
+{
+    printf("\n--- Test: Shared TLSF concurrent alloc/free (D12 race) ---\n");
+    const size_t sizes[] = {65536, 3 * 65536, 16 * 65536};
+    enum { RACE_THREADS = 4 };
+
+    for (int phase = 0; phase < 3; phase++) {
+        memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_THREAD_SAFE);
+        assert(pool != NULL);
+
+        pthread_t threads[RACE_THREADS];
+        race_arg_t args[RACE_THREADS];
+        for (int i = 0; i < RACE_THREADS; i++) {
+            args[i].pool = pool;
+            args[i].sz = sizes[phase];
+            pthread_create(&threads[i], NULL, shared_tlsf_race_worker, &args[i]);
+        }
+        for (int i = 0; i < RACE_THREADS; i++) {
+            pthread_join(threads[i], NULL);
+        }
+        mp_destroy(pool);
+    }
+    TEST_PASS("test_shared_tlsf_threaded_race");
+}
+
 int main()
 {
     printf("\n================ RUNNING CMEM ADVANCED UNIT TESTS ================\n");
@@ -1068,6 +1112,7 @@ int main()
     test_enumerate_regions();
     test_report_leaks_on_destroy();
     test_multi_arena();
+    test_shared_tlsf_threaded_race();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;

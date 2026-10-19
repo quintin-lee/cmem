@@ -2374,7 +2374,12 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
         int bucket = get_slab_class_index(pool, size);
         if (bucket < CMEM_HISTOGRAM_BUCKETS) {
-            pool->stats.size_histogram[bucket]++;
+            if (ts) {
+                CMEM_ATOMIC_FETCH_ADD(
+                    (_Atomic size_t *)&pool->stats.size_histogram[bucket], 1, CMEM_ORDER_RELAXED);
+            } else {
+                pool->stats.size_histogram[bucket]++;
+            }
         }
         if (pool->watermark_cb) {
             call_watermark = true;
@@ -3231,7 +3236,9 @@ void mp_free(memory_pool_t *pool, void *ptr)
     } else if (alloc_type == ALLOC_TYPE_TLSF) {
         tls_cache_validate_owner(pool);
         tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
-        size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
+        /* Derive from the header: block->size_and_flags may be concurrently OR-ed
+         * with BLOCK_STATE_PREV_FREE by tlsf_alloc in another thread (D12 residual). */
+        size_t block_size = header->usable_size + sizeof(tlsf_block_t) + sizeof(mp_block_header_t);
 
         /* Arena blocks: free directly back to the per-thread arena.
          * They bypass the TLSF cache to keep the arena's free list in sync
