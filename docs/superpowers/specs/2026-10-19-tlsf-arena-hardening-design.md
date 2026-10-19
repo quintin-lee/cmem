@@ -1,7 +1,7 @@
 # Per-Thread TLSF Arena Hardening Design
 
 **Date**: 2026-10-19
-**Status**: Draft
+**Status**: Approved
 **Owner**: quintin
 **Supersedes**: [2026-08-08-per-thread-tlsf-arena-design.md](2026-08-08-per-thread-tlsf-arena-design.md)
 
