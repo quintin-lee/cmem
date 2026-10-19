@@ -1,8 +1,13 @@
 # Per-Thread TLSF Arena Design
 
 **Date**: 2026-08-08
-**Status**: Approved
+**Status**: Superseded
 **Owner**: quintin
+
+> **Superseded**: the shipped implementation deviates from this design in
+> load-bearing ways (including two critical defects). See
+> [2026-10-19-tlsf-arena-hardening-design.md](2026-10-19-tlsf-arena-hardening-design.md)
+> for the current authoritative design.
 
 ## 1. Problem Statement
 
