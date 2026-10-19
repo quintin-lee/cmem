@@ -61,11 +61,20 @@ typedef struct tlsf_arena {
     unsigned long   owner_thread;   /* diagnostic only                   */
     _Atomic bool    retired;
     _Atomic bool    cleanup_claimed;
+    _Atomic bool    finished;       /* cleanup done: raw released      */
 } tlsf_arena_t;
 ```
 
 `thread_cache_t` loses `tlsf_arena_raw_mem/_free/_used/_total` and holds a single
 `tlsf_arena_t *tlsf_arena`.
+
+Descriptor lifetime is **pool-owned**: each pool keeps a mutex-guarded registry
+of its arenas. Creating an arena pushes its descriptor; descriptors are never
+freed on the hot path. The cleanup winner (Section 3.3) marks `finished` and
+releases the raw region; `mp_destroy` walks the registry, verifies every
+descriptor is `finished` (all blocks returned), and frees the descriptor memory
+itself. This removes any use-after-free on the descriptor: both potential
+cleanup claimants always operate on memory that lives until pool destruction.
 
 Block self-description:
 
@@ -146,12 +155,14 @@ Retire algorithm:
 - `live_bytes == 0`: reap (empty), coalesce to a single block covering
   `[raw, sentinel)`, drain into `owner_pool->tlsf_root` via
   `tlsf_insert_free_block` (thread-safe bucket locks), `total_pool_size -= size`,
-  `sys_mem_free(raw)`, free the descriptor.
+  `sys_mem_free(raw)`, mark `finished` (release); the descriptor itself is
+  released later by `mp_destroy`.
 - `live_bytes > 0`: `retired = true` (release), detach from the thread cache.
   The free list is frozen (not reusable). Later frees from any thread go to the
   mailbox. The freer that drives `live_bytes` to zero claims cleanup with a
   `cleanup_claimed` CAS, reaps the mailbox (acquire), and performs the same
-  drain/free sequence.
+  drain/release sequence (raw freed, `finished` set); the descriptor memory
+  stays alive until `mp_destroy`.
 
 Correctness argument:
 
@@ -160,9 +171,14 @@ Correctness argument:
   complete and visible to the cleaner's acquire exchange.
 - The zero-transition is unique: `fetch_sub` returns the previous value; exactly
   one freer sees `old == own span` (with `live_bytes` accounting correct).
-- After zero, no thread can legitimately touch the descriptor: every freer
-  dereferences `desc` only before its own decrement, which happens-before the
-  zero observation, which happens-before the cleaner's `sys_mem_free`.
+- After zero, no thread can touch the descriptor for block processing: every
+  freer dereferences `desc` only before its own decrement. Descriptor memory
+  itself is never freed by this path — it belongs to the pool registry until
+  `mp_destroy` — so a late CAS attempt by the losing claimant cannot be a
+  use-after-free.
+- Cleanup arbitration: the retiring thread claims via the same
+  `cleanup_claimed` CAS; exactly one of {retiring thread, last freer} wins. The
+  loser must not touch the descriptor after failing the CAS.
 - The drain is safe because with `live_bytes == 0` and correct coalescing the
   arena is exactly one free block starting at `raw` with `prev_physical == NULL`
   (validator-asserted), ending at the sentinel — the shared TLSF can never walk
@@ -177,13 +193,31 @@ Documented consequences:
 - A thread alternating pools while holding outstanding blocks can accumulate one
   arena per pool; each is released at its own last free. Fixed size, no dynamic
   sizing.
-- `mp_destroy` keeps the existing contract: all threads must have released their
-  caches and all blocks. Retired descriptors are reachable through live block
-  headers, so no global arena registry is introduced.
+- `mp_destroy` keeps the existing contract (all blocks returned) and additionally
+  releases every descriptor in the pool's arena registry. Retired descriptors
+  still reachable through live block headers remain valid until then.
 - Slab path, `total_cache_bytes`, and `mp_check_leaks` semantics are untouched;
   arena blocks remain ordinary `active_allocations` until freed.
 
-### 3.4 Validator
+### 3.4 Integration Sites (every `header->subpool` reader)
+
+`header->subpool` currently has one meaning (tlsf_pool_t* for TLSF blocks, pool
+otherwise); arena blocks reuse it for the descriptor. Every reader must test
+`MP_BLOCK_FLAG_TLSF_ARENA` **first**:
+
+| Site | Today | Change |
+|------|-------|--------|
+| `mp_free` dispatch (cmem_event.c:3099) | casts `subpool` to `tlsf_pool_t*` | flag → arena free path; never cast the descriptor |
+| TLSF cache push (cmem_event.c:3258) | `entry->tpool = header->subpool` | non-arena blocks only (arena blocks bypass the cache) |
+| `mp_realloc` arena gate (cmem_event.c:3328) | `header->subpool == NULL && is_multi_arena_child` | flag-based routing regardless of the passed pool |
+| `tlsf_free` (cmem_tlsf.c:567) | casts `subpool` unconditionally | arena blocks must never reach it (assert in debug) |
+| `tlsf_try_inplace_expand` (cmem_tlsf.c:782) | `if (!tpool) return false;` | flag guard: return false for arena blocks |
+| `mp_free_batch` (cmem_event.c:3028) | already falls back to `mp_free` for arena-shaped blocks | no change (verify) |
+
+`mp_usable_size` and the diagnostics/compression subsystems never dereference
+`subpool` as a pool — verified, no change.
+
+### 3.5 Validator
 
 `bool tlsf_arena_validate(const tlsf_arena_t *)` in `src/cmem_slab.c`, declared
 in `src/cmem_internal.h`. Returns false instead of asserting so tests can use it
@@ -233,14 +267,16 @@ scenario: 4–8 bound threads, random alloc/free/realloc, ~10 % of frees delegat
 to another thread, payload verification. Runs in CI length and within the
 existing long-run stress harness (`-DSTRESS_DURATION_SEC=15` quick check).
 
-**Gates**:
+**Gates** (exact Makefile targets; per-config `build-$(CONFIG)` dirs, no
+collision; test targets run with `LSAN_OPTIONS=detect_leaks=0`):
 
-- `make clean && make test_all`
+- `make clean && make test_all` (unit + advanced, default release dir)
 - `make CONFIG=asan test_all`, `make CONFIG=ubsan test_all`,
-  `make CONFIG=tsan test_all` (separate `build-*` directories; zero warnings)
-- `cmake -B build_cmake -G Ninja && cmake --build build_cmake && ctest --test-dir build_cmake`
-- `make format-check`; clang-tidy inline in the CMake build; `make check-mermaid`
-  if docs carry diagrams
+  `make CONFIG=tsan test_all` (TSan: zero warnings)
+- `make cpp` / `make test_cpp` for the C++ PMR wrapper
+- CMake: `make cmake-build && make cmake-test` (Ninja + ctest; Release adds
+  `-DNDEBUG`)
+- `make format-check`, plus clang-tidy inline in the CMake build (strict)
 
 ## 5. Benchmark & Tuning
 
@@ -261,6 +297,11 @@ Extend `benchmarks/bench_main.c` with a multi-arena TLSF scenario:
 Tuning knobs, only if measurements demand: best-fit vs first-fit, next-fit
 cursor, arena size increase when the fallback rate is high. No tuning without a
 measurement justifying it.
+
+Implementation: a new `bench_tlsf_arena(...)` scenario in
+`benchmarks/bench_main.c` reusing the `bench_scaling_run(pool, threads,
+allocs_per_thread)` helper (definition ~line 1073), declared with the other
+forward declarations (~lines 261-274) and invoked from `main()` (~line 280).
 
 ## 6. Definition of Done
 
@@ -301,7 +342,8 @@ per commit, no push, no amend.
 | `header->flags` assumed free | Verified: all stamp sites write 0; no reader exists |
 | `thread_cache_t` layout change (public header) | Field is internal-use; no ABI guarantee in this codebase; document in commit |
 | TSan false positives on header/descriptor patterns | All cross-thread accesses are C11 atomics; owner-only fields are unshared |
-| Retire path if `live_bytes` accounting is wrong | Validator + randomized differential test; last-freer cleanup additionally guarded by `cleanup_claimed` CAS |
+| Retire path if `live_bytes` accounting is wrong | Validator + randomized differential test; cleanup additionally arbitrated by the `cleanup_claimed` CAS |
+| Two cleanup claimants (retiring thread vs last freer) | Descriptors are pool-owned (registry, released only by `mp_destroy`); the loser's CAS touches live memory; regression: thread-exit test with concurrent frees |
 | CMake Release has `-DNDEBUG` → validator no-ops | Tests run via Makefile; CMake runs the same test binaries with explicit calls to the validator |
 
 ## 9. Out of Scope
