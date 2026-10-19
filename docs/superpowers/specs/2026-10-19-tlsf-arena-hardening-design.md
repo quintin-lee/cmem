@@ -42,6 +42,8 @@ Audit evidence for each item: source lines at commit `0aa8692`.
 | D8 | LOW | `TLSF_ARENA_MIN_SIZE` unused; no debug validator; no stats | — | Dead constant; no invariant checking | Keep constant reserved; add `tlsf_arena_validate` |
 | D9 | — | Performance unverified | No benchmark exercises the arena | Spec claims (8 threads ~200→600+ Mops/s, p99 2 µs→0.5 µs) unmeasured | Add benchmark scenario, measure, tune only if warranted |
 | D10 | — | Test coverage | `test_multi_arena` exists but allocates only 64 B → slab path; TLSF arena never exercised | Every defect above shipped undetected | Section 4 test plan |
+| D11 | MED | Unpaired `pool_unlock` in `mp_realloc` arena in-place path | `src/cmem_event.c:3401` unlocks without a matching lock in that branch (the function's `pool_lock` is at ~3406) | Corrupts rwlock state whenever the arena in-place expand succeeds | Removed in the realloc rewrite (plan Task 1.6) |
+| D12 | **CRITICAL** | Shared-TLSF (non-arena) data race | Reproducer: segfault/hang at ≥64 KiB with 2+ threads on `MP_FLAG_THREAD_SAFE` pools; TSan: 165 races (`tlsf_free` vs `tlsf_alloc`); crash `tlsf_free` ← `mp_free` (`src/cmem_event.c:3264`); all suites passed pre-fix (coverage gap) | Memory corruption / hangs for any threaded pool using the shared TLSF path | Coarse per-arena mutex (`tpool->lock`) serialization — Section 3.6 |
 
 ## 3. Design
 
@@ -235,6 +237,55 @@ Called under `#ifndef NDEBUG` at the end of alloc/free/realloc/reap/retire
 (Makefile builds do not define NDEBUG; CMake Release does, so zero release
 cost), and directly by tests.
 
+### 3.6 Shared-TLSF Serialization (D12)
+
+The hardening work surfaced a **pre-existing, unrelated** defect: the shared TLSF
+allocator (any `MP_FLAG_THREAD_SAFE` pool — multi-arena not required) races under
+concurrent alloc/free. The fine-grained per-bucket locks (`bucket_locks[30][16]`)
+are unsound by construction:
+
+- `tlsf_find_suitable_block` reads the FL/SL bitmaps without holding the matching
+  bucket lock;
+- split/coalesce paths mutate block headers (flags, physical links) partially
+  outside the bucket locks;
+- `tlsf_free` marks a block FREE *before* taking locks, and its multi-bucket
+  coalescing collects/sorts across buckets while alloc walkers race it.
+
+Evidence on `5831392`: a threaded reproducer segfaults or hangs at sizes ≥ 64 KiB
+with 2+ threads; TSan reports 165 races (`tlsf_free:626/752` vs
+`tlsf_alloc:401/424`); the crash backtrace is `tlsf_free` ← `mp_free`
+(`src/cmem_event.c:3264`). All suites passed pre-fix — there was no threaded
+shared-TLSF test (coverage gap; closed by `test_shared_tlsf_threaded_race` in
+`tests/test_advanced.c`).
+
+**Fix**: one coarse `pthread_mutex_t lock` per `tlsf_pool_t` (field existed,
+previously unused) serializes every structural operation — find/remove/split/
+insert on both alloc arms, the full free path (FREE marking, both coalescing
+directions, merged insert), and in-place realloc expansion. Public
+`tlsf_insert_free_block`/`tlsf_remove_free_block` keep their signatures and take
+the lock; static `*_nolock` cores serve already-locked regions. The bucket-lock
+helpers are deleted; the `bucket_locks` arrays remain initialized but unused
+(cleanup deferred).
+
+Lock order: pool rwlock (`pool_lock`, write, only for `MP_FLAG_THREAD_SAFE`) →
+`tpool->lock`; nothing takes the pool rwlock while holding an arena lock, so the
+order is acyclic. `tlsf_alloc`'s lazy-init path double-checks `pool->tlsf_root`
+under `pool_lock`.
+
+TSan surfaced two residual pre-existing races in `src/cmem_event.c`, also fixed:
+
+- `mp_free` derived `block_size` from `block->size_and_flags`, which a concurrent
+  `tlsf_alloc` may OR with `BLOCK_STATE_PREV_FREE`; it now derives the size from
+  `header->usable_size + sizeof(tlsf_block_t) + sizeof(mp_block_header_t)`
+  (invariant holds at every TLSF stamp site, including both in-place realloc
+  paths);
+- `mp_alloc_internal`'s `size_histogram[bucket]++` is now a ts-gated relaxed
+  atomic add (`mp_alloc_batch`'s writer already runs under `pool_lock`).
+
+Post-fix verification: reproducer matrix (3 sizes × 4 thread counts, 20 k
+iterations) all exit 0; TSan reproducer and `make CONFIG=tsan test_all` report
+**zero** warnings; `make test_all` and `make CONFIG=asan test_all` green.
+
 ## 4. Testing & Verification
 
 Added to `tests/test_advanced.c` and registered in its `main()` (no new binary,
@@ -305,8 +356,8 @@ forward declarations (~lines 261-274) and invoked from `main()` (~line 280).
 
 ## 6. Definition of Done
 
-1. D1–D7 fixed; validator clean in every test across all four sanitizer
-   configurations.
+1. D1–D7 fixed (plus D11–D12, Section 3.6); validator clean in every test across
+   all four sanitizer configurations.
 2. Randomized differential + multithreaded stress green, including master-handle
    and cross-thread frees; thread-exit and pool-switch paths exercised; pool
    accounting returns to baseline after drain.
