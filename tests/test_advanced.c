@@ -1062,6 +1062,197 @@ static void test_shared_tlsf_threaded_race()
     TEST_PASS("test_shared_tlsf_threaded_race");
 }
 
+extern bool tlsf_arena_validate_current(void);
+
+/* Fresh multi-arena pool; sizes are above the TLSF cache range (>8 KiB) so the
+ * TLSF arena path (not the cache/slab path) is exercised. */
+static void test_tlsf_arena_basic(void)
+{
+    printf("\n--- Test: TLSF arena basic alloc/free (master handle) ---\n");
+    memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    void *block = mp_alloc(pool, 32768);
+    assert(block != NULL);
+    /* The child arena descriptor is created lazily on first alloc, so the
+     * count only becomes non-zero now. */
+    assert(mp_get_arena_count(pool) > 0);
+    memset(block, 0xAB, 32768);
+    assert(tlsf_arena_validate_current());
+    mp_free(pool, block); /* master handle: must NOT crash (D5) */
+    assert(tlsf_arena_validate_current());
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena basic alloc/free with master handle");
+}
+
+static void test_tlsf_arena_realloc(void)
+{
+    printf("\n--- Test: TLSF arena realloc grow/shrink ---\n");
+    memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    size_t size = 32768;
+    uint8_t *p = (uint8_t *)mp_alloc(pool, size);
+    assert(p != NULL);
+    for (size_t i = 0; i < size; i++) {
+        p[i] = (uint8_t)(i & 0xFF);
+    }
+    assert(tlsf_arena_validate_current());
+
+    size_t bigger = 49152;
+    uint8_t *q = (uint8_t *)mp_realloc(pool, p, bigger);
+    assert(q != NULL);
+    for (size_t i = 0; i < size; i++) {
+        assert(q[i] == (uint8_t)(i & 0xFF));
+    }
+    assert(tlsf_arena_validate_current());
+
+    size_t smaller = 20000;
+    uint8_t *r = (uint8_t *)mp_realloc(pool, q, smaller);
+    assert(r != NULL);
+    for (size_t i = 0; i < smaller; i++) {
+        assert(r[i] == (uint8_t)(i & 0xFF));
+    }
+    assert(tlsf_arena_validate_current());
+
+    mp_free(pool, r);
+    assert(tlsf_arena_validate_current());
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena realloc grow/shrink preserves payload");
+}
+
+static void test_tlsf_arena_coalesce(void)
+{
+    printf("\n--- Test: TLSF arena coalesce ---\n");
+    memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    enum { N = 4 };
+    const size_t blk = 32768;
+    void *v[N];
+    for (int i = 0; i < N; i++) {
+        v[i] = mp_alloc(pool, blk);
+        assert(v[i] != NULL);
+        memset(v[i], (unsigned char)i, blk);
+    }
+    assert(tlsf_arena_validate_current());
+
+    /* Free order forces forward (1->2), backward (0), then the remaining pair
+     * merges both ways. */
+    const int order[N] = {1, 0, 3, 2};
+    for (int i = 0; i < N; i++) {
+        mp_free(pool, v[order[i]]);
+        assert(tlsf_arena_validate_current());
+    }
+
+    /* Full-capacity proof: 192 KiB only succeeds if all 4 blocks plus the
+     * arena's always-free tail coalesced back into one block. */
+    void *big = mp_alloc(pool, 196608);
+    assert(big != NULL);
+    mp_free(pool, big);
+    assert(tlsf_arena_validate_current());
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena coalesce (fwd/back/both) + full-capacity merge");
+}
+
+static void test_tlsf_arena_master_free(void)
+{
+    printf("\n--- Test: TLSF arena free via alternate child handle ---\n");
+    memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    void *block = mp_alloc(pool, 32768);
+    assert(block != NULL);
+    memset(block, 0x5A, 32768);
+    assert(tlsf_arena_validate_current());
+
+    memory_pool_t *child = mp_get_thread_arena(pool);
+    assert(child != NULL);
+    mp_free(child, block);
+    assert(tlsf_arena_validate_current());
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena free via alternate child handle");
+}
+
+typedef struct {
+    memory_pool_t *pool;
+    void *ptrs[4];
+    int count;
+} arena_xfree_arg_t;
+
+static void *arena_xfree_worker(void *arg)
+{
+    arena_xfree_arg_t *xa = (arena_xfree_arg_t *)arg;
+    for (int i = 0; i < xa->count; i++) {
+        mp_free(xa->pool, xa->ptrs[i]);
+    }
+    return NULL;
+}
+
+static void test_tlsf_arena_cross_thread_free(void)
+{
+    printf("\n--- Test: TLSF arena cross-thread free (mailbox) ---\n");
+    memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    arena_xfree_arg_t xa;
+    xa.pool = pool;
+    xa.count = 4;
+    /* 4 x 32 KiB = 128 KiB: all arena-resident in the 256 KiB arena. */
+    for (int i = 0; i < xa.count; i++) {
+        xa.ptrs[i] = mp_alloc(pool, 32768);
+        assert(xa.ptrs[i] != NULL);
+        memset(xa.ptrs[i], 0xC3, 32768);
+    }
+    assert(tlsf_arena_validate_current());
+
+    pthread_t worker;
+    assert(pthread_create(&worker, NULL, arena_xfree_worker, &xa) == 0);
+    assert(pthread_join(worker, NULL) == 0);
+
+    /* Owner still alive: the next owner-side alloc reaps the mailbox. */
+    void *again = mp_alloc(pool, 32768);
+    assert(again != NULL);
+    mp_free(pool, again);
+    assert(tlsf_arena_validate_current());
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena cross-thread free via mailbox + reap");
+}
+
+static void test_tlsf_arena_exhaustion(void)
+{
+    printf("\n--- Test: TLSF arena exhaustion + shared-pool fallback ---\n");
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    enum { MAXBLK = 64 }; /* 64 x 32 KiB = 2 MiB >> 256 KiB arena */
+    void *blocks[MAXBLK];
+    int n = 0;
+
+    /* ~7 blocks fit the 256 KiB arena; every further block must transparently
+     * fall back to the shared pool and still succeed. */
+    for (; n < MAXBLK; n++) {
+        blocks[n] = mp_alloc(pool, 32768);
+        assert(blocks[n] != NULL);
+        memset(blocks[n], 0x7E, 32768);
+    }
+    assert(tlsf_arena_validate_current());
+
+    for (int i = 0; i < n; i++) {
+        mp_free(pool, blocks[i]);
+    }
+    assert(tlsf_arena_validate_current());
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena exhaustion falls back to shared pool cleanly");
+}
+
 int main()
 {
     printf("\n================ RUNNING CMEM ADVANCED UNIT TESTS ================\n");
@@ -1113,6 +1304,12 @@ int main()
     test_report_leaks_on_destroy();
     test_multi_arena();
     test_shared_tlsf_threaded_race();
+    test_tlsf_arena_basic();
+    test_tlsf_arena_realloc();
+    test_tlsf_arena_coalesce();
+    test_tlsf_arena_master_free();
+    test_tlsf_arena_cross_thread_free();
+    test_tlsf_arena_exhaustion();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
