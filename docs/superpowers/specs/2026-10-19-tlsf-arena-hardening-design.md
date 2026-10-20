@@ -20,7 +20,7 @@ approved spec in several load-bearing ways, including two critical defects
 
 **Goal**: harden the arena to the shared-TLSF invariants, prove correctness with
 targeted + randomized + multithreaded tests, add the missing lifecycle
-(drain/destroy), benchmark, and only then tune performance. Close out the stale
+(retire/release), benchmark, and only then tune performance. Close out the stale
 plan and docs.
 
 **Non-goals**: generalizing the arena to non-multi-arena pools; dynamic arena
@@ -44,6 +44,8 @@ Audit evidence for each item: source lines at commit `0aa8692`.
 | D10 | — | Test coverage | `test_multi_arena` exists but allocates only 64 B → slab path; TLSF arena never exercised | Every defect above shipped undetected | Section 4 test plan |
 | D11 | MED | Unpaired `pool_unlock` in `mp_realloc` arena in-place path | `src/cmem_event.c:3401` unlocks without a matching lock in that branch (the function's `pool_lock` is at ~3406) | Corrupts rwlock state whenever the arena in-place expand succeeds | Removed in the realloc rewrite (plan Task 1.6) |
 | D12 | **CRITICAL** | Shared-TLSF (non-arena) data race | Reproducer: segfault/hang at ≥64 KiB with 2+ threads on `MP_FLAG_THREAD_SAFE` pools; TSan: 165 races (`tlsf_free` vs `tlsf_alloc`); crash `tlsf_free` ← `mp_free` (`src/cmem_event.c:3264`); all suites passed pre-fix (coverage gap) | Memory corruption / hangs for any threaded pool using the shared TLSF path | Coarse per-arena mutex (`tpool->lock`) serialization — Section 3.6 |
+| D13 | **CRITICAL** | `mp_enable_multi_arena` recursively write-locks the parent rwlock | Holds `pool_lock(pool)` while `mp_create_child` internally takes the same write lock; glibc rwlock state degenerates (`__readers=0xFFFFFFF9` = -7) and any later wrlock (e.g. `mp_check_leaks`, `mp_destroy`) hangs forever | Every multi-arena pool built via `mp_enable_multi_arena` is corrupt; discovered by the Task 1.7 hang | Restructured: create children without the pool lock (children take it themselves), then publish `arenas`/`num_arenas`/flags under one write-lock (fixed in `2625b80`) |
+| D14 | **CRITICAL** | TLSF per-thread cache hit ignores the block's true span | Cache buckets are `floor(log2)` classes (`tlsf_block_size_to_fl`); the hit path re-stamped `size_and_flags = total_needed`, so a cached 1024-byte block served for 1600 bytes extended into its live physical neighbor (observed fill-byte dereference `0x3131...` in `tlsf_remove_free_block_nolock`) | Cross-size reuse corrupts the physical chain: payload overlap (smaller span) or silently lost tail (larger span) | Serve only exact-span hits; otherwise mark the block FREE, insert it into the shared list, and fall through to arena/shared allocation, which splits correctly (fixed in `c945f47`) |
 
 ## 3. Design
 
@@ -59,7 +61,7 @@ typedef struct tlsf_arena {
     tlsf_block_t   *sentinel;       /* raw + size - sizeof(tlsf_block_t) */
     _Atomic size_t  live_bytes;     /* Σ live block spans (H + payload)  */
     _Atomic(tlsf_block_t *) remote_free;  /* MPSC mailbox head          */
-    memory_pool_t  *owner_pool;     /* drain target for shared TLSF      */
+    memory_pool_t  *owner_pool;     /* pool this arena serves (registry owner) */
     unsigned long   owner_thread;   /* diagnostic only                   */
     _Atomic bool    retired;
     _Atomic bool    cleanup_claimed;
@@ -154,17 +156,19 @@ Retire triggers, all on the owning thread:
 
 Retire algorithm:
 
-- `live_bytes == 0`: reap (empty), coalesce to a single block covering
-  `[raw, sentinel)`, drain into `owner_pool->tlsf_root` via
-  `tlsf_insert_free_block` (thread-safe bucket locks), `total_pool_size -= size`,
-  `sys_mem_free(raw)`, mark `finished` (release); the descriptor itself is
-  released later by `mp_destroy`.
+- `live_bytes == 0`: reap any mailbox leftovers, coalesce to a single free
+  block covering `[raw, sentinel)` (validator-asserted), release the region
+  with `sys_mem_free(raw)`, `total_pool_size -= size`, null `raw`, mark
+  `finished` (release); the descriptor itself is released later by
+  `mp_destroy`. Deliberate deviation: the region is **not** inserted into the
+  shared TLSF's buckets — it cannot both join a shared free list and be
+  returned to the OS, and the pool does not track foreign regions (§3.7).
 - `live_bytes > 0`: `retired = true` (release), detach from the thread cache.
   The free list is frozen (not reusable). Later frees from any thread go to the
   mailbox. The freer that drives `live_bytes` to zero claims cleanup with a
   `cleanup_claimed` CAS, reaps the mailbox (acquire), and performs the same
-  drain/release sequence (raw freed, `finished` set); the descriptor memory
-  stays alive until `mp_destroy`.
+  release sequence (raw freed, `finished` set); the descriptor memory stays
+  alive until `mp_destroy`.
 
 Correctness argument:
 
@@ -181,12 +185,14 @@ Correctness argument:
 - Cleanup arbitration: the retiring thread claims via the same
   `cleanup_claimed` CAS; exactly one of {retiring thread, last freer} wins. The
   loser must not touch the descriptor after failing the CAS.
-- The drain is safe because with `live_bytes == 0` and correct coalescing the
+- Cleanup is safe because with `live_bytes == 0` and correct coalescing the
   arena is exactly one free block starting at `raw` with `prev_physical == NULL`
-  (validator-asserted), ending at the sentinel — the shared TLSF can never walk
-  out of the region.
-- `tlsf_arena_drain`'s "no `tlsf_root`" case just frees `raw`; only reachable
-  after pool teardown, which already requires no outstanding blocks.
+  (validator-asserted), ending at the sentinel. The whole `[raw, sentinel]`
+  region is then unmapped in one `sys_mem_free`, so no allocator can ever walk
+  out of it.
+- `tlsf_arena_registry_release` force-releases any unfinished arena region at
+  pool teardown; it is only reachable after the pool contract (all blocks
+  returned) or a leaky shutdown, and never inserts memory into another pool.
 
 Documented consequences:
 
@@ -286,6 +292,34 @@ Post-fix verification: reproducer matrix (3 sizes × 4 thread counts, 20 k
 iterations) all exit 0; TSan reproducer and `make CONFIG=tsan test_all` report
 **zero** warnings; `make test_all` and `make CONFIG=asan test_all` green.
 
+### 3.7 Post-implementation findings & deviations
+
+- **D13** (pre-existing, fixed in `2625b80`): `mp_enable_multi_arena` created
+  children while holding the parent write lock; `mp_create_child` takes the same
+  lock, so the rwlock was recursively write-locked and corrupted. Now children
+  are created outside the lock and only publication takes it.
+- **D14** (pre-existing, fixed in `c945f47`): the TLSF cache-hit path re-stamped
+  the block size to the request size without checking the cached block's actual
+  span. Cache buckets are `floor(log2)` classes, so an over-sized request could
+  extend a block into a live neighbor. The hit is now exact-span only; a
+  mismatched block returns to the shared free list and the normal path splits a
+  correctly sized piece.
+- **Cleanup releases instead of draining** (§3.3): the retired arena region is
+  unmapped with `sys_mem_free` after the final free; it is not inserted into
+  the shared TLSF. Joining a shared free list and returning memory to the OS are
+  mutually exclusive, and the pool does not track foreign regions.
+- **Fallback rate is not instrumented** (§5): the benchmark reports throughput
+  and latency only; exhaustion/fallback is covered functionally by the
+  exhaustion test and the sub-256 KiB stress sizes, not measured statistically.
+- **Helper exposure** (Task 1.6): `tlsf_arena_span`, `tlsf_arena_unlink_free`
+  and `tlsf_arena_insert_free` are cross-TU (declared in `src/cmem_internal.h`)
+  so `mp_realloc` can perform arena in-place growth with the same list
+  discipline; they were planned as static.
+- **Registry mutex ownership** (Task 2.2): `tlsf_arena_registry_release`
+  detaches and frees descriptors but does **not** destroy
+  `arena_registry_lock`; `mp_destroy_shared` remains the single destroyer to
+  avoid a double destroy on the shared path.
+
 ## 4. Testing & Verification
 
 Added to `tests/test_advanced.c` and registered in its `main()` (no new binary,
@@ -302,7 +336,7 @@ these tests target the TLSF path (> 8 KiB sizes to clear the TLSF cache range):
 5. `test_tlsf_arena_cross_thread_free` — worker threads free the owner's blocks
    while the owner is alive (mailbox reap), and sizes above the TLSF cache.
 6. `test_tlsf_arena_thread_exit` — thread exits with live blocks; remaining
-   frees drain; pool accounting returns to baseline.
+   frees release the region; pool accounting returns to baseline.
 7. `test_tlsf_arena_pool_switch` — thread switches pools with outstanding
    blocks; old arena retires; new pool gets a fresh arena.
 8. `test_tlsf_arena_exhaustion` — allocate until fallback to the shared pool;
@@ -314,9 +348,13 @@ verified every op, validator + model agreement every 256 ops, final free-all
 restores full arena capacity.
 
 **Concurrency stress** — extend `tests/stress_test.c` with a multi-arena TLSF
-scenario: 4–8 bound threads, random alloc/free/realloc, ~10 % of frees delegated
-to another thread, payload verification. Runs in CI length and within the
-existing long-run stress harness (`-DSTRESS_DURATION_SEC=15` quick check).
+scenario: exactly 4 bound threads, random alloc/free/realloc (512 B–256 KiB,
+crossing the arena ceiling so the shared-pool fallback is covered), ~10 % of
+frees delegated to another thread through per-thread mail slots, payload
+verification on every free/realloc. Workers exit with live slots (exercising
+retire-with-outstanding-blocks); the main thread frees leftovers and drains the
+mail slots. Runs in CI length and within the existing long-run stress harness
+(`-DSTRESS_DURATION_SEC=15` quick check).
 
 **Gates** (exact Makefile targets; per-config `build-$(CONFIG)` dirs, no
 collision; test targets run with `LSAN_OPTIONS=detect_leaks=0`):
@@ -343,11 +381,11 @@ Extend `benchmarks/bench_main.c` with a multi-arena TLSF scenario:
   on the same axis;
 - the spec's 8-thread and p99 claims are treated as indicative targets, not
   contractual, since the feature is deliberately multi-arena-scoped; the bench
-  reports the shared-pool fallback rate.
+  does not instrument the shared-pool fallback rate.
 
 Tuning knobs, only if measurements demand: best-fit vs first-fit, next-fit
-cursor, arena size increase when the fallback rate is high. No tuning without a
-measurement justifying it.
+cursor, arena size increase if fallback were measured high (not instrumented
+today). No tuning without a measurement justifying it.
 
 Implementation: a new `bench_tlsf_arena(...)` scenario in
 `benchmarks/bench_main.c` reusing the `bench_scaling_run(pool, threads,
@@ -356,11 +394,11 @@ forward declarations (~lines 261-274) and invoked from `main()` (~line 280).
 
 ## 6. Definition of Done
 
-1. D1–D7 fixed (plus D11–D12, Section 3.6); validator clean in every test across
+1. D1–D8 fixed (plus D11–D14, Sections 3.6–3.7); validator clean in every test across
    all four sanitizer configurations.
 2. Randomized differential + multithreaded stress green, including master-handle
    and cross-thread frees; thread-exit and pool-switch paths exercised; pool
-   accounting returns to baseline after drain.
+   accounting returns to baseline after release.
 3. All Section 4 gates pass, TSan with zero warnings.
 4. Benchmark recorded (arena vs no-arena, 1–8 threads, Mops/s + p99) with a
    stated conclusion on tuning.
@@ -375,7 +413,7 @@ forward declarations (~lines 261-274) and invoked from `main()` (~line 280).
 2. Core invariants: sentinel, FREE/PREV_FREE discipline, distance convention,
    single `insert_free`/`unlink_free` helper, `live_bytes`.
 3. Flag-based routing in free and realloc; master-handle fix.
-4. Mailbox + retire lifecycle; drain/destroy wiring.
+4. Mailbox + retire lifecycle; registry release wiring.
 5. Realloc via helper; remove ad-hoc list surgery.
 6. Targeted tests + randomized differential + stress.
 7. Validator wiring in debug builds.
