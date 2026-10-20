@@ -1253,6 +1253,70 @@ static void test_tlsf_arena_exhaustion(void)
     TEST_PASS("TLSF arena exhaustion falls back to shared pool cleanly");
 }
 
+typedef struct {
+    memory_pool_t *pool;
+    void *ptrs[4];
+} arena_exit_arg_t;
+
+static void *arena_exit_worker(void *arg)
+{
+    arena_exit_arg_t *ea = (arena_exit_arg_t *)arg;
+    for (int i = 0; i < 4; i++) {
+        /* 4 x 32 KiB stays inside the 256 KiB arena; the worker exits with the
+         * blocks still live, so retirement cannot clean up immediately. */
+        ea->ptrs[i] = mp_alloc(ea->pool, 32768);
+        assert(ea->ptrs[i] != NULL);
+        memset(ea->ptrs[i], 0xD4, 32768);
+    }
+    return NULL;
+}
+
+static void test_tlsf_arena_thread_exit(void)
+{
+    printf("\n--- Test: TLSF arena thread-exit retire with live blocks ---\n");
+    memory_pool_t *pool = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    arena_exit_arg_t ea;
+    ea.pool = pool;
+    pthread_t worker;
+    assert(pthread_create(&worker, NULL, arena_exit_worker, &ea) == 0);
+    assert(pthread_join(worker, NULL) == 0);
+
+    for (int i = 0; i < 4; i++) {
+        mp_free(pool, ea.ptrs[i]);
+    }
+
+    assert(mp_check_leaks(pool) == true);
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena thread-exit retire + deferred cleanup");
+}
+
+static void test_tlsf_arena_pool_switch(void)
+{
+    printf("\n--- Test: TLSF arena pool-switch retires the old arena ---\n");
+    memory_pool_t *pool_a = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    memory_pool_t *pool_b = mp_create(16 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool_a != NULL && pool_b != NULL);
+
+    void *a_block = mp_alloc(pool_a, 32768);
+    assert(a_block != NULL);
+
+    /* Switching pools flushes the cache and retires A's arena while its block
+     * is still live; the free below is what triggers the deferred cleanup. */
+    void *b_block = mp_alloc(pool_b, 32768);
+    assert(b_block != NULL);
+
+    mp_free(pool_a, a_block);
+    mp_free(pool_b, b_block);
+
+    assert(mp_check_leaks(pool_a) == true);
+    assert(mp_check_leaks(pool_b) == true);
+    mp_destroy(pool_a);
+    mp_destroy(pool_b);
+    TEST_PASS("TLSF arena pool-switch retires and cleans up old arena");
+}
+
 int main()
 {
     printf("\n================ RUNNING CMEM ADVANCED UNIT TESTS ================\n");
@@ -1310,6 +1374,8 @@ int main()
     test_tlsf_arena_master_free();
     test_tlsf_arena_cross_thread_free();
     test_tlsf_arena_exhaustion();
+    test_tlsf_arena_thread_exit();
+    test_tlsf_arena_pool_switch();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
