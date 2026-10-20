@@ -1317,6 +1317,205 @@ static void test_tlsf_arena_pool_switch(void)
     TEST_PASS("TLSF arena pool-switch retires and cleans up old arena");
 }
 
+#define RAND_SLOTS 256
+#define RAND_OPS 20000
+#define RAND_SEED 12345
+#define RAND_MIN_ALLOC (16 * 1024)
+#define RAND_MAX_ALLOC (192 * 1024)
+
+typedef struct {
+    uint8_t *ptr;
+    size_t size;
+    uint8_t tag;
+} rand_slot_t;
+
+typedef struct {
+    uintptr_t start;
+    uintptr_t end;
+} rand_interval_t;
+
+static uint64_t g_rand_state;
+
+/* xorshift64: deterministic and independent of libc rand(). */
+static uint32_t rand_next_u32(void)
+{
+    uint64_t x = g_rand_state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    g_rand_state = x;
+    return (uint32_t)(x >> 32);
+}
+
+static size_t rand_range(size_t lo, size_t hi)
+{
+    return lo + (size_t)(rand_next_u32() % (uint32_t)(hi - lo + 1));
+}
+
+static int rand_free_slot(const rand_slot_t *slots)
+{
+    for (int i = 0; i < RAND_SLOTS; i++) {
+        if (slots[i].ptr == NULL) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int rand_live_slot(const rand_slot_t *slots)
+{
+    uint32_t start = rand_next_u32() % RAND_SLOTS;
+    for (int k = 0; k < RAND_SLOTS; k++) {
+        int idx = (int)((start + (uint32_t)k) % RAND_SLOTS);
+        if (slots[idx].ptr != NULL) {
+            return idx;
+        }
+    }
+    return -1;
+}
+
+static void rand_ivals_insert(rand_interval_t *ivals, size_t *count, uintptr_t start, uintptr_t end)
+{
+    size_t pos = 0;
+    while (pos < *count && ivals[pos].start < start) {
+        pos++;
+    }
+    /* No live block may overlap another: that is the allocator's core contract. */
+    if (pos > 0) {
+        assert(ivals[pos - 1].end <= start);
+    }
+    if (pos < *count) {
+        assert(end <= ivals[pos].start);
+    }
+    memmove(&ivals[pos + 1], &ivals[pos], (*count - pos) * sizeof(ivals[0]));
+    ivals[pos].start = start;
+    ivals[pos].end = end;
+    (*count)++;
+}
+
+static void rand_ivals_remove(rand_interval_t *ivals, size_t *count, uintptr_t start)
+{
+    size_t pos = 0;
+    while (pos < *count && ivals[pos].start != start) {
+        pos++;
+    }
+    assert(pos < *count);
+    memmove(&ivals[pos], &ivals[pos + 1], (*count - pos - 1) * sizeof(ivals[0]));
+    (*count)--;
+}
+
+static void rand_ivals_validate(const rand_interval_t *ivals, size_t count)
+{
+    for (size_t i = 1; i < count; i++) {
+        assert(ivals[i - 1].end <= ivals[i].start);
+    }
+}
+
+static void rand_verify_payload(const uint8_t *p, size_t size, uint8_t tag)
+{
+    for (size_t i = 0; i < size; i++) {
+        assert(p[i] == tag);
+    }
+}
+
+static void test_tlsf_arena_randomized(void)
+{
+    printf("\n--- Test: TLSF arena randomized differential vs interval model ---\n");
+    memory_pool_t *pool = mp_create(32 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(pool != NULL);
+
+    static rand_slot_t slots[RAND_SLOTS]; /* static: keep the table off the stack */
+    rand_interval_t ivals[RAND_SLOTS];
+    size_t live = 0;
+    size_t ival_count = 0;
+    g_rand_state = RAND_SEED;
+
+    for (int op = 0; op < RAND_OPS; op++) {
+        unsigned kind;
+        if (live == 0) {
+            kind = 0;
+        } else if (live >= RAND_SLOTS) {
+            kind = 1 + (rand_next_u32() % 2);
+        } else {
+            kind = rand_next_u32() % 3;
+        }
+
+        if (kind == 0) {
+            size_t size = rand_range(RAND_MIN_ALLOC, RAND_MAX_ALLOC);
+            uint8_t *p = (uint8_t *)mp_alloc(pool, size);
+            assert(p != NULL);
+            int slot = rand_free_slot(slots);
+            assert(slot >= 0);
+            slots[slot].ptr = p;
+            slots[slot].size = size;
+            slots[slot].tag = (uint8_t)rand_next_u32();
+            memset(p, slots[slot].tag, size);
+            rand_ivals_insert(ivals, &ival_count, (uintptr_t)p, (uintptr_t)p + size);
+            live++;
+        } else if (kind == 1) {
+            int slot = rand_live_slot(slots);
+            assert(slot >= 0);
+            rand_verify_payload(slots[slot].ptr, slots[slot].size, slots[slot].tag);
+            rand_ivals_remove(ivals, &ival_count, (uintptr_t)slots[slot].ptr);
+            mp_free(pool, slots[slot].ptr);
+            slots[slot].ptr = NULL;
+            live--;
+        } else {
+            int slot = rand_live_slot(slots);
+            assert(slot >= 0);
+            size_t old_size = slots[slot].size;
+            size_t new_size = rand_range(RAND_MIN_ALLOC, RAND_MAX_ALLOC);
+            uint8_t *old = slots[slot].ptr;
+            uint8_t tag = slots[slot].tag;
+            rand_verify_payload(old, old_size, tag);
+            rand_ivals_remove(ivals, &ival_count, (uintptr_t)old);
+            uint8_t *grown = (uint8_t *)mp_realloc(pool, old, new_size);
+            assert(grown != NULL);
+            rand_verify_payload(grown, (old_size < new_size) ? old_size : new_size, tag);
+            if (new_size > old_size) {
+                memset(grown + old_size, tag, new_size - old_size);
+            }
+            slots[slot].ptr = grown;
+            slots[slot].size = new_size;
+            rand_ivals_insert(ivals, &ival_count, (uintptr_t)grown, (uintptr_t)grown + new_size);
+        }
+
+        if ((op & 0xFF) == 0xFF) {
+            assert(tlsf_arena_validate_current());
+            rand_ivals_validate(ivals, ival_count);
+            size_t live_count = 0;
+            for (int i = 0; i < RAND_SLOTS; i++) {
+                live_count += (slots[i].ptr != NULL) ? 1u : 0u;
+            }
+            assert(live_count == live);
+        }
+    }
+
+    for (int i = 0; i < RAND_SLOTS; i++) {
+        if (slots[i].ptr != NULL) {
+            rand_verify_payload(slots[i].ptr, slots[i].size, slots[i].tag);
+            rand_ivals_remove(ivals, &ival_count, (uintptr_t)slots[i].ptr);
+            mp_free(pool, slots[i].ptr);
+            slots[i].ptr = NULL;
+        }
+    }
+    assert(ival_count == 0);
+    assert(tlsf_arena_validate_current());
+    assert(mp_check_leaks(pool) == true);
+
+    /* The arena must coalesce back to a single block large enough for this
+     * full-capacity request after the churn above. */
+    uint8_t *full = (uint8_t *)mp_alloc(pool, RAND_MAX_ALLOC);
+    assert(full != NULL);
+    memset(full, 0x5A, RAND_MAX_ALLOC);
+    assert(tlsf_arena_validate_current());
+    mp_free(pool, full);
+    assert(mp_check_leaks(pool) == true);
+
+    mp_destroy(pool);
+    TEST_PASS("TLSF arena randomized differential vs interval model");
+}
+
 int main()
 {
     printf("\n================ RUNNING CMEM ADVANCED UNIT TESTS ================\n");
@@ -1376,6 +1575,7 @@ int main()
     test_tlsf_arena_exhaustion();
     test_tlsf_arena_thread_exit();
     test_tlsf_arena_pool_switch();
+    test_tlsf_arena_randomized();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
