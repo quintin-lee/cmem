@@ -1,5 +1,17 @@
 # Per-Thread TLSF Arena Implementation Plan
 
+> **Status note (2026-10-20):** this plan records the original 2026-08-08
+> implementation. It is **superseded by
+> [2026-10-19-tlsf-arena-hardening.md](2026-10-19-tlsf-arena-hardening.md)**
+> for all hardening work. Checkboxes below are reconciled against HEAD:
+> ticked where the described capability exists (possibly with hardened
+> semantics), left open where the literal artifact was replaced. The shipped
+> implementation differs in load-bearing ways — notably a `tlsf_arena_t`
+> descriptor reached through `thread_cache_t.tlsf_arena` (not four raw fields),
+> flag-based free/realloc routing (`MP_BLOCK_FLAG_TLSF_ARENA`), a mailbox for
+> cross-thread frees, and retire via region release rather than draining into
+> the shared TLSF.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a per-thread TLSF arena to `thread_cache_t` that serves 80%+ of TLSF allocations without acquiring any lock, falling back to the shared pool only when the arena is exhausted.
@@ -25,11 +37,14 @@
 
 ### Task 1: Add arena constants and data fields
 
+**Status on HEAD:** constants shipped; fields superseded by the arena
+descriptor (see the note above).
+
 **Files:**
 - Modify: `include/cmem.h:183-188` (add constants after existing TLSF defines)
 - Modify: `include/cmem.h:1030-1045` (add fields to `thread_cache_t`)
 
-- [ ] **Step 1: Add constants after the existing TLSF cache constants**
+- [x] **Step 1: Add constants after the existing TLSF cache constants**
 
 In `include/cmem.h`, after the existing block:
 ```c
@@ -46,7 +61,7 @@ Add:
 #define TLSF_ARENA_MIN_SIZE   (64 * 1024)     /* Minimum arena size in bytes    */
 ```
 
-- [ ] **Step 2: Add 4 arena fields to `thread_cache_t`**
+- [x] **Step 2: Add 4 arena fields to `thread_cache_t`** *(superseded: a single `struct tlsf_arena *tlsf_arena` descriptor replaced these fields)*
 
 In `include/cmem.h`, in the `thread_cache_t` struct, after the existing `tlsf_entries` field:
 ```c
@@ -69,12 +84,12 @@ Replace with:
 } thread_cache_t;
 ```
 
-- [ ] **Step 3: Build to verify no compile errors**
+- [x] **Step 3: Build to verify no compile errors**
 
 Run: `make clean && make all 2>&1 | tail -5`
 Expected: clean build, no errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add include/cmem.h
@@ -85,10 +100,16 @@ git commit -m "feat(arena): add TLSF arena constants and thread_cache_t fields"
 
 ### Task 2: Implement arena helper functions
 
+**Status on HEAD:** init/alloc/free/validate shipped in hardened form
+(`src/cmem_slab.c`, `tlsf_arena_*`); drain/destroy replaced by
+`tlsf_arena_cleanup` (release region to the OS) plus
+`tlsf_arena_registry_release` at pool teardown. Split/coalesce arithmetic and
+FREE/PREV_FREE discipline follow `cmem_tlsf.c`, not the snippets below.
+
 **Files:**
 - Modify: `src/cmem_slab.c` (add new static helper functions before `tls_cache_flush_pool`)
 
-- [ ] **Step 1: Add forward declarations and helper at the top of `src/cmem_slab.c`**
+- [x] **Step 1: Add forward declarations and helper at the top of `src/cmem_slab.c`** *(superseded: helpers are cross-TU where realloc needs them, declared in `src/cmem_internal.h`)*
 
 Add these forward declarations right before `void tls_cache_flush_pool`:
 ```c
@@ -100,7 +121,7 @@ static void tlsf_arena_drain(memory_pool_t *pool);
 static void tlsf_arena_destroy(void);
 ```
 
-- [ ] **Step 2: Implement `tlsf_arena_init`**
+- [x] **Step 2: Implement `tlsf_arena_init`**
 
 Add this function before `tls_cache_flush_pool` in `src/cmem_slab.c`:
 ```c
@@ -140,7 +161,7 @@ static bool tlsf_arena_init(memory_pool_t *pool)
 }
 ```
 
-- [ ] **Step 3: Implement `tlsf_arena_alloc`**
+- [x] **Step 3: Implement `tlsf_arena_alloc`**
 
 Add this function after `tlsf_arena_init`:
 ```c
@@ -194,7 +215,7 @@ static void *tlsf_arena_alloc(size_t total_needed)
 }
 ```
 
-- [ ] **Step 4: Implement `tlsf_arena_free`**
+- [x] **Step 4: Implement `tlsf_arena_free`**
 
 Add this function after `tlsf_arena_alloc`:
 ```c
@@ -251,7 +272,7 @@ static void tlsf_arena_free(tlsf_block_t *block, size_t block_size)
 }
 ```
 
-- [ ] **Step 5: Implement `tlsf_arena_drain` and `tlsf_arena_destroy`**
+- [x] **Step 5: Implement `tlsf_arena_drain` and `tlsf_arena_destroy`** *(superseded: cleanup releases the region instead of draining into the shared TLSF — a region cannot both join a shared free list and return to the OS)*
 
 Add these functions after `tlsf_arena_free`:
 ```c
@@ -319,17 +340,17 @@ static void tlsf_arena_destroy(void)
 }
 ```
 
-- [ ] **Step 6: Build to verify no compile errors**
+- [x] **Step 6: Build to verify no compile errors**
 
 Run: `make clean && make all 2>&1 | tail -5`
 Expected: clean build.
 
-- [ ] **Step 7: Run existing tests to verify no regression**
+- [x] **Step 7: Run existing tests to verify no regression**
 
 Run: `make test 2>&1 | tail -3`
 Expected: `ALL CMEM UNIT TESTS PASSED SUCCESSFULLY!`
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/cmem_slab.c
@@ -340,10 +361,14 @@ git commit -m "feat(arena): implement per-thread TLSF arena init/alloc/free/drai
 
 ### Task 3: Integrate arena into allocation path
 
+**Status on HEAD:** integrated in `mp_alloc_internal` behind
+`is_multi_arena_child && tls_cache.tlsf_arena == NULL`; arena blocks are
+stamped `MP_BLOCK_FLAG_TLSF_ARENA` with the descriptor in `subpool`.
+
 **Files:**
 - Modify: `src/cmem_event.c:2196-2260` (`mp_alloc_internal` TLSF branch)
 
-- [ ] **Step 1: Insert arena hit after TLSF cache miss**
+- [x] **Step 1: Insert arena hit after TLSF cache miss**
 
 In `src/cmem_event.c`, in the `mp_alloc_internal` function, after the existing TLSF cache hit block (around line 2218), before the `else { tlsf_free ... }` or the shared pool chain, add:
 
@@ -411,17 +436,17 @@ After this block (before the closing `} else if (size <= TLSF_MAX_SIZE ...)` els
         }
 ```
 
-- [ ] **Step 2: Build to verify**
+- [x] **Step 2: Build to verify**
 
 Run: `make clean && make all 2>&1 | grep -E 'error|warning' | head -10`
 Expected: no errors (warnings OK for now).
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `make test 2>&1 | tail -3`
 Expected: `ALL CMEM UNIT TESTS PASSED SUCCESSFULLY!`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/cmem_event.c
@@ -432,10 +457,13 @@ git commit -m "feat(arena): integrate per-thread TLSF arena into alloc path"
 
 ### Task 4: Integrate arena into free path
 
+**Status on HEAD:** routing is by block flag, not pool membership; owner frees
+insert directly, everyone else posts to the arena mailbox.
+
 **Files:**
 - Modify: `src/cmem_event.c:3192-3215` (`mp_free` TLSF branch)
 
-- [ ] **Step 1: Insert arena free after TLSF cache hit check**
+- [x] **Step 1: Insert arena free after TLSF cache hit check**
 
 In `src/cmem_event.c`, in the `mp_free` function, find this block (around line 3187-3215):
 ```c
@@ -469,12 +497,12 @@ Replace the `else { tlsf_free(pool, header); }` branch with:
         }
 ```
 
-- [ ] **Step 2: Build and test**
+- [x] **Step 2: Build and test**
 
 Run: `make clean && make test 2>&1 | tail -3`
 Expected: `ALL CMEM UNIT TESTS PASSED SUCCESSFULLY!`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -am "feat(arena): integrate per-thread TLSF arena into free path"
@@ -484,10 +512,14 @@ git commit -am "feat(arena): integrate per-thread TLSF arena into free path"
 
 ### Task 5: Wire drain into pool-switch and thread-exit
 
+**Status on HEAD:** `tls_cache_flush_pool` retires the arena, and
+`tls_cache_validate_owner`/`tls_cache_dtor` reach it through that flush. The
+drain step is replaced by retire + release.
+
 **Files:**
 - Modify: `src/cmem_slab.c:64-115` (`tls_cache_flush_pool` and `tls_cache_dtor`)
 
-- [ ] **Step 1: Update `tls_cache_flush_pool` to drain arena**
+- [x] **Step 1: Update `tls_cache_flush_pool` to drain arena** *(superseded: it retires the arena after the TLSF cache flush)*
 
 In `src/cmem_slab.c`, in `tls_cache_flush_pool`, before the existing slab/TLSF cache flush loops, add:
 ```c
@@ -502,7 +534,7 @@ void tls_cache_flush_pool(memory_pool_t *pool)
         /* Existing slab cache flush... */
 ```
 
-- [ ] **Step 2: Update `tls_cache_dtor` to drain and destroy arena**
+- [x] **Step 2: Update `tls_cache_dtor` to drain and destroy arena** *(superseded: the dtor flushes the owner pool, which retires the arena)*
 
 In `src/cmem_slab.c`, update `tls_cache_dtor`:
 ```c
@@ -522,12 +554,12 @@ static void tls_cache_dtor(void *arg)
 }
 ```
 
-- [ ] **Step 3: Build and run all tests**
+- [x] **Step 3: Build and run all tests**
 
 Run: `make test 2>&1 | tail -3 && make test_advanced 2>&1 | tail -3 && make test_cpp 2>&1 | tail -3`
 Expected: all three pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git commit -m "feat(arena): wire arena drain into pool-switch and thread-exit"
@@ -537,22 +569,25 @@ git commit -m "feat(arena): wire arena drain into pool-switch and thread-exit"
 
 ### Task 6: TSan test and final validation
 
-- [ ] **Step 1: Run TSan build**
+**Status on HEAD:** all gates green on the hardening branch, including
+`make CONFIG=tsan test_all` with zero warnings.
+
+- [x] **Step 1: Run TSan build**
 
 Run: `make CONFIG=tsan test 2>&1 | grep -E 'ThreadSanitizer|WARNING|ALL|Error'`
 Expected: `ALL CMEM UNIT TESTS PASSED SUCCESSFULLY!` with zero TSan warnings.
 
-- [ ] **Step 2: Run format check**
+- [x] **Step 2: Run format check**
 
 Run: `make format-check 2>&1`
 Expected: clean (exit code 0).
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 Run: `make test && make test_advanced && make test_cpp`
 Expected: all pass.
 
-- [ ] **Step 4: Final commit (if any formatting fixes needed)**
+- [x] **Step 4: Final commit (if any formatting fixes needed)**
 
 ```bash
 git add -A
@@ -563,13 +598,13 @@ git commit -m "style: format per-thread TLSF arena code"
 
 ### Verification Checklist
 
-- [ ] `make test` passes (ASan + UBSan)
-- [ ] `make CONFIG=tsan test` passes with 0 warnings
-- [ ] `make test_advanced` passes
-- [ ] `make test_cpp` passes
-- [ ] `make format-check` passes
-- [ ] Arena is initialized on first TLSF alloc (not at pool create time)
-- [ ] Arena is drained when switching pools
-- [ ] Arena is destroyed on thread exit
-- [ ] Arena free coalesces with next neighbor
-- [ ] No double-free possible (arena blocks have correct magic)
+- [x] `make test` passes (ASan + UBSan)
+- [x] `make CONFIG=tsan test` passes with 0 warnings
+- [x] `make test_advanced` passes
+- [x] `make test_cpp` passes
+- [x] `make format-check` passes
+- [x] Arena is initialized on first TLSF alloc (not at pool create time)
+- [x] Arena is retired when switching pools (region released once empty)
+- [x] Arena is retired on thread exit (released at the last outstanding free)
+- [x] Arena free coalesces with next neighbor
+- [x] No double-free possible (arena blocks have correct magic)
