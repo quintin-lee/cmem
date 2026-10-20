@@ -53,6 +53,12 @@
 #define BENCH_MEDIAN_RUNS 5
 #define BENCH_WARMUP_ITERS 10000
 
+#define TLSF_ARENA_SAMPLES 200000          /* per-op latency buffer capacity        */
+#define TLSF_ARENA_ALLOCS_PER_THREAD 50000 /* alloc+free pairs per thread           */
+#define TLSF_ARENA_SIZE_192K 196608        /* 192 KiB arena-eligible size (3 x 64K) */
+#define TLSF_ARENA_P50 0.50
+#define TLSF_ARENA_P99 0.99
+
 /**
  * @brief Inline compiler memory barrier and memory touch write to prevent DCE and simulate real
  * access.
@@ -264,6 +270,7 @@ void bench_fast_path(void);
 void bench_size_distribution(void);
 void bench_batch_apis(void);
 void bench_thread_scaling(void);
+void bench_tlsf_arena(void);
 void bench_compressed_storage(void);
 void bench_allocation_patterns(void);
 void bench_batch_scaling(void);
@@ -295,6 +302,7 @@ int main(void)
     bench_batch_os_tier();
     bench_batch_fastpath();
     bench_thread_scaling();
+    bench_tlsf_arena();
     bench_compressed_storage();
     bench_allocation_patterns();
     return 0;
@@ -1131,6 +1139,127 @@ void bench_thread_scaling()
             printf("  %s | %d       | %.2f     | %.2fx\n", mode_name, nthreads, mops, mops / base);
         }
         mp_destroy(pool);
+    }
+}
+
+typedef struct {
+    memory_pool_t *pool;
+    int allocs_per_thread;
+    size_t alloc_size;
+    double *samples; /* per-op latency buffer (single-thread mode only) */
+    int sample_cap;
+    int sample_count;
+} tlsf_arena_arg_t;
+
+static double bench_now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * NSEC_PER_SEC + (double)ts.tv_nsec;
+}
+
+static double percentile_ns(const double *sorted, int count, double pct)
+{
+    int idx = (int)(pct * (double)(count - 1));
+    return sorted[idx];
+}
+
+static void *tlsf_arena_thread_func(void *arg)
+{
+    tlsf_arena_arg_t *barg = (tlsf_arena_arg_t *)arg;
+    int sample = (barg->samples != NULL);
+
+    /* Free via the thread's bound arena child when present; the master handle is
+     * only a fallback (pre-fix HEAD crashes freeing arena blocks through it). */
+    memory_pool_t *free_pool = mp_get_thread_arena(barg->pool);
+    if (free_pool == NULL) {
+        free_pool = barg->pool;
+    }
+
+    /* One live block per thread keeps the peak footprint at threads x alloc_size. */
+    for (int i = 0; i < barg->allocs_per_thread; i++) {
+        double t0 = sample ? bench_now_ns() : 0.0;
+        void *ptr = mp_alloc(barg->pool, barg->alloc_size);
+        if (sample && barg->sample_count < barg->sample_cap) {
+            barg->samples[barg->sample_count++] = bench_now_ns() - t0;
+        }
+        bench_escape(ptr);
+        if (ptr != NULL) {
+            t0 = sample ? bench_now_ns() : 0.0;
+            mp_free(free_pool, ptr);
+            if (sample && barg->sample_count < barg->sample_cap) {
+                barg->samples[barg->sample_count++] = bench_now_ns() - t0;
+            }
+        }
+    }
+    return NULL;
+}
+
+void bench_tlsf_arena()
+{
+    static const size_t sizes[] = {1024, 8192, 65536, TLSF_ARENA_SIZE_192K, 1048576};
+    static const char *labels[] = {"1KiB", "8KiB", "64KiB", "192KiB", "1MiB(ref)"};
+    static const int thread_counts[] = {1, 2, 4, 8};
+    const int n_sizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
+    const int n_thread_counts = (int)(sizeof(thread_counts) / sizeof(thread_counts[0]));
+
+    printf("\n=== TLSF Arena Benchmark (multi-arena vs regular) ===\n");
+
+    for (int s = 0; s < n_sizes; s++) {
+        for (int mode = 0; mode < 2; mode++) {
+            for (int t = 0; t < n_thread_counts; t++) {
+                mp_flags_t flags = MP_FLAG_THREAD_SAFE | MP_FLAG_THREAD_LOCAL_CACHE;
+                if (mode == 1) {
+                    flags |= MP_FLAG_MULTI_ARENA;
+                }
+                memory_pool_t *pool = mp_create(128 * 1024 * 1024, flags);
+                if (pool == NULL) {
+                    continue;
+                }
+                bench_warmup(pool);
+
+                int nthreads = thread_counts[t];
+                pthread_t threads[8];
+                tlsf_arena_arg_t args[8];
+                double *samples = NULL;
+                if (nthreads == 1) {
+                    samples = (double *)malloc(TLSF_ARENA_SAMPLES * sizeof(double));
+                }
+                for (int i = 0; i < nthreads; i++) {
+                    args[i].pool = pool;
+                    args[i].allocs_per_thread = TLSF_ARENA_ALLOCS_PER_THREAD;
+                    args[i].alloc_size = sizes[s];
+                    args[i].samples = (i == 0) ? samples : NULL;
+                    args[i].sample_cap = TLSF_ARENA_SAMPLES;
+                    args[i].sample_count = 0;
+                }
+                double t0 = get_time_sec();
+                for (int i = 0; i < nthreads; i++) {
+                    pthread_create(&threads[i], NULL, tlsf_arena_thread_func, &args[i]);
+                }
+                for (int i = 0; i < nthreads; i++) {
+                    pthread_join(threads[i], NULL);
+                }
+                double elapsed = get_time_sec() - t0;
+                double mops = ((double)nthreads * (double)TLSF_ARENA_ALLOCS_PER_THREAD) / elapsed /
+                              MILLION_OPS;
+                printf("  %-9s %-11s threads=%d  %8.2f Mops/s",
+                       labels[s],
+                       mode ? "multi-arena" : "regular",
+                       nthreads,
+                       mops);
+                if (samples != NULL && args[0].sample_count > 0) {
+                    int nsamp = args[0].sample_count;
+                    qsort(samples, (size_t)nsamp, sizeof(double), double_cmp);
+                    printf("  p50=%.1f ns p99=%.1f ns",
+                           percentile_ns(samples, nsamp, TLSF_ARENA_P50),
+                           percentile_ns(samples, nsamp, TLSF_ARENA_P99));
+                }
+                printf("\n");
+                free(samples);
+                mp_destroy(pool);
+            }
+        }
     }
 }
 
