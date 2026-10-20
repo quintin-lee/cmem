@@ -14,6 +14,8 @@
 #include "cmem.h"
 #include "cmem_internal.h"
 
+#include <assert.h>
+
 /* Slab page slot layout keeps 8-byte alignment; sizes are rounded up by
  * masking with this value. */
 #define CMEM_SLAB_ALIGN_MASK 7u
@@ -62,198 +64,320 @@ MP_THREAD_LOCAL mp_thread_quota_t thread_quota = {0, 0};
 int slab_free_nolock(memory_pool_t *pool, mp_block_header_t *header);
 
 /* --------------------------------------------------------------------------
- * Per-thread TLSF arena helpers (lock-free hot path for 512B–4MB).
+ * Per-thread TLSF arena (multi-arena child pools, owner-thread path).
+ *
+ * Invariants (shared-TLSF compatible):
+ *  - size_and_flags & BLOCK_SIZE_MASK = distance from this block's start to
+ *    the next physical block's start (own header included).
+ *  - The final sizeof(tlsf_block_t) bytes hold a sentinel with
+ *    size_and_flags == 0 (never FREE) and prev_physical maintained.
+ *  - FREE <=> block is on arena->free_list (mailboxed blocks keep FREE clear
+ *    so they can neither be scanned nor coalesced).
+ *  - The free list is doubly-linked (next_free/prev_free) and address-sorted.
+ *  - live_bytes counts the spans of live blocks only.
  * -------------------------------------------------------------------------- */
 
-/**
- * @brief Allocate and initialize the per-thread TLSF arena.
- *
- * Allocates TLSF_ARENA_DEFAULT_SIZE bytes via sys_mem_alloc. The arena
- * starts as a single free tlsf_block_t spanning the entire region.
- *
- * @param pool The memory pool for sys_mem_alloc (NUMA/coherence).
- * @return true on success, false on allocation failure.
- */
-bool tlsf_arena_init(memory_pool_t *pool)
+size_t tlsf_arena_span(const tlsf_block_t *block)
 {
-    if (tls_cache.tlsf_arena_raw_mem != NULL) {
-        return true;
-    }
-
-    size_t arena_size = TLSF_ARENA_DEFAULT_SIZE;
-    void *raw = sys_mem_alloc(pool, arena_size, 8);
-    if (!raw) {
-        return false;
-    }
-
-    tls_cache.tlsf_arena_raw_mem = raw;
-    tls_cache.tlsf_arena_used = 0;
-
-    /* Initialise as one big free block. */
-    size_t block_size = arena_size - sizeof(tlsf_block_t);
-    block_size = (block_size + TLSF_ALIGN_MASK) & ~(size_t)TLSF_ALIGN_MASK;
-    if (block_size < TLSF_MIN_BLOCK_SIZE) {
-        sys_mem_free(pool, raw, arena_size);
-        tls_cache.tlsf_arena_raw_mem = NULL;
-        return false;
-    }
-
-    tlsf_block_t *init_block = (tlsf_block_t *)raw;
-    init_block->size_and_flags = block_size | BLOCK_STATE_FREE;
-    init_block->prev_physical = NULL;
-    init_block->next_free = NULL;
-
-    tls_cache.tlsf_arena_free = init_block;
-    tls_cache.tlsf_arena_total = block_size;
-
-    /* Track arena memory in the pool's total size for accurate resident stats. */
-    CMEM_ATOMIC_FETCH_ADD(&pool->total_pool_size, arena_size, CMEM_ORDER_RELAXED);
-
-    return true;
+    return block->size_and_flags & BLOCK_SIZE_MASK;
 }
 
-/**
- * @brief Allocate a block from the per-thread TLSF arena (first-fit).
- *
- * Scans the address-ordered free list.  Splits the block when the
- * remainder is large enough to hold another tlsf_block_t + TLSF_MIN_BLOCK_SIZE.
- *
- * @param total_needed  Total bytes needed (tlsf_block_t + header + payload).
- * @return Allocated tlsf_block_t, or NULL if the arena is exhausted.
- */
-tlsf_block_t *tlsf_arena_alloc(size_t total_needed)
+void tlsf_arena_unlink_free(tlsf_arena_t *arena, tlsf_block_t *block)
 {
-    tlsf_block_t *prev = NULL;
-    tlsf_block_t *block = tls_cache.tlsf_arena_free;
-
-    while (block) {
-        size_t block_size = block->size_and_flags & BLOCK_SIZE_MASK;
-        if (block_size >= total_needed) {
-            size_t remaining = block_size - total_needed;
-            if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
-                /* Split: keep the front, leave the remainder as a new free block. */
-                tlsf_block_t *remainder = (tlsf_block_t *)((uint8_t *)block + total_needed);
-                remainder->size_and_flags = remaining | BLOCK_STATE_FREE;
-                remainder->prev_physical = block;
-                remainder->next_free = block->next_free;
-                block->size_and_flags = total_needed | BLOCK_STATE_FREE;
-                if (prev) {
-                    prev->next_free = remainder;
-                } else {
-                    tls_cache.tlsf_arena_free = remainder;
-                }
-            } else {
-                /* Use the whole block; unlink from the free list. */
-                if (prev) {
-                    prev->next_free = block->next_free;
-                } else {
-                    tls_cache.tlsf_arena_free = block->next_free;
-                }
-            }
-            tls_cache.tlsf_arena_used += (block->size_and_flags & BLOCK_SIZE_MASK);
-            return block;
-        }
-        prev = block;
-        block = block->next_free;
+    if (block->prev_free != NULL) {
+        block->prev_free->next_free = block->next_free;
+    } else {
+        arena->free_list = block->next_free;
     }
-    return NULL;
+    if (block->next_free != NULL) {
+        block->next_free->prev_free = block->prev_free;
+    }
+    block->next_free = NULL;
+    block->prev_free = NULL;
 }
 
-/**
- * @brief Return a block to the per-thread TLSF arena.
- *
- * Inserts the block into the address-ordered free list and coalesces
- * with the next neighbor when physically adjacent and free.
- *
- * @param block      Block to return.
- * @param block_size Size of the block (excluding tlsf_block_t header).
- */
-void tlsf_arena_free(tlsf_block_t *block, size_t block_size)
+/** Insert a FREE-stamped block (address order) and coalesce both directions. */
+void tlsf_arena_insert_free(tlsf_arena_t *arena, tlsf_block_t *block)
 {
-    block->size_and_flags = block_size | BLOCK_STATE_FREE;
-    block->prev_physical = NULL;
-
-    /* Insert in address-ordered position. */
     tlsf_block_t *prev = NULL;
-    tlsf_block_t *curr = tls_cache.tlsf_arena_free;
-    while (curr && (uintptr_t)curr < (uintptr_t)block) {
+    tlsf_block_t *curr = arena->free_list;
+
+    while (curr != NULL && (uintptr_t)curr < (uintptr_t)block) {
         prev = curr;
         curr = curr->next_free;
     }
 
-    if (prev) {
+    /* Forward merge: curr starts exactly where block ends. */
+    if (curr != NULL && (uint8_t *)block + tlsf_arena_span(block) == (uint8_t *)curr) {
+        tlsf_block_t *after = curr->next_free;
+        size_t merged = tlsf_arena_span(block) + tlsf_arena_span(curr);
+        tlsf_arena_unlink_free(arena, curr);
+        block->size_and_flags = merged | BLOCK_STATE_FREE;
+        curr = after;
+    }
+
+    /* Backward merge: prev ends exactly where block begins. */
+    if (prev != NULL && (uint8_t *)prev + tlsf_arena_span(prev) == (uint8_t *)block) {
+        tlsf_block_t *before = prev->prev_free;
+        size_t merged = tlsf_arena_span(prev) + tlsf_arena_span(block);
+        tlsf_arena_unlink_free(arena, prev);
+        prev->size_and_flags = merged | BLOCK_STATE_FREE;
+        block = prev;
+        prev = before;
+    }
+
+    block->next_free = curr;
+    block->prev_free = prev;
+    if (prev != NULL) {
         prev->next_free = block;
     } else {
-        tls_cache.tlsf_arena_free = block;
+        arena->free_list = block;
     }
-    block->next_free = curr;
-
-    tls_cache.tlsf_arena_used -= block_size;
-
-    /* Coalesce with next neighbor if physically adjacent and free. */
-    if (curr && (uintptr_t)curr == ((uintptr_t)block + block_size + sizeof(tlsf_block_t))) {
-        size_t curr_size = curr->size_and_flags & BLOCK_SIZE_MASK;
-        if (curr_size && (curr->size_and_flags & BLOCK_STATE_FREE)) {
-            block_size += curr_size + sizeof(tlsf_block_t);
-            block->size_and_flags = block_size | BLOCK_STATE_FREE;
-            block->next_free = curr->next_free;
-            if (prev) {
-                prev->next_free = block;
-            } else {
-                tls_cache.tlsf_arena_free = block;
-            }
-            tls_cache.tlsf_arena_used +=
-                curr_size + sizeof(tlsf_block_t); /* Undo the subtract above. */
-        }
+    if (curr != NULL) {
+        curr->prev_free = block;
     }
+
+    /* Physical metadata for the successor of the merged block. */
+    tlsf_block_t *after = (tlsf_block_t *)((uint8_t *)block + tlsf_arena_span(block));
+    if (after != arena->sentinel) {
+        after->size_and_flags |= BLOCK_STATE_PREV_FREE;
+    }
+    after->prev_physical = block;
 }
 
-/**
- * @brief Drain all remaining arena blocks back into the shared pool.
- *
- * Called on pool-switch or thread-exit.  Each block is marked FREE and
- * re-inserted into the shared pool's tlsf_root free lists.
- *
- * @param pool The owning memory pool (provides tlsf_root).
- */
-void tlsf_arena_drain(memory_pool_t *pool)
+bool tlsf_arena_init(memory_pool_t *pool)
 {
-    tlsf_block_t *block = tls_cache.tlsf_arena_free;
-    tls_cache.tlsf_arena_free = NULL;
-    tls_cache.tlsf_arena_used = 0;
-
-    tlsf_pool_t *tpool = pool->tlsf_root;
-    if (!tpool) {
-        /* Pool has no TLSF region yet — nothing to drain into. */
-        return;
+    void *raw = sys_mem_alloc(pool, TLSF_ARENA_DEFAULT_SIZE, 8);
+    if (raw == NULL) {
+        return false;
+    }
+    tlsf_arena_t *arena = (tlsf_arena_t *)calloc(1, sizeof(tlsf_arena_t));
+    if (arena == NULL) {
+        sys_mem_free(pool, raw, TLSF_ARENA_DEFAULT_SIZE);
+        return false;
     }
 
-    while (block) {
-        tlsf_block_t *next = block->next_free;
-        block->next_free = NULL;
-        block->prev_physical = NULL;
-        block->size_and_flags |= BLOCK_STATE_FREE;
-        tlsf_insert_free_block(tpool, block);
+    arena->raw = (uint8_t *)raw;
+    arena->size = TLSF_ARENA_DEFAULT_SIZE;
+    arena->sentinel = (tlsf_block_t *)(arena->raw + arena->size - sizeof(tlsf_block_t));
+    arena->owner_pool = pool;
+    arena->owner_thread = (unsigned long)pthread_self();
+
+    tlsf_block_t *first = (tlsf_block_t *)arena->raw;
+    first->size_and_flags = (arena->size - sizeof(tlsf_block_t)) | BLOCK_STATE_FREE;
+    first->prev_physical = NULL;
+    first->next_free = NULL;
+    first->prev_free = NULL;
+    arena->free_list = first;
+
+    arena->sentinel->size_and_flags = 0;
+    arena->sentinel->prev_physical = first;
+    arena->sentinel->next_free = NULL;
+    arena->sentinel->prev_free = NULL;
+
+    pthread_mutex_lock(&pool->arena_registry_lock);
+    arena->registry_next = pool->arena_registry;
+    pool->arena_registry = arena;
+    pthread_mutex_unlock(&pool->arena_registry_lock);
+
+    CMEM_ATOMIC_FETCH_ADD(&pool->total_pool_size, arena->size, CMEM_ORDER_RELAXED);
+    tls_cache.tlsf_arena = arena;
+    return true;
+}
+
+void tlsf_arena_reap(tlsf_arena_t *arena)
+{
+    tlsf_block_t *block = CMEM_ATOMIC_EXCHANGE(&arena->remote_free, NULL, CMEM_ORDER_ACQUIRE);
+    while (block != NULL) {
+        tlsf_block_t *next = block->next_free; /* mailbox link */
+        block->size_and_flags = tlsf_arena_span(block) | BLOCK_STATE_FREE;
+        /* prev_physical is intentionally preserved: it still points at the
+         * block's true physical predecessor, which the validator walks. */
+        tlsf_arena_insert_free(arena, block);
         block = next;
     }
 }
 
-/**
- * @brief Destroy the per-thread TLSF arena and release its memory.
- *
- * Must be called after tlsf_arena_drain() so no blocks remain.
- */
-void tlsf_arena_destroy(memory_pool_t *pool)
+/** Release the arena's backing region and mark it finished (retire path). */
+static void tlsf_arena_cleanup(tlsf_arena_t *arena)
 {
-    if (tls_cache.tlsf_arena_raw_mem) {
-        size_t arena_size = TLSF_ARENA_DEFAULT_SIZE;
-        sys_mem_free(pool, tls_cache.tlsf_arena_raw_mem, arena_size);
-        CMEM_ATOMIC_FETCH_SUB(&pool->total_pool_size, arena_size, CMEM_ORDER_RELAXED);
-        tls_cache.tlsf_arena_raw_mem = NULL;
-        tls_cache.tlsf_arena_free = NULL;
-        tls_cache.tlsf_arena_used = 0;
-        tls_cache.tlsf_arena_total = 0;
+    if (arena->raw != NULL) {
+        sys_mem_free(arena->owner_pool, arena->raw, arena->size);
+        CMEM_ATOMIC_FETCH_SUB(&arena->owner_pool->total_pool_size, arena->size, CMEM_ORDER_RELAXED);
+        arena->raw = NULL;
     }
+    CMEM_ATOMIC_STORE(&arena->finished, true, CMEM_ORDER_RELEASE);
+}
+
+tlsf_block_t *tlsf_arena_alloc(tlsf_arena_t *arena, size_t total_needed)
+{
+    if (CMEM_ATOMIC_LOAD(&arena->remote_free, CMEM_ORDER_ACQUIRE) != NULL) {
+        tlsf_arena_reap(arena);
+    }
+
+    tlsf_block_t *block = arena->free_list;
+    while (block != NULL && tlsf_arena_span(block) < total_needed) {
+        block = block->next_free;
+    }
+    if (block == NULL) {
+        return NULL;
+    }
+
+    size_t block_size = tlsf_arena_span(block);
+    size_t remaining = block_size - total_needed;
+    tlsf_block_t *after = (tlsf_block_t *)((uint8_t *)block + block_size);
+
+    tlsf_arena_unlink_free(arena, block);
+
+    if (remaining >= TLSF_MIN_BLOCK_SIZE + sizeof(tlsf_block_t)) {
+        tlsf_block_t *remainder = (tlsf_block_t *)((uint8_t *)block + total_needed);
+        block->size_and_flags = total_needed; /* live: FREE cleared */
+        remainder->size_and_flags = remaining | BLOCK_STATE_FREE;
+        remainder->prev_physical = block;
+        tlsf_arena_insert_free(arena, remainder);
+    } else {
+        block->size_and_flags = block_size; /* live: FREE cleared */
+        after->prev_physical = block;
+        if (after != arena->sentinel) {
+            after->size_and_flags &= ~BLOCK_STATE_PREV_FREE;
+        }
+    }
+
+    CMEM_ATOMIC_FETCH_ADD(&arena->live_bytes, tlsf_arena_span(block), CMEM_ORDER_RELAXED);
+#ifndef NDEBUG
+    assert(tlsf_arena_validate(arena));
+#endif
+    return block;
+}
+
+void tlsf_arena_free_block(tlsf_arena_t *arena, tlsf_block_t *block)
+{
+    size_t span = tlsf_arena_span(block);
+    bool owner =
+        (tls_cache.tlsf_arena == arena) && !CMEM_ATOMIC_LOAD(&arena->retired, CMEM_ORDER_ACQUIRE);
+
+    if (owner) {
+        block->size_and_flags = span | BLOCK_STATE_FREE;
+        /* prev_physical is intentionally preserved (not NULLed): the block's
+         * true physical predecessor is needed by the validator's chain walk. */
+        tlsf_arena_insert_free(arena, block);
+    } else {
+        /* Deferred free: link BEFORE publishing (CAS retry loop), so a
+         * concurrent consumer that exchanges the mailbox can never observe
+         * `block` with a stale `next_free`. Still done BEFORE the counter
+         * decrement so a decrement-to-zero implies the push is visible. */
+        tlsf_block_t *expected = CMEM_ATOMIC_LOAD(&arena->remote_free, CMEM_ORDER_ACQUIRE);
+        for (;;) {
+            block->next_free = expected;
+            if (CMEM_ATOMIC_COMPARE_EXCHANGE(&arena->remote_free,
+                                             &expected,
+                                             block,
+                                             CMEM_ORDER_ACQ_REL,
+                                             CMEM_ORDER_ACQUIRE)) {
+                break;
+            }
+        }
+    }
+
+    size_t prev_live = CMEM_ATOMIC_FETCH_SUB(&arena->live_bytes, span, CMEM_ORDER_ACQ_REL);
+    if (prev_live == span && CMEM_ATOMIC_LOAD(&arena->retired, CMEM_ORDER_ACQUIRE)) {
+        bool claim_expected = false;
+        if (CMEM_ATOMIC_COMPARE_EXCHANGE(&arena->cleanup_claimed,
+                                         &claim_expected,
+                                         true,
+                                         CMEM_ORDER_ACQ_REL,
+                                         CMEM_ORDER_RELAXED)) {
+            tlsf_arena_cleanup(arena); /* defined in Task 2.1 */
+        }
+    }
+#ifndef NDEBUG
+    /* Cleanup nulls arena->raw and marks `finished`; only validate while the
+     * region is still live, otherwise the post-cleanup walk dereferences NULL. */
+    if (!CMEM_ATOMIC_LOAD(&arena->finished, CMEM_ORDER_ACQUIRE)) {
+        assert(tlsf_arena_validate(arena));
+    }
+#endif
+}
+
+bool tlsf_arena_validate(tlsf_arena_t *arena)
+{
+    if (arena == NULL || arena->raw == NULL) {
+        return false;
+    }
+    /* An empty free list is legal: a final alloc may absorb a sub-floor
+     * remainder whole, leaving the arena fully allocated. */
+
+    /* Intentionally NOT checked here:
+     *  - live (allocated) blocks: by design they are not required to be on any
+     *    free list, so there is no structural list to cross-check them against;
+     *  - live_bytes: it is maintained purely by atomic counters, is not
+     *    structurally derivable from the block layout without a full sweep, and
+     *    races with concurrent mailbox pushes — so it is verified by the
+     *    lifecycle/randomized tests, not by this structural validator. */
+    /* Physical chain: every block advances inside the region; sentinel last. */
+    tlsf_block_t *prev = NULL;
+    tlsf_block_t *block = (tlsf_block_t *)arena->raw;
+    uint8_t *end = arena->raw + arena->size - sizeof(tlsf_block_t);
+    while ((uint8_t *)block < end) {
+        size_t span = tlsf_arena_span(block);
+        if (span < TLSF_MIN_BLOCK_SIZE || (span & TLSF_ALIGN_MASK) != 0) {
+            return false;
+        }
+        if ((uint8_t *)block + span > end) {
+            return false;
+        }
+        if (block->prev_physical != prev) {
+            return false;
+        }
+        /* PREV_FREE consistency: a block whose physical predecessor is FREE
+         * must carry BLOCK_STATE_PREV_FREE; a block whose predecessor is not
+         * free (allocated, or mailboxed/live-looking) must NOT. */
+        bool prev_free = (prev != NULL) && ((prev->size_and_flags & BLOCK_STATE_FREE) != 0);
+        bool prev_free_flag = (block->size_and_flags & BLOCK_STATE_PREV_FREE) != 0;
+        if (prev_free != prev_free_flag) {
+            return false;
+        }
+        prev = block;
+        block = (tlsf_block_t *)((uint8_t *)block + span);
+    }
+    if ((uint8_t *)block != end || block->size_and_flags != 0) {
+        return false;
+    }
+    if (block->prev_physical != prev) {
+        return false;
+    }
+
+    /* Free list: sorted, doubly-linked, in-region, no adjacent pair. */
+    tlsf_block_t *prev_free = NULL;
+    for (block = arena->free_list; block != NULL; block = block->next_free) {
+        if ((block->size_and_flags & BLOCK_STATE_FREE) == 0) {
+            return false;
+        }
+        if (block->prev_free != prev_free) {
+            return false;
+        }
+        if (prev_free != NULL) {
+            if ((uintptr_t)prev_free >= (uintptr_t)block) {
+                return false;
+            }
+            if ((uint8_t *)prev_free + tlsf_arena_span(prev_free) == (uint8_t *)block) {
+                return false; /* adjacent free blocks must have coalesced */
+            }
+        }
+        if ((uint8_t *)block < arena->raw || (uint8_t *)block + tlsf_arena_span(block) > end) {
+            return false;
+        }
+        prev_free = block;
+    }
+    return true;
+}
+
+bool tlsf_arena_validate_current(void)
+{
+    if (tls_cache.tlsf_arena == NULL) {
+        return true;
+    }
+    return tlsf_arena_validate(tls_cache.tlsf_arena);
 }
 
 void tls_cache_flush_pool(memory_pool_t *pool)
@@ -288,12 +412,9 @@ void tls_cache_flush_pool(memory_pool_t *pool)
                 block->size_and_flags |= BLOCK_STATE_FREE;
                 /* Arena blocks: return to the per-thread arena instead of the
                  * shared pool, to keep the arena's free list in sync. */
-                if (tls_cache.tlsf_arena_raw_mem &&
-                    (uintptr_t)block >= (uintptr_t)tls_cache.tlsf_arena_raw_mem &&
-                    (uintptr_t)block <
-                        ((uintptr_t)tls_cache.tlsf_arena_raw_mem + TLSF_ARENA_DEFAULT_SIZE)) {
-                    size_t bsize = block->size_and_flags & BLOCK_SIZE_MASK;
-                    tlsf_arena_free(block, bsize);
+                if (tls_cache.tlsf_arena != NULL && (uint8_t *)block >= tls_cache.tlsf_arena->raw &&
+                    (uint8_t *)block < tls_cache.tlsf_arena->raw + tls_cache.tlsf_arena->size) {
+                    tlsf_arena_free_block(tls_cache.tlsf_arena, block);
                 } else {
                     tlsf_insert_free_block(tpool, block);
                 }

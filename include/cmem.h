@@ -1033,6 +1033,8 @@ typedef struct tlsf_cache_entry {
     struct tlsf_cache_entry *next; /**< Next entry in the per-size linked list */
 } tlsf_cache_entry_t;
 
+struct tlsf_arena; /* internal: per-thread TLSF arena descriptor */
+
 typedef struct {
     memory_pool_t *owner_pool;
     mp_slab_slot_t *slots[CMEM_SLAB_CLASS_COUNT];
@@ -1046,11 +1048,11 @@ typedef struct {
     tlsf_cache_entry_t tlsf_entries[TLSF_CACHE_SIZES * TLSF_CACHE_MAX_SLOTS];
 
     /* Per-thread TLSF arena (lock-free hot path for sizes 64B–4MB). */
-    void *tlsf_arena_raw_mem; /**< Raw memory from sys_mem_alloc (for munmap)  */
-    void *tlsf_arena_free;    /**< Head of address-ordered free list            */
-    size_t tlsf_arena_used;   /**< Bytes currently allocated from arena          */
-    size_t tlsf_arena_total;  /**< Total arena capacity (raw_size - block_hdr)   */
+    struct tlsf_arena *tlsf_arena; /**< This thread's TLSF arena (multi-arena child pools) */
 } thread_cache_t;
+
+/** Block belongs to a per-thread TLSF arena; subpool holds tlsf_arena_t*. */
+#define MP_BLOCK_FLAG_TLSF_ARENA 0x0001u
 
 typedef struct mp_block_header {
     uint32_t magic;

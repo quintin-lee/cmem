@@ -290,6 +290,7 @@ mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-pa
         pthread_rwlock_init(&pool->rwlock, NULL);
         pthread_mutex_init(&pool->lock, NULL);
     }
+    pthread_mutex_init(&pool->arena_registry_lock, NULL);
 
     slab_init(pool);
 

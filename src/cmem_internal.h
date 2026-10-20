@@ -37,6 +37,7 @@ typedef std::atomic<size_t> cmem_atomic_size_t; /* Atomic size counter (C++ std:
 #define CMEM_ORDER_RELAXED std::memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE std::memory_order_acquire
 #define CMEM_ORDER_RELEASE std::memory_order_release
+#define CMEM_ORDER_ACQ_REL std::memory_order_acq_rel
 #ifndef MP_THREAD_LOCAL
 #define MP_THREAD_LOCAL thread_local
 #endif
@@ -59,6 +60,7 @@ typedef volatile LONG_PTR cmem_atomic_size_t;
 #define CMEM_ORDER_RELAXED 0
 #define CMEM_ORDER_ACQUIRE 0
 #define CMEM_ORDER_RELEASE 0
+#define CMEM_ORDER_ACQ_REL 0
 #ifndef MP_THREAD_LOCAL
 #define MP_THREAD_LOCAL __declspec(thread)
 #endif
@@ -77,6 +79,7 @@ typedef atomic_size_t cmem_atomic_size_t;
 #define CMEM_ORDER_RELAXED memory_order_relaxed
 #define CMEM_ORDER_ACQUIRE memory_order_acquire
 #define CMEM_ORDER_RELEASE memory_order_release
+#define CMEM_ORDER_ACQ_REL memory_order_acq_rel
 #ifndef MP_THREAD_LOCAL
 #define MP_THREAD_LOCAL _Thread_local
 #endif
@@ -265,6 +268,28 @@ typedef struct tlsf_block {
 } tlsf_block_t;
 
 /**
+ * Per-thread TLSF arena descriptor (multi-arena child pools only).
+ *
+ * Lifetime is POOL-OWNED: descriptors live in `memory_pool.arena_registry`
+ * and are released only by tlsf_arena_registry_release() (from mp_destroy).
+ * `finished` means: all blocks returned, raw region already released.
+ */
+typedef struct tlsf_arena {
+    uint8_t *raw;                        /**< Region start                          */
+    size_t size;                         /**< Region size (TLSF_ARENA_DEFAULT_SIZE) */
+    tlsf_block_t *free_list;             /**< Doubly-linked, address-sorted         */
+    tlsf_block_t *sentinel;              /**< raw + size - sizeof(tlsf_block_t)     */
+    _Atomic size_t live_bytes;           /**< Sum of live block spans (incl header) */
+    _Atomic(tlsf_block_t *) remote_free; /**< MPSC mailbox head (next_free link) */
+    memory_pool_t *owner_pool;           /**< The child pool this arena serves      */
+    unsigned long owner_thread;          /**< Diagnostic only (pthread_self)        */
+    _Atomic bool retired;                /**< Owner detached; mailbox-only          */
+    _Atomic bool cleanup_claimed;        /**< Exactly one cleaner                   */
+    _Atomic bool finished;               /**< Raw released; only descriptor remains */
+    struct tlsf_arena *registry_next;    /**< Pool registry chain                   */
+} tlsf_arena_t;
+
+/**
  * @brief A TLSF arena (physical memory region being managed).
  *
  * Two-level bitmap indexing: `fl_bitmap` scans first-level bins; each set bit
@@ -392,11 +417,13 @@ struct memory_pool {         // NOLINT(clang-analyzer-optin.performance.Padding)
     int num_cpus;                                 /**< CPU count for per-CPU freelists   */
     mp_percpu_freelist_entry_t *percpu_freelists; /**< Per-CPU free lists (lock-free)    */
 
-    int num_arenas;                    /**< Sub-arena count (0 if single pool) */
-    struct memory_pool **arenas;       /**< Multi-arena sub-pools array        */
-    cmem_atomic_size_t arena_rr_index; /**< Round-robin atomic index for thread binding */
-    bool is_multi_arena_child;         /**< True if this is a sub-arena child   */
-    struct memory_pool *master_pool;   /**< Master pool back-pointer if sub-arena */
+    int num_arenas;                      /**< Sub-arena count (0 if single pool) */
+    struct memory_pool **arenas;         /**< Multi-arena sub-pools array        */
+    cmem_atomic_size_t arena_rr_index;   /**< Round-robin atomic index for thread binding */
+    bool is_multi_arena_child;           /**< True if this is a sub-arena child   */
+    struct memory_pool *master_pool;     /**< Master pool back-pointer if sub-arena */
+    pthread_mutex_t arena_registry_lock; /**< Guards arena_registry          */
+    tlsf_arena_t *arena_registry;        /**< Per-thread arenas (pool-owned) */
 
     mp_watermark_callback_t gc_cb;       /**< GC callback invoked before OOM rejection   */
     void *gc_user_data;                  /**< GC callback arg                            */
@@ -585,12 +612,19 @@ extern void tls_cache_flush_pool(memory_pool_t *pool);
 extern void tls_cache_validate_owner(memory_pool_t *pool);
 extern memory_pool_t *tls_cache_get_bound_arena(void);
 
-/* Per-thread TLSF arena (cmem_slab.c) */
+/* Per-thread TLSF arena (multi-arena child pools) — src/cmem_slab.c */
 extern bool tlsf_arena_init(memory_pool_t *pool);
-extern tlsf_block_t *tlsf_arena_alloc(size_t total_needed);
-extern void tlsf_arena_free(tlsf_block_t *block, size_t block_size);
-extern void tlsf_arena_drain(memory_pool_t *pool);
-extern void tlsf_arena_destroy(memory_pool_t *pool);
+extern tlsf_block_t *tlsf_arena_alloc(tlsf_arena_t *arena, size_t total_needed);
+extern void tlsf_arena_free_block(tlsf_arena_t *arena, tlsf_block_t *block);
+/* Free-list/span primitives shared with the realloc grow-in-place path. */
+extern size_t tlsf_arena_span(const tlsf_block_t *block);
+extern void tlsf_arena_unlink_free(tlsf_arena_t *arena, tlsf_block_t *block);
+extern void tlsf_arena_insert_free(tlsf_arena_t *arena, tlsf_block_t *block);
+extern void tlsf_arena_reap(tlsf_arena_t *arena);
+extern void tlsf_arena_retire(memory_pool_t *pool);
+extern bool tlsf_arena_validate(tlsf_arena_t *arena);
+extern bool tlsf_arena_validate_current(void); /* tests: validates tls_cache.tlsf_arena */
+extern void tlsf_arena_registry_release(memory_pool_t *pool);
 extern void percpu_init(memory_pool_t *pool);
 extern void percpu_destroy(memory_pool_t *pool);
 extern void percpu_flush(memory_pool_t *pool);

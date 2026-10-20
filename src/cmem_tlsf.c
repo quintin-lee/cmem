@@ -25,6 +25,7 @@
 
 #include "cmem.h"
 #include "cmem_internal.h"
+#include <assert.h>
 #include <string.h>
 
 /* TLSF block sizes are kept at 8-byte granularity (low 3 bits of a size are
@@ -490,6 +491,10 @@ void tlsf_free(memory_pool_t *pool, mp_block_header_t *header)
     tlsf_block_t *block = (tlsf_block_t *)header->raw_base;
     tlsf_pool_t *tpool = (tlsf_pool_t *)header->subpool;
 
+    /* Arena-owned blocks carry an arena pointer in subpool and are freed by
+     * tlsf_arena_free_block(); reaching the shared TLSF here is a bug. */
+    assert((header->flags & MP_BLOCK_FLAG_TLSF_ARENA) == 0);
+
     /* Update stats atomically to reduce time under the arena lock. */
     CMEM_ATOMIC_FETCH_SUB(&pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
 
@@ -558,9 +563,9 @@ bool tlsf_try_inplace_expand(memory_pool_t *pool, mp_block_header_t *header, siz
     if (!block) {
         return false;
     }
-    /* Arena blocks (subpool == NULL) cannot participate in shared-pool
-     * in-place expansion — fall back to memcpy-based realloc. */
-    if (!tpool) {
+    /* Arena blocks carry an arena pointer in subpool and cannot participate in
+     * shared-pool in-place expansion — fall back to memcpy-based realloc. */
+    if (tpool == NULL || (header->flags & MP_BLOCK_FLAG_TLSF_ARENA) != 0) {
         return false;
     }
 
