@@ -2163,7 +2163,6 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                 slot = percpu_pop(pool, cpu, class_idx);
             }
         }
-
         /* Tier 3: Combined TLS-refill + slab alloc under a single lock */
         if (!slot) {
             slot = slab_alloc_with_tls_refill(pool, class_idx);

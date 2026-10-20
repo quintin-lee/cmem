@@ -369,7 +369,7 @@ void test_reset_stats_and_preferred_size()
     assert(pool != NULL);
 
     assert(mp_preferred_size(12) == 16);
-    assert(mp_preferred_size(40) == 64);
+    assert(mp_preferred_size(40) == 48);
     assert(mp_preferred_size(1000) == 1000);
 
     void *p1 = mp_alloc(pool, 500);

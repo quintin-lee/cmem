@@ -1015,7 +1015,7 @@ typedef struct mp_slab_slot {
     struct mp_slab_slot *next;
 } mp_slab_slot_t;
 
-#define CMEM_SLAB_CLASS_COUNT 7
+#define CMEM_SLAB_CLASS_COUNT 12
 
 /* Per-thread TLSF cache: covers fl indices 6-13 (64B-8KB blocks). */
 #define TLSF_CACHE_MIN_FL 6 /* Minimum fl index covered by cache (64B)    */

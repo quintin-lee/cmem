@@ -304,17 +304,17 @@ static void test_slab_class_config()
     size_t custom_sizes[] = {16, 32, 64, 128};
     mp_set_slab_classes(pool, custom_sizes, 4);
 
-    size_t out[8];
-    size_t count = mp_get_slab_classes(pool, out, 8);
-    assert(count == 7);
+    size_t out[16];
+    size_t count = mp_get_slab_classes(pool, out, 16);
+    assert(count == 12);
     assert(out[0] == 16);
     assert(out[1] == 32);
     assert(out[2] == 64);
     assert(out[3] == 128);
 
-    assert(mp_get_slab_class_count(pool) == 7);
+    assert(mp_get_slab_class_count(pool) == 12);
     assert(mp_preferred_size_for_pool(pool, 20) >= 20);
-
+    assert(mp_get_slab_class_count(pool) == 12);
     mp_destroy(pool);
     TEST_PASS("test_slab_class_config");
 }
