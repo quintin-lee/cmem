@@ -2220,35 +2220,51 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
 
             tlsf_block_t *block = (tlsf_block_t *)entry->block;
             tlsf_pool_t *tpool = (tlsf_pool_t *)entry->tpool;
-            mp_block_header_t *header =
-                (mp_block_header_t *)((uint8_t *)block + sizeof(tlsf_block_t));
-            block->size_and_flags = total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
-            header->magic = MP_MAGIC_HEAD;
-            header->alloc_type = ALLOC_TYPE_TLSF;
-            header->slab_class = 0;
-            header->flags = 0;
-            header->requested_size = size;
-            header->usable_size = total_needed - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
-            header->raw_base = block;
-            header->subpool = tpool;
-            header->alloc_file = NULL;
-            header->alloc_line = 0;
-            header->alloc_func = NULL;
-            header->backtrace_depth = 0;
-            ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
-            if (pool->flags & MP_FLAG_DEBUG_CANARY) {
-                uint8_t *canary = (uint8_t *)ptr + size;
-                *canary = MP_CANARY_BYTE;
+            if ((block->size_and_flags & BLOCK_SIZE_MASK) != total_needed) {
+                /* Cache buckets are floor(log2) size classes, so the cached
+                 * span need not match this request. Re-stamping it would
+                 * rewrite the physical chain and overlap the neighbour;
+                 * return it to the shared list and let the normal path split
+                 * it correctly. */
+                block->size_and_flags |= BLOCK_STATE_FREE;
+                tlsf_insert_free_block(tpool, block);
+            } else {
+                mp_block_header_t *header =
+                    (mp_block_header_t *)((uint8_t *)block + sizeof(tlsf_block_t));
+                block->size_and_flags =
+                    total_needed | (block->size_and_flags & BLOCK_STATE_PREV_FREE);
+                header->magic = MP_MAGIC_HEAD;
+                header->alloc_type = ALLOC_TYPE_TLSF;
+                header->slab_class = 0;
+                header->flags = 0;
+                header->requested_size = size;
+                header->usable_size =
+                    total_needed - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
+                header->raw_base = block;
+                header->subpool = tpool;
+                header->alloc_file = NULL;
+                header->alloc_line = 0;
+                header->alloc_func = NULL;
+                header->backtrace_depth = 0;
+                ptr = (void *)((uint8_t *)header + sizeof(mp_block_header_t));
+                if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+                    uint8_t *canary = (uint8_t *)ptr + size;
+                    *canary = MP_CANARY_BYTE;
+                }
+                if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
+                    memset(ptr, 0, size);
+                }
+                CMEM_ATOMIC_FETCH_ADD(&tpool->owner_pool->tlsf_allocated_bytes,
+                                      header->usable_size,
+                                      CMEM_ORDER_RELAXED);
             }
-            if (pool->flags & MP_FLAG_ZERO_ON_ALLOC) {
-                memset(ptr, 0, size);
-            }
-            CMEM_ATOMIC_FETCH_ADD(
-                &tpool->owner_pool->tlsf_allocated_bytes, header->usable_size, CMEM_ORDER_RELAXED);
-        } else {
-            /* Try per-thread TLSF arena (lock-free hot path) — only for
-             * multi-arena child pools where the arena provides a dedicated
-             * per-thread free list that bypasses shared pool locking. */
+        }
+        if (!ptr) {
+            /* Cache miss, or a cached block too small for this request (it
+             * was returned to the shared list above): try the per-thread TLSF
+             * arena (lock-free hot path) — only for multi-arena child pools
+             * where the arena provides a dedicated per-thread free list that
+             * bypasses shared pool locking. */
             if (pool->is_multi_arena_child && tls_cache.tlsf_arena == NULL) {
                 (void)tlsf_arena_init(pool);
             }
