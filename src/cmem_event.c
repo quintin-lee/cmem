@@ -795,6 +795,7 @@ void mp_destroy_shared(memory_pool_t *pool, const char *shm_name)
         return;
     }
     tls_cache_flush_pool(pool);
+    tlsf_arena_registry_release(pool);
 #ifdef _WIN32
     (void)shm_name;
 #else
@@ -1540,6 +1541,10 @@ void mp_destroy(memory_pool_t *pool)
             pool->arenas = NULL;
             pool->num_arenas = 0;
         }
+
+        /* Arena descriptors and any still-mapped regions are pool-owned;
+         * they must be released before the pool struct goes away. */
+        tlsf_arena_registry_release(pool);
 
         free(pool);
     }

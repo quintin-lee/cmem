@@ -198,15 +198,76 @@ void tlsf_arena_reap(tlsf_arena_t *arena)
     }
 }
 
-/** Release the arena's backing region and mark it finished (retire path). */
+/**
+ * Sole-mutator cleanup: every block is free by now (live_bytes reached zero,
+ * so the owner is detached or retirement observed zero). Reaps leftovers,
+ * then releases the region to the OS.
+ *
+ * NOTE (deliberate): the region is NOT inserted into the shared TLSF buckets.
+ * Memory cannot both join the shared free list and return to the OS, and the
+ * pool does not track foreign regions. The spec text is corrected in Chunk 5.
+ */
 static void tlsf_arena_cleanup(tlsf_arena_t *arena)
 {
+    tlsf_arena_reap(arena);
+#ifndef NDEBUG
+    assert(arena->free_list != NULL && arena->free_list->next_free == NULL);
+    assert(tlsf_arena_validate(arena));
+#endif
+    memory_pool_t *pool = arena->owner_pool;
     if (arena->raw != NULL) {
-        sys_mem_free(arena->owner_pool, arena->raw, arena->size);
-        CMEM_ATOMIC_FETCH_SUB(&arena->owner_pool->total_pool_size, arena->size, CMEM_ORDER_RELAXED);
+        sys_mem_free(pool, arena->raw, arena->size);
+        CMEM_ATOMIC_FETCH_SUB(&pool->total_pool_size, arena->size, CMEM_ORDER_RELAXED);
         arena->raw = NULL;
     }
     CMEM_ATOMIC_STORE(&arena->finished, true, CMEM_ORDER_RELEASE);
+}
+
+void tlsf_arena_retire(memory_pool_t *pool)
+{
+    tlsf_arena_t *arena = tls_cache.tlsf_arena;
+    if (arena == NULL || arena->owner_pool != pool) {
+        return;
+    }
+    /* Detach first: this thread can no longer take the direct path. */
+    tls_cache.tlsf_arena = NULL;
+    CMEM_ATOMIC_STORE(&arena->retired, true, CMEM_ORDER_RELEASE);
+
+    if (CMEM_ATOMIC_LOAD(&arena->live_bytes, CMEM_ORDER_ACQUIRE) == 0) {
+        bool expected = false;
+        if (CMEM_ATOMIC_COMPARE_EXCHANGE(
+                &arena->cleanup_claimed, &expected, true, CMEM_ORDER_ACQ_REL, CMEM_ORDER_RELAXED)) {
+            tlsf_arena_cleanup(arena);
+        }
+    }
+}
+
+void tlsf_arena_registry_release(memory_pool_t *pool)
+{
+    /* Non-thread-safe shared pools never initialize arena_registry_lock and
+     * can never own arenas; reading the registry is safe at destroy time. */
+    if (pool->arena_registry == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&pool->arena_registry_lock);
+    tlsf_arena_t *arena = pool->arena_registry;
+    pool->arena_registry = NULL;
+    pthread_mutex_unlock(&pool->arena_registry_lock);
+
+    while (arena != NULL) {
+        tlsf_arena_t *next = arena->registry_next;
+        if (!CMEM_ATOMIC_LOAD(&arena->finished, CMEM_ORDER_ACQUIRE)) {
+            /* Pool destroyed with blocks still outstanding: force-release. */
+            if (arena->raw != NULL) {
+                memory_pool_t *owner = arena->owner_pool;
+                sys_mem_free(owner, arena->raw, arena->size);
+                CMEM_ATOMIC_FETCH_SUB(&owner->total_pool_size, arena->size, CMEM_ORDER_RELAXED);
+                arena->raw = NULL;
+            }
+        }
+        free(arena);
+        arena = next;
+    }
 }
 
 tlsf_block_t *tlsf_arena_alloc(tlsf_arena_t *arena, size_t total_needed)
@@ -421,6 +482,9 @@ void tls_cache_flush_pool(memory_pool_t *pool)
             }
             tls_cache.tlsf_counts[i] = 0;
         }
+        /* All cached arena blocks are back in the arena; if it has no live
+         * blocks it can now be released and unregistered from the pool. */
+        tlsf_arena_retire(pool);
     }
 }
 
