@@ -160,6 +160,28 @@ CMake 默认启用动态库输出（`CMEM_BUILD_SHARED=ON`）。静态目标还�
 
 **特性宏：** 两套构建系统均定义 `_GNU_SOURCE`（在严格的 `-std=c11` 下需要它来启用 `sched.h`、`backtrace`、`madvise`）；不再需要逐个文件定义 `_POSIX_C_SOURCE` / `_GNU_SOURCE`。
 
+### 3.4 内存安全配置
+
+`CMEM_SAFETY_LEVEL` 用于选择以 `MP_FLAG_DEFAULT` (0) 创建的内存池的默认安全标志。
+该配置仅在编译期生效，没有运行时设置接口。
+
+| 级别 | 名称 | 默认标志 | 适用配置 |
+|-------|------|---------------|---------|
+| 0 | auto | NDEBUG 构建启用 canary，其他构建启用 canary + poison | 头文件默认值 |
+| 1 | none | 无 | 主动关闭 |
+| 2 | canary | `MP_FLAG_DEBUG_CANARY` | Release |
+| 3 | maximal | `MP_FLAG_DEBUG_CANARY \| MP_FLAG_POISON_ON_FREE` | Debug/sanitizer |
+
+CMake 将 Release 映射为级别 2，将 Debug/ASan/TSan/UBSan/Coverage 映射为级别 3。
+可通过 `-DCMEM_SAFETY_LEVEL=none|canary|maximal` 覆盖。Makefile 使用
+`SAFETY_LEVEL=none|canary|maximal`，并将 `CONFIG=release` 映射为 2、
+`CONFIG=debug|asan|tsan|ubsan` 映射为 3。
+
+只有 `MP_FLAG_DEFAULT` 会被替换；显式的非零标志会原样使用，但 `CMEM_CONF`
+仍可为任意内存池追加标志。`mp_create_from_buffer()` 现在同样支持 `CMEM_CONF`。
+Release 默认包含 canary（文档记录约 3% 开销）；如需关闭，请使用
+`CMEM_SAFETY_LEVEL=none`。
+
 ---
 
 ## 4. 测试指南

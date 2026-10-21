@@ -113,7 +113,7 @@ mp_flags_t flags = MP_FLAG_THREAD_SAFE | MP_FLAG_HUGE_PAGES |
 | `MP_FLAG_THREAD_LOCAL_CACHE` | ~1KB per thread | < 1% | High-frequency small objects |
 | `MP_FLAG_FAST_PATH` | None | **+135% speedup** (230+ Mops/sec) | Ultra-low latency small objects |
 | `MP_FLAG_PERCPU_FREELIST` | ~16 slots per CPU per Class | < 2% | High-concurrency small objects |
-| `MP_FLAG_DEBUG_CANARY` | +1B per block | ~3% | Development/debugging |
+| `MP_FLAG_DEBUG_CANARY` | +1B per block | ~3% | Default in Release (`CMEM_SAFETY_LEVEL=canary`); opt out with `CMEM_SAFETY_LEVEL=none` |
 | `MP_FLAG_TRACK_LOCATIONS` | ~80B per block | ~5% | Leak analysis |
 | `MP_FLAG_POISON_ON_FREE` | None | < 1% | UAF detection |
 | `MP_FLAG_CACHE_ALIGNED` | Possible waste | < 1% | High-performance scenarios |

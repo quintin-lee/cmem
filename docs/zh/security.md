@@ -363,7 +363,7 @@ void security_event_cb(memory_pool_t* pool, mp_event_type_t ev,
 
 - [ ] 根据场景选择适当的安全 Flag 组合
 - [ ] 开发环境启用 `MP_FLAG_TRACK_LOCATIONS`
-- [ ] 生产环境启用 `MP_FLAG_DEBUG_CANARY`
+- [ ] Release 构建默认启用 canary；使用 `CMEM_SAFETY_LEVEL=canary` 验证，仅在充分评估后关闭
 - [ ] 敏感数据场景启用 `MP_FLAG_ENCRYPTED_MEMORY`
 - [ ] 配置 `mp_set_memory_limit` 防止 OOM 攻击
 - [ ] 启用 `mp_set_circuit_breaker` 防止资源耗尽

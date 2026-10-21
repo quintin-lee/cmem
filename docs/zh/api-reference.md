@@ -129,6 +129,27 @@ memory_pool_t* mp_create_custom(size_t initial_capacity, mp_flags_t flags, const
 
 ---
 
+### mp_default_pool_flags
+
+```c
+mp_flags_t mp_default_pool_flags(void);
+```
+
+返回以 `MP_FLAG_DEFAULT` 创建的内存池所应用的编译期安全标志。
+该值来自 `CMEM_DEFAULT_SAFETY_FLAGS`，由 `CMEM_SAFETY_LEVEL`
+（`0=auto`、`1=none`、`2=canary`、`3=maximal`）在编译期推导。
+
+**返回值：**
+- 默认安全标志掩码（根据配置的级别为 `MP_FLAG_DEFAULT`、
+  `MP_FLAG_DEBUG_CANARY` 或 `MP_FLAG_DEBUG_CANARY | MP_FLAG_POISON_ON_FREE`）
+
+**注意：**
+- 该函数仅报告编译期策略，不读取 `CMEM_CONF`。
+- 只有 `MP_FLAG_DEFAULT` 会被策略替换；显式的非零标志会原样使用，
+  随后 `CMEM_CONF` 可以继续追加标志。
+
+---
+
 ### mp_destroy
 
 ```c
@@ -1139,7 +1160,7 @@ export CMEM_CONF="canary=1,poison=on,aligned=1,guard=1,tls=1,track=1,hugepages=1
 
 ```c
 typedef enum {
-    MP_FLAG_DEFAULT            = 0,                    // 默认配置
+    MP_FLAG_DEFAULT            = 0,                    // 默认配置；应用 CMEM_DEFAULT_SAFETY_FLAGS
     MP_FLAG_THREAD_SAFE        = (1 << 0),             // 启用线程安全 (mutex)
     MP_FLAG_DEBUG_CANARY       = (1 << 1),             // 红区金丝雀检测越界
     MP_FLAG_ZERO_ON_ALLOC      = (1 << 2),             // 分配时自动清零

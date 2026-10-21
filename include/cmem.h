@@ -72,8 +72,8 @@ extern "C" {
  * and platform-specific optimizations. Multiple flags can be ORed together.
  */
 typedef enum {
-    MP_FLAG_DEFAULT = 0,              /**< Default configuration, no special features enabled */
-    MP_FLAG_THREAD_SAFE = (1 << 0),   /**< Enable thread safety via pthread mutex/rwlock */
+    MP_FLAG_DEFAULT = 0,            /**< Default configuration; applies CMEM_DEFAULT_SAFETY_FLAGS */
+    MP_FLAG_THREAD_SAFE = (1 << 0), /**< Enable thread safety via pthread mutex/rwlock */
     MP_FLAG_DEBUG_CANARY = (1 << 1),  /**< Add magic canary bytes for buffer overflow checks */
     MP_FLAG_ZERO_ON_ALLOC = (1 << 2), /**< Automatically zero memory upon allocation */
     MP_FLAG_THREAD_LOCAL_CACHE =

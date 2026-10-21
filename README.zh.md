@@ -483,8 +483,8 @@ export CMEM_CONF="canary=1,poison=on,aligned=1,guard=1"
 #include "cmem.h"
 
 int main() {
-    mp_flags_t flags = mp_parse_env_flags(MP_FLAG_DEFAULT);
-    memory_pool_t* pool = mp_create(0, flags);
+    // 构造函数先应用编译期安全默认值，再解析 CMEM_CONF。
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
     // pool now has Canary + Poison + Cache Aligned + Guard Pages
     return 0;
 }
@@ -631,8 +631,10 @@ int main() {
 ## 🚀 构建与测试
 
 ```bash
-# 构建静态库并运行 C 单元测试 (带 ASan/UBSan)
-make test
+# 使用 CMake 配置并构建 (Release)，然后运行 CTest 测试套件
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
 
 # 构建并运行 C++17 PMR 和 STL 分配器测试
 make test_cpp
@@ -706,6 +708,9 @@ make tag --dry-run --bump patch
 | 中等对象 (1KB-64KB x 100K ops) | ~180 Mops/sec | ~420 Mops/sec | **~2.3x** |
 | Arena 重置 (500 allocs x 1000 rounds) | 12.4 ms | 0.8 ms | **~15x** |
 | 多线程 (8 threads x 100K allocs) | 高争用 | 近线性扩展 | **~8x** |
+
+> **生产调优**：Release 构建默认启用 canary（`MP_FLAG_DEBUG_CANARY`），poison 保持关闭。
+> 可通过 `-DCMEM_SAFETY_LEVEL=none`（CMake）或 `SAFETY_LEVEL=none`（Make）关闭。
 
 ---
 

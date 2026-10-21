@@ -363,7 +363,7 @@ void security_event_cb(memory_pool_t* pool, mp_event_type_t ev,
 
 - [ ] Select appropriate security Flag combination based on scenario
 - [ ] Enable `MP_FLAG_TRACK_LOCATIONS` in development environment
-- [ ] Enable `MP_FLAG_DEBUG_CANARY` in production environment
+- [ ] Release builds enable the canary by default; verify with `CMEM_SAFETY_LEVEL=canary` and opt out only with justification
 - [ ] Enable `MP_FLAG_ENCRYPTED_MEMORY` for sensitive data scenarios
 - [ ] Configure `mp_set_memory_limit` to prevent OOM attacks
 - [ ] Enable `mp_set_circuit_breaker` to prevent resource exhaustion

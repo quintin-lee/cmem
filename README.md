@@ -491,8 +491,8 @@ export CMEM_CONF="canary=1,poison=on,aligned=1,guard=1"
 #include "cmem.h"
 
 int main() {
-    mp_flags_t flags = mp_parse_env_flags(MP_FLAG_DEFAULT);
-    memory_pool_t* pool = mp_create(0, flags);
+    // The constructor applies the compile-time safety default, then CMEM_CONF.
+    memory_pool_t* pool = mp_create(0, MP_FLAG_DEFAULT);
     // pool now has Canary + Poison + Cache Aligned + Guard Pages
     return 0;
 }
@@ -639,8 +639,10 @@ int main() {
 ## 🚀 Build & Test
 
 ```bash
-# Build static library and run C unit tests (with ASan/UBSan)
-make test
+# Configure and build with CMake (Release), then run the CTest suite
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
 
 # Build and run C++17 PMR and STL allocator tests
 make test_cpp
@@ -735,7 +737,7 @@ This builds and tests cmem in a clean Ubuntu 22.04 environment with all dependen
 - **cmem is not a drop-in replacement for raw throughput**: It prioritizes memory safety, introspection, and debug features over raw allocator speed. For latency-sensitive paths, use `MP_FLAG_PERCPU_FREELIST` or `MP_FLAG_THREAD_LOCAL_CACHE`.
 - **Batch operations excel**: `mp_reset()` and `mp_free_batch()` provide O(1) arena teardown vs O(n) individual frees.
 - **TLSF in-place realloc**: When adjacent blocks are free, `mp_realloc()` avoids memcpy entirely.
-- **Production tuning**: Disable `MP_FLAG_DEBUG_CANARY` and `MP_FLAG_POISON_ON_FREE` in Release builds to reduce overhead.
+- **Production tuning**: Release builds enable the canary by default (`MP_FLAG_DEBUG_CANARY`); poison stays off. Opt out with `-DCMEM_SAFETY_LEVEL=none` (CMake) or `SAFETY_LEVEL=none` (Make).
 
 ---
 

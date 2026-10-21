@@ -160,6 +160,28 @@ CMake enables shared library output by default (`CMEM_BUILD_SHARED=ON`). The sta
 
 **Feature macros:** Both build systems define `_GNU_SOURCE` (required for `sched.h`, `backtrace`, and `madvise` under strict `-std=c11`); per-file `_POSIX_C_SOURCE` / `_GNU_SOURCE` defines are no longer needed.
 
+### 3.4 Memory Safety Configuration
+
+`CMEM_SAFETY_LEVEL` selects the default safety flags for pools created with
+`MP_FLAG_DEFAULT` (0). It is compile-time only; there is no runtime setter.
+
+| Level | Name | Default flags | Profile |
+|-------|------|---------------|---------|
+| 0 | auto | canary in NDEBUG builds, canary + poison otherwise | Header default |
+| 1 | none | none | Opt out |
+| 2 | canary | `MP_FLAG_DEBUG_CANARY` | Release |
+| 3 | maximal | `MP_FLAG_DEBUG_CANARY \| MP_FLAG_POISON_ON_FREE` | Debug/sanitizers |
+
+CMake maps Release to level 2 and Debug/ASan/TSan/UBSan/Coverage to level 3.
+Override with `-DCMEM_SAFETY_LEVEL=none|canary|maximal`. The Makefile uses
+`SAFETY_LEVEL=none|canary|maximal` and maps `CONFIG=release` to 2 and
+`CONFIG=debug|asan|tsan|ubsan` to 3.
+
+Only `MP_FLAG_DEFAULT` is replaced. Explicit non-zero flags are used verbatim,
+but `CMEM_CONF` can add flags to any pool. `mp_create_from_buffer()` now honors
+`CMEM_CONF` as well. The Release default includes the canary (~3% documented
+overhead); use `CMEM_SAFETY_LEVEL=none` to opt out.
+
 ---
 
 ## 4. Testing Guide

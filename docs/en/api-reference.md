@@ -129,6 +129,27 @@ Creates a memory pool using a custom system allocator.
 
 ---
 
+### mp_default_pool_flags
+
+```c
+mp_flags_t mp_default_pool_flags(void);
+```
+
+Returns the compile-time safety flags applied to pools created with `MP_FLAG_DEFAULT`.
+The value comes from `CMEM_DEFAULT_SAFETY_FLAGS`, which is derived from
+`CMEM_SAFETY_LEVEL` (`0=auto`, `1=none`, `2=canary`, `3=maximal`) at compile time.
+
+**Return Value:**
+- The default safety flag mask (`MP_FLAG_DEFAULT`, `MP_FLAG_DEBUG_CANARY`, or
+  `MP_FLAG_DEBUG_CANARY | MP_FLAG_POISON_ON_FREE` depending on the configured level)
+
+**Note:**
+- This function reports the compile-time policy; it does not read `CMEM_CONF`.
+- Only `MP_FLAG_DEFAULT` is replaced by the policy. Explicit non-zero flags are used
+  verbatim, after which `CMEM_CONF` may add further flags.
+
+---
+
 ### mp_destroy
 
 ```c
@@ -1139,7 +1160,7 @@ export CMEM_CONF="canary=1,poison=on,aligned=1,guard=1,tls=1,track=1,hugepages=1
 
 ```c
 typedef enum {
-    MP_FLAG_DEFAULT            = 0,                    // Default configuration
+    MP_FLAG_DEFAULT            = 0,                    // Default configuration; applies CMEM_DEFAULT_SAFETY_FLAGS
     MP_FLAG_THREAD_SAFE        = (1 << 0),             // Enable thread safety (mutex)
     MP_FLAG_DEBUG_CANARY       = (1 << 1),             // Redzone Canary out-of-bounds detection
     MP_FLAG_ZERO_ON_ALLOC      = (1 << 2),             // Auto-zero on allocation
