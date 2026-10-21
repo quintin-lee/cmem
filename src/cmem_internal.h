@@ -605,6 +605,7 @@ extern void active_list_add(memory_pool_t *pool, mp_block_header_t *header);
 extern void active_list_remove(memory_pool_t *pool, mp_block_header_t *header);
 extern void *mp_alloc_internal(memory_pool_t *pool, size_t size);
 extern memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool);
+extern void mp_purge_thread_arena_bindings(memory_pool_t *pool);
 
 /* Slab allocator (cmem_slab.c) */
 extern bool slab_init(memory_pool_t *pool);

@@ -1456,6 +1456,7 @@ void mp_destroy(memory_pool_t *pool)
         return;
     }
 
+    mp_purge_thread_arena_bindings(pool);
     tls_cache_flush_pool(pool);
     percpu_flush(pool);
 
@@ -3870,6 +3871,30 @@ typedef struct {
 } tls_arena_map_t;
 
 static MP_THREAD_LOCAL tls_arena_map_t tls_arena_map = {{{NULL, NULL, 0}}, 0};
+
+/**
+ * @brief Drop the calling thread's TLS references to @p pool.
+ *
+ * mp_destroy calls this BEFORE releasing pool memory: a later mp_create
+ * can reuse the freed addresses, and stale tls_cache.bound_arena or
+ * tls_arena_map entries would hand dangling arena pointers back to the
+ * allocation fast path. Matching is by pointer identity; the recursive
+ * child teardown in mp_destroy purges each child as well.
+ */
+void mp_purge_thread_arena_bindings(memory_pool_t *pool)
+{
+    if (tls_cache.bound_arena == pool) {
+        tls_cache.bound_arena = NULL;
+    }
+
+    for (int i = tls_arena_map.count - 1; i >= 0; i--) {
+        if (tls_arena_map.bindings[i].master_pool == pool ||
+            tls_arena_map.bindings[i].bound_arena == pool) {
+            tls_arena_map.bindings[i] = tls_arena_map.bindings[tls_arena_map.count - 1];
+            tls_arena_map.count--;
+        }
+    }
+}
 
 memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool)
 {
