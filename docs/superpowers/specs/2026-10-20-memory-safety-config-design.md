@@ -361,6 +361,23 @@ foreach(_cmem_target cmem_core cmem_core_shared cmem cmem_shared cmem_diag cmem_
 endforeach()
 ```
 
+Place this block **after** the last `add_library`/`add_executable` target
+definition (after `CMakeLists.txt:282`, the closing `endif()` of the diagnostics
+conditional, and before the `install(FILES ...)` block at `:284`;
+`install(EXPORT)` is at `:330-334` and `configure_file` at `:337-341`).
+`if(TARGET ...)` is false for a target that has not been declared yet, so the
+block cannot sit next to the cache option, and it must be outside the
+`CMEM_BUILD_SHARED`/`CMEM_ENABLE_DIAGNOSTICS` branches so it runs for every
+configuration. Add this guard immediately before the `foreach` above (shown
+after it only for readability) so a misplaced block fails loudly:
+
+```cmake
+if(NOT TARGET cmem_core)
+    message(FATAL_ERROR
+        "cmem_core is missing; place the safety-definition block after the target definitions")
+endif()
+```
+
 The targets are exported through `cmemTargets` (`CMakeLists.txt:330-334`), so
 `PUBLIC` definitions reach consumers of the installed package. Also add the
 define to `cmake/cmem.pc.in` line 10:
@@ -379,7 +396,8 @@ The top-level `Makefile` computes the number and exports it. Place this block
 `CMAKE_BUILD_TYPE ?= Release` (line 26): `Makefile.make` evaluates
 `SAFETY_LEVEL_NUM` at include time, so a block placed after the include is
 ignored and the Makefile matrix silently falls back to the header default.
-Empty means "map by `CONFIG`"; `auto` is an explicit request for 0:
+Empty means "map by `CONFIG`" (for `CONFIG=cmake` the CMake layer maps by
+`CMAKE_BUILD_TYPE` instead); `auto` is an explicit request for 0:
 
 ```make
 SAFETY_LEVEL ?=
@@ -450,9 +468,9 @@ cmake-build: format-check check-mermaid
 
 #### 2.3.3 Known pre-existing Makefile breakage
 
-`Makefile.make` depends on `format-check` and `check-mermaid` in `all`, `lib`,
-`test`, `test_advanced`, `test_cpp`, `bench`, `examples`, and `stress_test`, but
-defines neither target (they exist only in `Makefile.cmake`). Its `build_program`
+`Makefile.make` depends on `format-check` in `lib`, `test`, `test_advanced`,
+`test_cpp`, `bench`, `examples`, and `stress_test`; `all` additionally depends on
+`check-mermaid`. It defines neither target (they exist only in `Makefile.cmake`). Its `build_program`
 macro also calls `$(shell basename $(1) .c)` with a source list, which errors. At
 HEAD, `make test` (default `CONFIG=cmake`) has no `test` target, and
 `make CONFIG=release test` stops at "No rule to make target 'format-check'".
@@ -471,23 +489,26 @@ pre-existing defect. Consequences for this spec:
 
 ### 2.4 Behavior change inventory
 
-`MP_FLAG_DEFAULT` is 0, so every call that passes it is affected. Explicit
-non-zero flags are not.
+`MP_FLAG_DEFAULT` is 0, so every call that passes it gets
+`CMEM_DEFAULT_SAFETY_FLAGS` instead. Explicit non-zero flags are never replaced
+by the default policy; they can still receive additive `CMEM_CONF` flags.
 
 | Site | Count / location | Before | After |
 |------|------------------|--------|-------|
 | `mp_create(0, MP_FLAG_DEFAULT)` in `tests/test_advanced.c` | 27 calls | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
-| `tests/test_main.c` | 31 `MP_FLAG_DEFAULT` arguments (39 token occurrences in the file) | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
+| `tests/test_main.c` | 39 `MP_FLAG_DEFAULT` arguments (31 of them zero-capacity `mp_create(0, ...)` calls) | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
 | C++ `cmem::MemoryPool` default ctor (`include/cmem.hpp:50`) | default argument `MP_FLAG_DEFAULT` | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
 | C++ child ctor (`include/cmem.hpp:90`) when caller passes `MP_FLAG_DEFAULT` | public API | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
 | `benchmarks/bench_main.c` | lines 173, 225, 404, 1270 | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
 | Fixed-arena pools in `src/cmem_event.c` | lines 3778-3779 | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
-| `mp_create_from_buffer(..., MP_FLAG_DEFAULT)` | public API | `STATIC_BUFFER` | `CMEM_DEFAULT_SAFETY_FLAGS \| STATIC_BUFFER`; also now honors `CMEM_CONF` |
-| `mp_create_shared(..., MP_FLAG_DEFAULT)` | public API | `STATIC_BUFFER \| SHARED_MEMORY` | `CMEM_DEFAULT_SAFETY_FLAGS \| STATIC_BUFFER \| SHARED_MEMORY` |
+| `mp_create_from_buffer(..., MP_FLAG_DEFAULT)` | public API | `STATIC_BUFFER` | `CMEM_DEFAULT_SAFETY_FLAGS \| STATIC_BUFFER`, plus `CMEM_CONF` |
+| `mp_create_shared(..., MP_FLAG_DEFAULT)` | public API | `STATIC_BUFFER \| SHARED_MEMORY` | `CMEM_DEFAULT_SAFETY_FLAGS \| STATIC_BUFFER \| SHARED_MEMORY`, plus `CMEM_CONF` |
+| `mp_create_from_buffer(..., explicit non-zero flags)` | public API | explicit \| `STATIC_BUFFER` | same, plus `CMEM_CONF` (new) |
+| `mp_create_shared(..., explicit non-zero flags)` | public API | explicit \| `STATIC_BUFFER` \| `SHARED_MEMORY` | same, plus `CMEM_CONF` (new) |
 | Public `mp_create_child(..., MP_FLAG_DEFAULT, ...)` | e.g. `tests/test_main.c:306-307`, `:1820` | 0 | `CMEM_DEFAULT_SAFETY_FLAGS` |
-| Multi-arena children (`mp_enable_multi_arena`) | `src/cmem_event.c:3937` | parent flags minus `MULTI_ARENA` | unchanged, including the masked-to-zero case |
+| Multi-arena children (`mp_enable_multi_arena`) | `src/cmem_event.c:3937` | parent flags minus `MULTI_ARENA` | unchanged by the default policy, including the masked-to-zero case; a later call no longer re-parses `CMEM_CONF`, so children inherit the parent's flags as of parent creation |
 | Global pool (`src/cmem.c:738`) | `MP_FLAG_THREAD_SAFE` | `THREAD_SAFE` | unchanged |
-| Pools with explicit flags (most benchmarks) | many | explicit | unchanged |
+| Pools with explicit flags via `mp_create_custom` (most benchmarks) | many | explicit + `CMEM_CONF` | unchanged |
 
 Costs, per `docs/en/performance.md:116-118`: canary adds one byte per block plus
 a one-byte comparison on free, documented at roughly 3% overhead; poison-on-free
@@ -543,8 +564,8 @@ do **not** add "Test N" numbering (the numbered convention is
 `tests/test_main.c`, where Test 38 is `test_compressed_storage` at line 541).
 Append the calls after `test_static_buffer_pool()`.
 
-`unsetenv("CMEM_CONF")` must run **before** pool creation in T1-T5. T7 sets the
-variable deliberately and clears it afterwards. Add a Windows shim next to the
+`unsetenv("CMEM_CONF")` must run **before** pool creation in T1-T5. T7 and T8 set
+the variable deliberately and clear it afterwards. Add a Windows shim next to the
 existing `setenv` shim (`tests/test_advanced.c:17-19`):
 
 ```c
@@ -563,6 +584,7 @@ static int cmem_unsetenv(const char *name) { return _putenv_s(name, ""); }
 | T5 | `test_safety_multi_arena_children` | `unsetenv("CMEM_CONF")`; parent `mp_create(0, MP_FLAG_MULTI_ARENA)`; `mp_get_arena_count(parent) > 0`; child `mp_get_arena(parent, 0)`; `mp_reparse_env_flags(child)`; also a parent with `MP_FLAG_MULTI_ARENA \| MP_FLAG_THREAD_SAFE`; destroy | first child flags == 0; second child flags == `MP_FLAG_THREAD_SAFE`; parent flags include `MULTI_ARENA` |
 | T6 | fix `test_reparse_env_flags` | after `mp_get_env_generation()`, call `unsetenv("CMEM_CONF")` before `mp_destroy(pool)` | later tests see a clean environment |
 | T7 | `test_safety_env_override` | save and clear `CMEM_CONF`; set `CMEM_CONF=poison=1`; create a DEFAULT pool and a `mp_create_from_buffer(..., MP_FLAG_DEFAULT)` pool; read flags; restore/unset | heap pool flags == `CMEM_DEFAULT_SAFETY_FLAGS \| MP_FLAG_POISON_ON_FREE`; static-buffer pool flags == `CMEM_DEFAULT_SAFETY_FLAGS \| MP_FLAG_POISON_ON_FREE \| MP_FLAG_STATIC_BUFFER`; environment restored. The Release (level 2) row is the meaningful case; in level 3 poison is already in the default. |
+| T8 | `test_safety_explicit_env` | save and clear `CMEM_CONF`; set `CMEM_CONF=canary=1`; aligned 64 KiB buffer; `mp_create_from_buffer(buffer, sizeof buffer, MP_FLAG_FAST_PATH)`; read flags; restore/unset | `MP_FLAG_FAST_PATH \| MP_FLAG_DEBUG_CANARY \| MP_FLAG_STATIC_BUFFER`; the explicit flag is preserved and the env flag is OR'd, not replaced |
 
 `mp_reparse_env_flags()` calls `mp_parse_env_flags(pool->flags)`. With
 `CMEM_CONF` unset it returns `pool->flags` unchanged, so it is a safe test-only
@@ -572,7 +594,8 @@ not behind the diagnostics option.
 T4 notes: include `<unistd.h>` for `getpid()` and build a per-process unique
 name so parallel tests do not collide. Assert `pool != NULL` before
 `mp_reparse_env_flags()`; `mp_create_shared()` can fail on hosts without
-`/dev/shm`. `mp_create_shared()` maps `capacity < 64 KiB` to 1 MiB; 65536 stays
+`/dev/shm`. Assert `getenv("CMEM_CONF") == NULL` before the read, so an ambient
+environment cannot turn the read into a mutation. `mp_create_shared()` maps `capacity < 64 KiB` to 1 MiB; 65536 stays
 64 KiB. `mp_destroy_shared()` uses `pool->total_pool_size` for `munmap` and
 unlinks the name.
 
@@ -589,8 +612,8 @@ do not mix build systems in one directory (see `AGENTS.md`).
 
 | # | Command | Expected |
 |---|---------|----------|
-| 1 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build_cmake && ctest --test-dir build_cmake --output-on-failure` | level 2; T1-T7 pass; `mp_default_pool_flags()` returns canary |
-| 2 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build_cmake && ctest --test-dir build_cmake --output-on-failure` | level 3; T1-T7 pass; canary+poison |
+| 1 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build_cmake && ctest --test-dir build_cmake --output-on-failure` | level 2; T1-T8 pass; `mp_default_pool_flags()` returns canary |
+| 2 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build_cmake && ctest --test-dir build_cmake --output-on-failure` | level 3; T1-T8 pass; canary+poison |
 | 3 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=ASan && cmake --build build_cmake && ctest --test-dir build_cmake --output-on-failure` | level 3 (exact `ASan`, not `ASAN`) |
 | 4 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_SAFETY_LEVEL=none && cmake --build build_cmake && ctest --test-dir build_cmake --output-on-failure` | level 1; T2/T3/T4 see no safety bits |
 | 5 | `cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_SAFETY_LEVEL=bogus` | configure fails with `FATAL_ERROR` |
@@ -628,7 +651,7 @@ sanitizer profiles. Do not describe a `make test` run as "ASan + UBSan".
   `CMEM_DEFAULT_SAFETY_FLAGS`. Mirror in `docs/zh/api-reference.md`.
 - `include/cmem.h:75` and `docs/en/api-reference.md:1142` /
   `docs/zh/api-reference.md:1142`: the `MP_FLAG_DEFAULT` comment currently says
-  “Default configuration, no special features enabled” / “默认配置”. Change it to
+  `// Default configuration` (en) / `// 默认配置` (zh). Change it to
   say that `MP_FLAG_DEFAULT` applies `CMEM_DEFAULT_SAFETY_FLAGS` (canary in
   Release, canary+poison in Debug) and point at `CMEM_SAFETY_LEVEL`.
 - `docs/en/performance.md:116` and `docs/zh/performance.md:116`: change
@@ -649,6 +672,11 @@ sanitizer profiles. Do not describe a `make test` run as "ASan + UBSan".
   default whenever `CMEM_CONF` is non-empty, because the parsed value is
   non-zero and the constructor treats it as explicit. Call
   `mp_create(0, MP_FLAG_DEFAULT)` and let the constructor parse the environment.
+- `README.md` build/test description (around line 642): it says `make test` runs
+  the C unit tests with ASan/UBSan. At HEAD `make test` is unavailable under the
+  default `CONFIG=cmake`, and `Makefile.make` is broken; replace that claim with
+  the CMake `ctest` commands in §3.2. Apply the same correction to
+  `README.zh.md`.
 - `CHANGELOG.md` under `## [Unreleased]`: Added `CMEM_SAFETY_LEVEL`,
   `CMEM_DEFAULT_SAFETY_FLAGS`, and `mp_default_pool_flags()`; Changed the default
   flags for `MP_FLAG_DEFAULT` pools and made `mp_create_from_buffer()` honor
@@ -691,14 +719,15 @@ safety change stays reviewable.
    target definitions, and the `cmem.pc.in` flag.
 7. Makefile: add `SAFETY_LEVEL` mapping/export, append to `CFLAGS`/`CXXFLAGS`,
    and add the configure step to `Makefile.cmake`.
-8. Tests: add T1-T5 and T7, the `unsetenv` shim, and the T6 cleanup; append calls
-   in `tests/test_advanced.c` `main()`.
+8. Tests: add T1-T5, T7, and T8, the `unsetenv` shim, and the T6 cleanup; append
+   calls in `tests/test_advanced.c` `main()`.
 9. Docs + CHANGELOG + delete the two root safety documents. Do the unrelated
    hygiene cleanup as a separate commit.
 10. Run the matrix in §3.2, `make format-check`, and the shared-library symbol
-    check. Add `src/cmem_internal.h` to the CMake `format-check` file list (it is
-    currently absent, so the new `static inline` resolver would escape the gate).
-    Record the Release benchmark delta.
+    check. Add `src/cmem_internal.h` to both the CMake `format-check` file list
+    and the Makefile's `format-check` inputs (or run
+    `clang-format -i src/cmem_internal.h` explicitly); it is absent from both
+    today. Record the Release benchmark delta.
 
 Steps 1-5 must land together: after step 4, `mp_enable_multi_arena()` must
 already use the verbatim path, or T5 will fail.
@@ -744,7 +773,7 @@ already use the verbatim path, or T5 will fail.
 | `mp_create_from_buffer` / `STATIC_BUFFER` OR | `src/cmem_event.c:872`, `:893` |
 | `mp_reparse_env_flags` | `src/cmem_event.c:1055`, `include/cmem.h:1306` |
 | Multi-arena child creation | `src/cmem_event.c:3937` |
-| `mp_destroy_shared` | `src/cmem_event.c:790` |
+| `mp_destroy_shared` | `src/cmem_event.c:792` |
 | `mp_get_arena` | `include/cmem.h:535` |
 | C++ default ctor / child ctor | `include/cmem.hpp:50`, `:90` |
 | Test `#undef NDEBUG` / setenv shim | `tests/test_advanced.c:6-8`, `:17-19` |
