@@ -21,6 +21,11 @@ else ifeq ($(CONFIG),ubsan)
     CXXFLAGS = -Wall -Wextra -fsanitize=undefined -g -O0 -std=c++17 -D_GNU_SOURCE -I./include
 endif
 
+ifneq ($(strip $(SAFETY_LEVEL_NUM)),)
+CFLAGS   += -DCMEM_SAFETY_LEVEL=$(SAFETY_LEVEL_NUM)
+CXXFLAGS += -DCMEM_SAFETY_LEVEL=$(SAFETY_LEVEL_NUM)
+endif
+
 # 获取所有源文件
 ALL_SRC = $(wildcard src/*.c)
 ALL_TEST_SRC = $(wildcard tests/*.c tests/*.cpp)

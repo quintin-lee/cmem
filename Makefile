@@ -25,6 +25,47 @@ CMAKE_BUILD_DIR = build_cmake
 CMAKE_GENERATOR = Ninja
 CMAKE_BUILD_TYPE ?= Release
 
+SAFETY_LEVEL ?=
+ifeq ($(strip $(SAFETY_LEVEL)),)
+  ifeq ($(CONFIG),make)
+    SAFETY_LEVEL_NUM = 2
+  else ifeq ($(CONFIG),release)
+    SAFETY_LEVEL_NUM = 2
+  else ifeq ($(CONFIG),debug)
+    SAFETY_LEVEL_NUM = 3
+  else ifeq ($(CONFIG),asan)
+    SAFETY_LEVEL_NUM = 3
+  else ifeq ($(CONFIG),tsan)
+    SAFETY_LEVEL_NUM = 3
+  else ifeq ($(CONFIG),ubsan)
+    SAFETY_LEVEL_NUM = 3
+  else ifeq ($(CONFIG),cmake)
+    SAFETY_LEVEL_NUM =
+  else
+    SAFETY_LEVEL_NUM = 0
+  endif
+else ifeq ($(SAFETY_LEVEL),auto)
+  SAFETY_LEVEL_NUM = 0
+else ifeq ($(SAFETY_LEVEL),none)
+  SAFETY_LEVEL_NUM = 1
+else ifeq ($(SAFETY_LEVEL),canary)
+  SAFETY_LEVEL_NUM = 2
+else ifeq ($(SAFETY_LEVEL),maximal)
+  SAFETY_LEVEL_NUM = 3
+else ifeq ($(SAFETY_LEVEL),0)
+  SAFETY_LEVEL_NUM = 0
+else ifeq ($(SAFETY_LEVEL),1)
+  SAFETY_LEVEL_NUM = 1
+else ifeq ($(SAFETY_LEVEL),2)
+  SAFETY_LEVEL_NUM = 2
+else ifeq ($(SAFETY_LEVEL),3)
+  SAFETY_LEVEL_NUM = 3
+else
+  $(error SAFETY_LEVEL must be auto|none|canary|maximal|0|1|2|3)
+endif
+
+export SAFETY_LEVEL
+
 # 根据不同的CONFIG进行处理
 ifeq ($(CONFIG),cmake)
 

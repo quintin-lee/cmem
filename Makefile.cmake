@@ -7,7 +7,10 @@ all: cmake-build cmake-test
 
 # CMake目标
 cmake-build: format-check check-mermaid
-	@cmake --build $(CMAKE_BUILD_DIR)
+	cmake -B $(CMAKE_BUILD_DIR) -G $(CMAKE_GENERATOR) \
+	      -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
+	      -DCMEM_SAFETY_LEVEL=$(SAFETY_LEVEL)
+	cmake --build $(CMAKE_BUILD_DIR)
 
 cmake-test: cmake-build
 	@ctest --test-dir $(CMAKE_BUILD_DIR) --output-on-failure
