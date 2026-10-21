@@ -113,8 +113,12 @@ typedef enum {
  *
  *   0 = infer from NDEBUG (canary in NDEBUG builds, canary+poison otherwise)
  *   1 = none
- *   2 = canary
+ *   2 = canary + fast path (release profile)
  *   3 = canary + poison-on-free
+ *
+ * Level 2 additionally enables MP_FLAG_FAST_PATH: release-profile pools skip
+ * track fields and the active list, keep full stats, and audit APIs
+ * (mp_ptr_valid / mp_get_allocation_info) validate slots structurally.
  */
 #ifndef CMEM_SAFETY_LEVEL
 #define CMEM_SAFETY_LEVEL 0
@@ -136,12 +140,12 @@ typedef enum {
 #if CMEM_SAFETY_LEVEL == 1
 #define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)MP_FLAG_DEFAULT)
 #elif CMEM_SAFETY_LEVEL == 2
-#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)MP_FLAG_DEBUG_CANARY)
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_FAST_PATH))
 #elif CMEM_SAFETY_LEVEL == 3
 #define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_POISON_ON_FREE))
 #else /* 0: infer from NDEBUG */
 #ifdef NDEBUG
-#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)MP_FLAG_DEBUG_CANARY)
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_FAST_PATH))
 #else
 #define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_POISON_ON_FREE))
 #endif

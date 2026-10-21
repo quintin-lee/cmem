@@ -733,6 +733,42 @@ static void test_safety_static_buffer()
     TEST_PASS("test_safety_static_buffer");
 }
 
+static void test_fastpath_ptr_valid()
+{
+    printf("\n--- Test: fastpath ptr_valid ---\n");
+    memory_pool_t *pool =
+        mp_create(0, (mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_FAST_PATH | MP_FLAG_THREAD_SAFE));
+    assert(pool != NULL);
+    assert(mp_reparse_env_flags(pool) & MP_FLAG_FAST_PATH);
+
+    void *ptr_a = mp_alloc(pool, 128);
+    void *ptr_b = mp_alloc(pool, 128);
+    assert(ptr_a != NULL && ptr_b != NULL);
+
+    assert(mp_ptr_valid(pool, ptr_a));
+    assert(mp_ptr_valid(pool, ptr_b));
+
+    mp_allocation_info_t info;
+    memset(&info, 0xAA, sizeof(info));
+    assert(mp_get_allocation_info(pool, ptr_a, &info));
+    assert(info.requested_size == 128);
+    assert(info.alloc_file == NULL && info.alloc_func == NULL);
+
+    mp_free(pool, ptr_a);
+    assert(!mp_ptr_valid(pool, ptr_a));
+    assert(mp_ptr_valid(pool, ptr_b));
+    assert(!mp_ptr_valid(pool, (void *)ptr_b + 64));
+
+    mp_get_allocation_info(pool, ptr_b, &info);
+    void *ptr_c = mp_alloc(pool, 128);
+    assert(mp_ptr_valid(pool, ptr_c));
+
+    mp_free(pool, ptr_b);
+    mp_free(pool, ptr_c);
+    mp_destroy(pool);
+    TEST_PASS("test_fastpath_ptr_valid");
+}
+
 #ifndef _WIN32
 static void test_safety_shared_pool()
 {
@@ -1715,6 +1751,7 @@ int main()
     test_safety_explicit_flags();
     test_safety_multi_arena_children();
     test_safety_static_buffer();
+    test_fastpath_ptr_valid();
 #ifndef _WIN32
     test_safety_shared_pool();
 #endif

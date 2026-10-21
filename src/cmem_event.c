@@ -2081,8 +2081,8 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                     header->usable_size = pool->emergency_size - sizeof(mp_block_header_t);
                     header->raw_base = pool->emergency_buf;
                     header->subpool = NULL;
+                    header->magic = MP_MAGIC_HEAD;
                     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
-                        header->magic = MP_MAGIC_HEAD;
                         header->alloc_file = NULL;
                         header->alloc_line = 0;
                         header->alloc_func = NULL;
@@ -2187,8 +2187,8 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             header->usable_size = pool->slab_classes[class_idx].slot_size;
             header->raw_base = slot;
             header->subpool = pool;
+            header->magic = MP_MAGIC_HEAD;
             if (!(pool->flags & MP_FLAG_FAST_PATH)) {
-                header->magic = MP_MAGIC_HEAD;
                 header->alloc_file = NULL;
                 header->alloc_line = 0;
                 header->alloc_func = NULL;
@@ -2331,8 +2331,8 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             header->usable_size = size;
             header->raw_base = raw_mem;
             header->subpool = pool;
+            header->magic = MP_MAGIC_HEAD;
             if (!(pool->flags & MP_FLAG_FAST_PATH)) {
-                header->magic = MP_MAGIC_HEAD;
                 header->alloc_file = NULL;
                 header->alloc_line = 0;
                 header->alloc_func = NULL;
@@ -2482,8 +2482,8 @@ batch_format_slab(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *slot, 
     header->usable_size = pool->slab_classes[class_idx].slot_size;
     header->raw_base = slot;
     header->subpool = pool;
+    header->magic = MP_MAGIC_HEAD;
     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
-        header->magic = MP_MAGIC_HEAD;
         header->alloc_file = NULL;
         header->alloc_line = 0;
         header->alloc_func = NULL;
@@ -2517,8 +2517,8 @@ static void *batch_format_emergency(memory_pool_t *pool, size_t req_size)
     header->usable_size = pool->emergency_size - sizeof(mp_block_header_t);
     header->raw_base = pool->emergency_buf;
     header->subpool = NULL;
+    header->magic = MP_MAGIC_HEAD;
     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
-        header->magic = MP_MAGIC_HEAD;
         header->alloc_file = NULL;
         header->alloc_line = 0;
         header->alloc_func = NULL;
@@ -2556,8 +2556,8 @@ static void *batch_format_os(memory_pool_t *pool,
     header->usable_size = req_size;
     header->raw_base = raw_mem;
     header->subpool = pool;
+    header->magic = MP_MAGIC_HEAD;
     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
-        header->magic = MP_MAGIC_HEAD;
         header->alloc_file = NULL;
         header->alloc_line = 0;
         header->alloc_func = NULL;
@@ -3630,99 +3630,58 @@ size_t mp_alloc_size(memory_pool_t *pool, void *ptr)
 }
 
 /**
- * @brief Check whether a pointer belongs to this pool.
- * @param pool The memory pool.
- * @param ptr Candidate pointer.
- * @return true for a live valid allocation, false otherwise.
+ * @brief Structural liveness check for a slot on a FAST_PATH pool.
+ * @param pool Owning pool (FAST_PATH flag already verified by the caller).
+ * @param header Header derived from the user pointer under test.
+ * @return true when the slot passes structural validation.
+ *
+ * FAST_PATH pools maintain no active list, so validity is decided by
+ * evidence that survives without it: the magic gate (written on every
+ * allocation since the header change), alloc-type consistency, and — for
+ * slab slots — containment inside a real slab page whose free list does
+ * NOT currently contain the slot (exact liveness for the slab tier).
+ * Non-slab tiers are accepted on magic + raw_base only; freed OS/TLSF
+ * blocks may therefore still report live until reused.
  */
-bool mp_ptr_valid(memory_pool_t *pool, void *ptr)
+static bool mp_fastpath_slot_live(memory_pool_t *pool, mp_block_header_t *header)
 {
-    if (!pool || !ptr) {
+    if (header->alloc_type != ALLOC_TYPE_SLAB) {
+        return header->raw_base != NULL;
+    }
+    if (header->slab_class >= SLAB_CLASS_COUNT || header->raw_base != header) {
         return false;
     }
-    pool_rdlock(pool);
-    mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
-    if (header->magic != MP_MAGIC_HEAD) {
-        pool_rdunlock(pool);
+    uint8_t *payload = (uint8_t *)header + sizeof(mp_block_header_t);
+    uintptr_t ptr_val = (uintptr_t)payload;
+    uintptr_t page_base = ptr_val & ~(uintptr_t)(SLAB_PAGE_SIZE - 1);
+    if (ptr_val - page_base <= sizeof(mp_slab_page_t)) {
         return false;
     }
-    bool found = false;
-    mp_block_header_t *curr = pool->active_head;
-    while (curr) {
-        if (curr == header) {
-            found = true;
+    mp_slab_page_t *page = (mp_slab_page_t *)page_base;
+    if (page->class_index != header->slab_class || page->total_slots == 0) {
+        return false;
+    }
+    size_t free_count = (size_t)CMEM_ATOMIC_LOAD(&page->page_free_count, CMEM_ORDER_RELAXED);
+    if (free_count > page->total_slots) {
+        return false;
+    }
+    /* Walk under the class lock: free-side mutations of page->free_list
+     * happen while this lock is held. */
+    mp_slab_class_t *sc = &pool->slab_classes[header->slab_class];
+    pthread_mutex_lock(&sc->lock);
+    mp_slab_slot_t *slot = page->free_list;
+    bool is_free = false;
+    while (slot && free_count > 0) {
+        if ((mp_block_header_t *)slot == header) {
+            is_free = true;
             break;
         }
-        curr = curr->next;
+        slot = slot->next;
+        free_count--;
     }
-    pool_rdunlock(pool);
-    return found;
+    pthread_mutex_unlock(&sc->lock);
+    return !is_free;
 }
-
-/**
- * @brief Fetch source/size metadata for a live allocation.
- * @param pool The memory pool.
- * @param ptr Allocation of interest.
- * @param info Receives the metadata on success.
- * @return true when filled, false on invalid pointer/pool.
- */
-bool mp_get_allocation_info(memory_pool_t *pool, void *ptr, mp_allocation_info_t *info)
-{
-    if (!pool || !ptr || !info) {
-        return false;
-    }
-
-    pool_rdlock(pool);
-    mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
-    if (header->magic != MP_MAGIC_HEAD) {
-        pool_rdunlock(pool);
-        return false;
-    }
-    bool found = false;
-    mp_block_header_t *curr = pool->active_head;
-    while (curr) {
-        if (curr == header) {
-            found = true;
-            break;
-        }
-        curr = curr->next;
-    }
-    if (!found) {
-        pool_rdunlock(pool);
-        return false;
-    }
-
-    info->ptr = ptr;
-    info->requested_size = header->requested_size;
-    info->usable_size = header->usable_size;
-    info->alloc_type = (mp_alloc_type_t)header->alloc_type;
-    info->slab_class = header->slab_class;
-    info->raw_base = header->raw_base;
-    info->alloc_file = header->alloc_file;
-    info->alloc_line = header->alloc_line;
-    info->alloc_func = header->alloc_func;
-    info->backtrace_depth = header->backtrace_depth;
-    if (header->backtrace_depth > 0) {
-        for (int i = 0; i < header->backtrace_depth && i < 8; i++) {
-            info->backtrace_addrs[i] = header->backtrace_addrs[i];
-        }
-    } else {
-        for (int i = 0; i < 8; i++) {
-            info->backtrace_addrs[i] = NULL;
-        }
-    }
-
-    pool_rdunlock(pool);
-    return true;
-}
-
-/**
- * @brief List the pool's slab pages, TLSF arenas and emergency buffer.
- * @param pool The memory pool.
- * @param regions Receives region descriptors.
- * @param max_regions Capacity of regions (0 to query count).
- * @return Number of regions written, or 0 on invalid pool.
- */
 size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size_t max_regions)
 {
     if (!pool || !regions || max_regions == 0) {
@@ -3781,6 +3740,116 @@ size_t mp_enumerate_regions(memory_pool_t *pool, mp_region_info_t *regions, size
 
     pool_rdunlock(pool);
     return count;
+}
+
+/**
+ * @brief Check whether a pointer belongs to this pool.
+ * @param pool The memory pool.
+ * @param ptr Candidate pointer.
+ * @return true for a live valid allocation, false otherwise.
+ */
+bool mp_ptr_valid(memory_pool_t *pool, void *ptr)
+{
+    if (!pool || !ptr) {
+        return false;
+    }
+    mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD) {
+        return false;
+    }
+    if (pool->flags & MP_FLAG_FAST_PATH) {
+        /* FAST_PATH pools skip active-list maintenance; validate slots
+         * structurally instead (see docs/superpowers/specs fastpath spec). */
+        return mp_fastpath_slot_live(pool, header);
+    }
+    pool_rdlock(pool);
+    bool found = false;
+    mp_block_header_t *curr = pool->active_head;
+    while (curr) {
+        if (curr == header) {
+            found = true;
+            break;
+        }
+        curr = curr->next;
+    }
+    pool_rdunlock(pool);
+    return found;
+}
+
+/**
+ * @brief Fetch source/size metadata for a live allocation.
+ * @param pool The memory pool.
+ * @param ptr Allocation of interest.
+ * @param info Receives the metadata on success.
+ * @return true when filled, false on invalid pointer/pool.
+ */
+bool mp_get_allocation_info(memory_pool_t *pool, void *ptr, mp_allocation_info_t *info)
+{
+    if (!pool || !ptr || !info) {
+        return false;
+    }
+
+    mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
+    if (header->magic != MP_MAGIC_HEAD) {
+        return false;
+    }
+    if (pool->flags & MP_FLAG_FAST_PATH) {
+        /* FAST_PATH source-location fields are never filled; report unknown. */
+        if (!mp_fastpath_slot_live(pool, header)) {
+            return false;
+        }
+        info->ptr = ptr;
+        info->requested_size = header->requested_size;
+        info->usable_size = header->usable_size;
+        info->alloc_type = (mp_alloc_type_t)header->alloc_type;
+        info->slab_class = header->slab_class;
+        info->raw_base = header->raw_base;
+        info->alloc_file = NULL;
+        info->alloc_line = 0;
+        info->alloc_func = NULL;
+        info->backtrace_depth = 0;
+        for (int i = 0; i < 8; i++) {
+            info->backtrace_addrs[i] = NULL;
+        }
+        return true;
+    }
+    pool_rdlock(pool);
+    bool found = false;
+    mp_block_header_t *curr = pool->active_head;
+    while (curr) {
+        if (curr == header) {
+            found = true;
+            break;
+        }
+        curr = curr->next;
+    }
+    if (!found) {
+        pool_rdunlock(pool);
+        return false;
+    }
+
+    info->ptr = ptr;
+    info->requested_size = header->requested_size;
+    info->usable_size = header->usable_size;
+    info->alloc_type = (mp_alloc_type_t)header->alloc_type;
+    info->slab_class = header->slab_class;
+    info->raw_base = header->raw_base;
+    info->alloc_file = header->alloc_file;
+    info->alloc_line = header->alloc_line;
+    info->alloc_func = header->alloc_func;
+    info->backtrace_depth = header->backtrace_depth;
+    if (header->backtrace_depth > 0) {
+        for (int i = 0; i < header->backtrace_depth && i < 8; i++) {
+            info->backtrace_addrs[i] = header->backtrace_addrs[i];
+        }
+    } else {
+        for (int i = 0; i < 8; i++) {
+            info->backtrace_addrs[i] = NULL;
+        }
+    }
+
+    pool_rdunlock(pool);
+    return true;
 }
 
 /**
