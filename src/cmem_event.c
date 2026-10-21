@@ -3099,6 +3099,31 @@ void *mp_calloc(memory_pool_t *pool, size_t num, size_t size)
 }
 
 /**
+ * @brief Verify the debug canary of an allocations still holds on free.
+ * Reports corruption through the event callback, marks the pool dirty, and
+ * invokes the error recovery callback exactly like the old slow-path check.
+ * @param pool Owning pool (canary flag must be checked by the caller).
+ * @param ptr Payload pointer of the allocation being freed.
+ */
+static void mp_verify_free_canary(memory_pool_t *pool, void *ptr)
+{
+    mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
+    uint8_t *canary = (uint8_t *)ptr + header->requested_size;
+    if (*canary != MP_CANARY_BYTE) {
+        (void)fprintf(stderr, "[MEMORY_POOL BUG] Buffer overflow detected at pointer %p!\n", ptr);
+        trigger_event(pool, MP_EVENT_CANARY_CORRUPTION, ptr, header->requested_size);
+        mp_mark_pool_dirty(pool);
+        if (pool->error_recovery_cb) {
+            pool->error_recovery_cb(pool,
+                                    true,
+                                    CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
+                                    pool->stats.max_memory_limit,
+                                    pool->error_recovery_user_data);
+        }
+    }
+}
+
+/**
  * @brief Release a pointer back to its owning tier.
  * Validates magic, optionally poisons, handles TLS/percpu caches and canary
  * check, unlinks from the active list, and routes to slab/tlsf/OS-free.
@@ -3153,6 +3178,11 @@ void mp_free(memory_pool_t *pool, void *ptr)
 
     if (pool->flags & MP_FLAG_POISON_ON_FREE) {
         memset(ptr, MP_POISON_BYTE, header->requested_size);
+    }
+    /* Single canary verification point: every free branch below returns
+     * early, so the check must run before the slot is recycled. */
+    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
+        mp_verify_free_canary(pool, ptr);
     }
 
     if (header->alloc_type == ALLOC_TYPE_SLAB) {
@@ -3229,23 +3259,6 @@ void mp_free(memory_pool_t *pool, void *ptr)
     }
 
     pool_lock(pool);
-
-    if (pool->flags & MP_FLAG_DEBUG_CANARY) {
-        uint8_t *canary = (uint8_t *)ptr + header->requested_size;
-        if (*canary != MP_CANARY_BYTE) {
-            (void)fprintf(
-                stderr, "[MEMORY_POOL BUG] Buffer overflow detected at pointer %p!\n", ptr);
-            trigger_event(pool, MP_EVENT_CANARY_CORRUPTION, ptr, header->requested_size);
-            mp_mark_pool_dirty(pool);
-            if (pool->error_recovery_cb) {
-                pool->error_recovery_cb(pool,
-                                        true,
-                                        CMEM_ATOMIC_LOAD(&pool->active_bytes, CMEM_ORDER_RELAXED),
-                                        pool->stats.max_memory_limit,
-                                        pool->error_recovery_user_data);
-            }
-        }
-    }
 
     uint8_t alloc_type = header->alloc_type;
     size_t req_size = header->requested_size;
