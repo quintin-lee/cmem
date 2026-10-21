@@ -717,6 +717,104 @@ static void test_safety_multi_arena_children()
     TEST_PASS("test_safety_multi_arena_children");
 }
 
+static void test_safety_static_buffer()
+{
+    printf("\n--- Test: safety static buffer ---\n");
+    unsetenv("CMEM_CONF");
+
+    _Alignas(max_align_t) unsigned char buffer[64 * 1024];
+    memory_pool_t *pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+
+    mp_flags_t expected = (mp_flags_t)(CMEM_DEFAULT_SAFETY_FLAGS | MP_FLAG_STATIC_BUFFER);
+    assert(mp_reparse_env_flags(pool) == expected);
+
+    mp_destroy(pool);
+    TEST_PASS("test_safety_static_buffer");
+}
+
+#ifndef _WIN32
+static void test_safety_shared_pool()
+{
+    printf("\n--- Test: safety shared pool ---\n");
+    unsetenv("CMEM_CONF");
+
+    char name[64];
+    (void)snprintf(name, sizeof(name), "/cmem_safety_%ld", (long)getpid());
+    shm_unlink(name);
+
+    memory_pool_t *pool = mp_create_shared(name, 65536, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+    assert(getenv("CMEM_CONF") == NULL);
+
+    mp_flags_t expected =
+        (mp_flags_t)(CMEM_DEFAULT_SAFETY_FLAGS | MP_FLAG_STATIC_BUFFER | MP_FLAG_SHARED_MEMORY);
+    assert(mp_reparse_env_flags(pool) == expected);
+
+    mp_destroy_shared(pool, name);
+    TEST_PASS("test_safety_shared_pool");
+}
+#endif
+
+static void test_safety_env_override()
+{
+    printf("\n--- Test: safety env override ---\n");
+    const char *saved = getenv("CMEM_CONF");
+    char saved_buf[256];
+    if (saved) {
+        (void)snprintf(saved_buf, sizeof(saved_buf), "%s", saved);
+    }
+    unsetenv("CMEM_CONF");
+    setenv("CMEM_CONF", "poison=1", 1);
+
+    memory_pool_t *heap = mp_create(0, MP_FLAG_DEFAULT);
+    assert(heap != NULL);
+    mp_flags_t expected_heap = (mp_flags_t)(CMEM_DEFAULT_SAFETY_FLAGS | MP_FLAG_POISON_ON_FREE);
+    assert(mp_reparse_env_flags(heap) == expected_heap);
+    mp_destroy(heap);
+
+    _Alignas(max_align_t) unsigned char buffer[64 * 1024];
+    memory_pool_t *static_pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_DEFAULT);
+    assert(static_pool != NULL);
+    mp_flags_t expected_static =
+        (mp_flags_t)(CMEM_DEFAULT_SAFETY_FLAGS | MP_FLAG_POISON_ON_FREE | MP_FLAG_STATIC_BUFFER);
+    assert(mp_reparse_env_flags(static_pool) == expected_static);
+    mp_destroy(static_pool);
+
+    unsetenv("CMEM_CONF");
+    if (saved) {
+        setenv("CMEM_CONF", saved_buf, 1);
+    }
+    TEST_PASS("test_safety_env_override");
+}
+
+static void test_safety_explicit_env()
+{
+    printf("\n--- Test: safety explicit + env ---\n");
+    const char *saved = getenv("CMEM_CONF");
+    char saved_buf[256];
+    if (saved) {
+        (void)snprintf(saved_buf, sizeof(saved_buf), "%s", saved);
+    }
+    unsetenv("CMEM_CONF");
+    setenv("CMEM_CONF", "canary=1", 1);
+
+    _Alignas(max_align_t) unsigned char buffer[64 * 1024];
+    memory_pool_t *pool = mp_create_from_buffer(buffer, sizeof(buffer), MP_FLAG_FAST_PATH);
+    assert(pool != NULL);
+
+    mp_flags_t expected =
+        (mp_flags_t)(MP_FLAG_FAST_PATH | MP_FLAG_DEBUG_CANARY | MP_FLAG_STATIC_BUFFER);
+    assert(mp_reparse_env_flags(pool) == expected);
+    mp_destroy(pool);
+
+    unsetenv("CMEM_CONF");
+    if (saved) {
+        setenv("CMEM_CONF", saved_buf, 1);
+    }
+    TEST_PASS("test_safety_explicit_env");
+}
+
 static void test_alloc_error_paths()
 {
     printf("\n--- Test: Allocation error paths ---\n");
@@ -1616,6 +1714,12 @@ int main()
     test_safety_defaults();
     test_safety_explicit_flags();
     test_safety_multi_arena_children();
+    test_safety_static_buffer();
+#ifndef _WIN32
+    test_safety_shared_pool();
+#endif
+    test_safety_env_override();
+    test_safety_explicit_env();
     test_alloc_error_paths();
     test_os_fallback_alloc();
     test_debug_canary_and_zero();

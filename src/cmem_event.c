@@ -740,6 +740,8 @@ memory_pool_t *mp_create_shared(const char *shm_name, size_t capacity, mp_flags_
         capacity = 1024 * 1024;
     }
 
+    flags = cmem_resolve_default_flags(flags);
+
     int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, CMEM_SHM_OPEN_MODE);
     if (shm_fd == -1) {
         return NULL;
@@ -891,6 +893,8 @@ mp_create_from_buffer(void *buffer,
         align_offset + sizeof(memory_pool_t) + sizeof(tlsf_pool_t) + TLSF_MIN_BLOCK_SIZE) {
         return NULL;
     }
+
+    flags = mp_parse_env_flags(cmem_resolve_default_flags(flags));
 
     memory_pool_t *pool = (memory_pool_t *)aligned_addr;
     memset(pool, 0, sizeof(memory_pool_t));
