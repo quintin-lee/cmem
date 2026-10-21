@@ -57,6 +57,7 @@ if(CLANG_FORMAT)
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_pmr.hpp
             ${CMAKE_CURRENT_SOURCE_DIR}/include/cmem_override.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_internal.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_slab.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_tlsf.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_sys.c
@@ -108,6 +109,38 @@ endif()
 
 option(CMEM_BUILD_SHARED "Build shared library" ON)
 option(CMEM_ENABLE_DIAGNOSTICS "Enable diagnostics and telemetry subsystem" ON)
+
+set(CMEM_SAFETY_LEVEL "" CACHE STRING
+    "Default safety policy for MP_FLAG_DEFAULT pools: auto|none|canary|maximal|0|1|2|3 (empty = map by CMAKE_BUILD_TYPE)")
+
+if(CMEM_SAFETY_LEVEL STREQUAL "")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMEM_SAFETY_LEVEL_NUM 3)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Release" OR
+           CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR
+           CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+        set(CMEM_SAFETY_LEVEL_NUM 2)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "ASan" OR
+           CMAKE_BUILD_TYPE STREQUAL "TSan" OR
+           CMAKE_BUILD_TYPE STREQUAL "UBSan" OR
+           CMAKE_BUILD_TYPE STREQUAL "Coverage")
+        set(CMEM_SAFETY_LEVEL_NUM 3)
+    else()
+        set(CMEM_SAFETY_LEVEL_NUM 0)
+    endif()
+elseif(CMEM_SAFETY_LEVEL STREQUAL "auto" OR CMEM_SAFETY_LEVEL STREQUAL "0")
+    set(CMEM_SAFETY_LEVEL_NUM 0)
+elseif(CMEM_SAFETY_LEVEL STREQUAL "none" OR CMEM_SAFETY_LEVEL STREQUAL "1")
+    set(CMEM_SAFETY_LEVEL_NUM 1)
+elseif(CMEM_SAFETY_LEVEL STREQUAL "canary" OR CMEM_SAFETY_LEVEL STREQUAL "2")
+    set(CMEM_SAFETY_LEVEL_NUM 2)
+elseif(CMEM_SAFETY_LEVEL STREQUAL "maximal" OR CMEM_SAFETY_LEVEL STREQUAL "3")
+    set(CMEM_SAFETY_LEVEL_NUM 3)
+else()
+    message(FATAL_ERROR "CMEM_SAFETY_LEVEL must be auto|none|canary|maximal|0|1|2|3")
+endif()
+
+add_definitions(-DCMEM_SAFETY_LEVEL=${CMEM_SAFETY_LEVEL_NUM})
 
 # 代码覆盖率配置
 set(CMAKE_C_FLAGS_COVERAGE "-g -O0 -fprofile-arcs -ftest-coverage")
@@ -280,6 +313,18 @@ else()
         PUBLIC_HEADER DESTINATION include
     )
 endif()
+
+if(NOT TARGET cmem_core)
+    message(FATAL_ERROR
+        "cmem_core is missing; place the safety-definition block after the target definitions")
+endif()
+
+foreach(_cmem_target cmem_core cmem_core_shared cmem cmem_shared cmem_diag cmem_diag_shared)
+    if(TARGET ${_cmem_target})
+        target_compile_definitions(${_cmem_target} PUBLIC
+            CMEM_SAFETY_LEVEL=${CMEM_SAFETY_LEVEL_NUM})
+    endif()
+endforeach()
 
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/libcmem-${CMEM_VERSION}.a

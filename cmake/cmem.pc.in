@@ -7,4 +7,4 @@ Name: cmem
 Description: Universal High-Performance Tiered Memory Manager
 Version: @CMEM_VERSION@
 Libs: -L${libdir} -lcmem -lpthread -lrt
-Cflags: -I${includedir}
+Cflags: -I${includedir} -DCMEM_SAFETY_LEVEL=@CMEM_SAFETY_LEVEL_NUM@
