@@ -813,6 +813,11 @@ void mp_destroy_shared(memory_pool_t *pool, const char *shm_name)
 #endif
 }
 
+mp_flags_t mp_default_pool_flags(void)
+{
+    return CMEM_DEFAULT_SAFETY_FLAGS;
+}
+
 /**
  * @brief Read and apply the CMEM_CONF environment configuration.
  * Recognises canary/zero/tls/track/poison/aligned/guard/hugepages directives
@@ -3933,7 +3938,8 @@ bool mp_enable_multi_arena(memory_pool_t *pool, int num_arenas)
     for (int i = 0; i < num_arenas; i++) {
         char name[64];
         (void)snprintf(name, sizeof(name), "%.48s_Arena%d", pool->arena_name, i);
-        memory_pool_t *child = mp_create_child(pool, 0, pool->flags & ~MP_FLAG_MULTI_ARENA, name);
+        memory_pool_t *child =
+            mp_create_child_verbatim(pool, 0, pool->flags & ~MP_FLAG_MULTI_ARENA, name);
         if (!child) {
             child = pool;
         } else {

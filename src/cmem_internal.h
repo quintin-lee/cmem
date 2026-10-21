@@ -12,6 +12,16 @@
 
 #include "cmem.h"
 
+static inline mp_flags_t cmem_resolve_default_flags(mp_flags_t flags)
+{
+    return (flags == MP_FLAG_DEFAULT) ? CMEM_DEFAULT_SAFETY_FLAGS : flags;
+}
+
+memory_pool_t *mp_create_child_verbatim(memory_pool_t *parent,
+                                        size_t initial_capacity,
+                                        mp_flags_t flags,
+                                        const char *arena_name);
+
 /* -------------------------------------------------------------------------
  * Platform / C++ compatibility
  *

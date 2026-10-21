@@ -3,19 +3,30 @@
  * @brief Advanced Unit Tests for cmem advanced APIs not covered by test_main.c.
  */
 
+#include "../include/cmem.h"
+
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
 
-#include "../include/cmem.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
 #define setenv(key, value, overwrite) _putenv_s(key, value)
+static int cmem_unsetenv(const char *name)
+{
+    return _putenv_s(name, "");
+}
+#define unsetenv cmem_unsetenv
 #endif
 
 // NOLINTBEGIN(readability-magic-numbers, clang-analyzer-optin.core.EnumCastOutOfRange)
@@ -615,6 +626,7 @@ static void test_reparse_env_flags()
     uint64_t gen = mp_get_env_generation(pool);
     (void)gen;
 
+    unsetenv("CMEM_CONF");
     mp_destroy(pool);
     TEST_PASS("test_reparse_env_flags");
 }
@@ -651,6 +663,58 @@ static void test_static_buffer_pool()
     mp_free(pool, ptr);
     mp_destroy(pool);
     TEST_PASS("test_static_buffer_pool");
+}
+
+static void test_safety_defaults()
+{
+    printf("\n--- Test: safety defaults ---\n");
+    unsetenv("CMEM_CONF");
+
+    memory_pool_t *pool = mp_create(0, MP_FLAG_DEFAULT);
+    assert(pool != NULL);
+    assert(mp_reparse_env_flags(pool) == CMEM_DEFAULT_SAFETY_FLAGS);
+    assert(mp_default_pool_flags() == CMEM_DEFAULT_SAFETY_FLAGS);
+
+    mp_destroy(pool);
+    TEST_PASS("test_safety_defaults");
+}
+
+static void test_safety_explicit_flags()
+{
+    printf("\n--- Test: safety explicit flags ---\n");
+    unsetenv("CMEM_CONF");
+
+    memory_pool_t *pool = mp_create(0, MP_FLAG_FAST_PATH);
+    assert(pool != NULL);
+    assert(mp_reparse_env_flags(pool) == MP_FLAG_FAST_PATH);
+
+    mp_destroy(pool);
+    TEST_PASS("test_safety_explicit_flags");
+}
+
+static void test_safety_multi_arena_children()
+{
+    printf("\n--- Test: safety multi-arena children ---\n");
+    unsetenv("CMEM_CONF");
+
+    memory_pool_t *parent = mp_create(0, MP_FLAG_MULTI_ARENA);
+    assert(parent != NULL);
+    assert(mp_get_arena_count(parent) > 0);
+
+    memory_pool_t *child = mp_get_arena(parent, 0);
+    assert(child != NULL);
+    assert(mp_reparse_env_flags(child) == MP_FLAG_DEFAULT);
+    mp_destroy(parent);
+
+    parent = mp_create(0, (mp_flags_t)(MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE));
+    assert(parent != NULL);
+
+    child = mp_get_arena(parent, 0);
+    assert(child != NULL);
+    assert(mp_reparse_env_flags(child) == MP_FLAG_THREAD_SAFE);
+    mp_destroy(parent);
+
+    TEST_PASS("test_safety_multi_arena_children");
 }
 
 static void test_alloc_error_paths()
@@ -1549,6 +1613,9 @@ int main()
     test_reparse_env_flags();
     test_tls_cache_refill();
     test_static_buffer_pool();
+    test_safety_defaults();
+    test_safety_explicit_flags();
+    test_safety_multi_arena_children();
     test_alloc_error_paths();
     test_os_fallback_alloc();
     test_debug_canary_and_zero();

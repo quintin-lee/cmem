@@ -227,13 +227,21 @@ void mp_set_error_recovery_callback(memory_pool_t *pool,
  * @param arena_name Human-readable name for the child arena
  * @return Pointer to the new child memory pool, or NULL on failure
  */
-memory_pool_t *mp_create_child(memory_pool_t *parent,
-                               size_t initial_capacity,
-                               mp_flags_t flags,
-                               const char *arena_name)
+static memory_pool_t *mp_create_custom_impl(size_t initial_capacity,
+                                            mp_flags_t flags,
+                                            const mp_sys_allocator_t *sys_allocator);
+
+static memory_pool_t *mp_create_child_impl(memory_pool_t *parent,
+                                           size_t initial_capacity,
+                                           mp_flags_t flags,
+                                           const char *arena_name,
+                                           bool apply_policy)
 {
     memory_pool_t *child =
-        mp_create_custom(initial_capacity, flags, parent ? &parent->sys_allocator : NULL);
+        apply_policy
+            ? mp_create_custom(initial_capacity, flags, parent ? &parent->sys_allocator : NULL)
+            : mp_create_custom_impl(
+                  initial_capacity, flags, parent ? &parent->sys_allocator : NULL);
     if (!child) {
         return NULL;
     }
@@ -259,20 +267,26 @@ memory_pool_t *mp_create_child(memory_pool_t *parent,
     return child;
 }
 
-/**
- * @brief Creates a memory pool with a custom backing allocator vtable.
- * @param initial_capacity Initial memory capacity in bytes
- * @param flags Configuration flags
- * @param sys_allocator Custom system allocator function table, or NULL for default
- * @return Pointer to the new memory pool, or NULL on failure
- */
-memory_pool_t *
-mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-parameters)
-                 mp_flags_t flags,
-                 const mp_sys_allocator_t *sys_allocator)
+memory_pool_t *mp_create_child(memory_pool_t *parent,
+                               size_t initial_capacity,
+                               mp_flags_t flags,
+                               const char *arena_name)
 {
-    flags = mp_parse_env_flags(flags);
+    return mp_create_child_impl(parent, initial_capacity, flags, arena_name, true);
+}
 
+memory_pool_t *mp_create_child_verbatim(memory_pool_t *parent,
+                                        size_t initial_capacity,
+                                        mp_flags_t flags,
+                                        const char *arena_name)
+{
+    return mp_create_child_impl(parent, initial_capacity, flags, arena_name, false);
+}
+
+static memory_pool_t *mp_create_custom_impl(size_t initial_capacity,
+                                            mp_flags_t flags,
+                                            const mp_sys_allocator_t *sys_allocator)
+{
     memory_pool_t *pool = (memory_pool_t *)calloc(1, sizeof(memory_pool_t));
     if (!pool) {
         return NULL;
@@ -293,7 +307,6 @@ mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-pa
     pthread_mutex_init(&pool->arena_registry_lock, NULL);
 
     slab_init(pool);
-
     percpu_init(pool);
 
     if (initial_capacity > 0) {
@@ -308,6 +321,20 @@ mp_create_custom(size_t initial_capacity, // NOLINT(bugprone-easily-swappable-pa
     }
 
     return pool;
+}
+
+/**
+ * @brief Creates a memory pool with a custom backing allocator vtable.
+ * @param initial_capacity Initial memory capacity in bytes
+ * @param flags Configuration flags
+ * @param sys_allocator Custom system allocator function table, or NULL for default
+ * @return Pointer to the new memory pool, or NULL on failure
+ */
+memory_pool_t *
+mp_create_custom(size_t initial_capacity, mp_flags_t flags, const mp_sys_allocator_t *sys_allocator)
+{
+    flags = mp_parse_env_flags(cmem_resolve_default_flags(flags));
+    return mp_create_custom_impl(initial_capacity, flags, sys_allocator);
 }
 
 /* ========================================================================== */

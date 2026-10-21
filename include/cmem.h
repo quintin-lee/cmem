@@ -106,6 +106,47 @@ typedef enum {
                                          double-free/leak-address diagnostics */
 } mp_flags_t;
 
+/*
+ * Compile-time default safety policy for pools created with MP_FLAG_DEFAULT.
+ * The value MUST be a plain decimal literal in 0..3; build systems translate
+ * the friendly names none/canary/maximal/auto to these numbers.
+ *
+ *   0 = infer from NDEBUG (canary in NDEBUG builds, canary+poison otherwise)
+ *   1 = none
+ *   2 = canary
+ *   3 = canary + poison-on-free
+ */
+#ifndef CMEM_SAFETY_LEVEL
+#define CMEM_SAFETY_LEVEL 0
+#endif
+
+#define CMEM_SAFETY_LEVEL_CAT_(a, b) a##b
+#define CMEM_SAFETY_LEVEL_CAT(a, b) CMEM_SAFETY_LEVEL_CAT_(a, b)
+
+#define CMEM_SAFETY_LEVEL_VALID_0 1
+#define CMEM_SAFETY_LEVEL_VALID_1 1
+#define CMEM_SAFETY_LEVEL_VALID_2 1
+#define CMEM_SAFETY_LEVEL_VALID_3 1
+
+/* Rejects 4, -1, empty, "none", "bogus", "2U", "(2)"; accepts 0/1/2/3. */
+#if !CMEM_SAFETY_LEVEL_CAT(CMEM_SAFETY_LEVEL_VALID_, CMEM_SAFETY_LEVEL)
+#error "CMEM_SAFETY_LEVEL must be a plain decimal integer in 0..3"
+#endif
+
+#if CMEM_SAFETY_LEVEL == 1
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)MP_FLAG_DEFAULT)
+#elif CMEM_SAFETY_LEVEL == 2
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)MP_FLAG_DEBUG_CANARY)
+#elif CMEM_SAFETY_LEVEL == 3
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_POISON_ON_FREE))
+#else /* 0: infer from NDEBUG */
+#ifdef NDEBUG
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)MP_FLAG_DEBUG_CANARY)
+#else
+#define CMEM_DEFAULT_SAFETY_FLAGS ((mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_POISON_ON_FREE))
+#endif
+#endif
+
 /**
  * @brief Profiling & Debug Event Types.
  *
@@ -693,6 +734,15 @@ size_t mp_separate_hot_cold_pages(memory_pool_t *pool);
 memory_pool_t *mp_create_custom(size_t initial_capacity,
                                 mp_flags_t flags,
                                 const mp_sys_allocator_t *sys_allocator);
+
+/**
+ * @brief Return the compile-time default safety flags for this build.
+ *
+ * This is the value a pool receives when its creator passes MP_FLAG_DEFAULT
+ * (0). Non-zero explicit flags are never modified. The value is a compile-time
+ * constant; no environment variable or global state is read.
+ */
+mp_flags_t mp_default_pool_flags(void);
 
 /**
  * @brief Creates a memory pool inside a pre-allocated static buffer (zero OS malloc
