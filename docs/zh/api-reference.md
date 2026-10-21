@@ -227,7 +227,7 @@ void* mp_alloc(memory_pool_t* pool, size_t size);
 static inline void* mp_alloc_fast(memory_pool_t* pool, size_t size);
 ```
 
-针对配置了 `MP_FLAG_FAST_PATH` 标志的内存池的高性能内联小对象分配接口。直接存取线程局部缓存 `tls_cache` 并通过 $O(1)$ 尺寸映射表直接跳转，彻底消除跨编译单元函数调用延迟。
+针对配置了 `MP_FLAG_FAST_PATH` 标志的内存池的高性能内联小对象分配接口。直接存取线程局部缓存 `tls_cache` 并通过 $O(1)$ 尺寸映射表直接跳转，彻底消除跨编译单元函数调用延迟。注意：fast path 默认值落地后，Release 构建会通过 `CMEM_DEFAULT_SAFETY_FLAGS` 为 `MP_FLAG_DEFAULT` 内存池同时启用 `MP_FLAG_FAST_PATH` 与 canary，但簿记精简只有在将这些内联快速接口与 `mp_free_fast()` 配对使用时才生效。fast path 内存池上的审计接口（`mp_ptr_valid`、`mp_get_allocation_info`）改用结构化校验而非活跃链表，且来源位置字段报告为未知。
 
 **参数：**
 - `pool`：内存池指针

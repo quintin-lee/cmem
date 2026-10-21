@@ -167,10 +167,17 @@ CMake enables shared library output by default (`CMEM_BUILD_SHARED=ON`). The sta
 
 | Level | Name | Default flags | Profile |
 |-------|------|---------------|---------|
-| 0 | auto | canary in NDEBUG builds, canary + poison otherwise | Header default |
+| 0 | auto | canary + `MP_FLAG_FAST_PATH` in NDEBUG builds, canary + poison otherwise | Header default |
 | 1 | none | none | Opt out |
-| 2 | canary | `MP_FLAG_DEBUG_CANARY` | Release |
+| 2 | canary | `MP_FLAG_DEBUG_CANARY \| MP_FLAG_FAST_PATH` | Release |
 | 3 | maximal | `MP_FLAG_DEBUG_CANARY \| MP_FLAG_POISON_ON_FREE` | Debug/sanitizers |
+
+Level 2 also enables `MP_FLAG_FAST_PATH`: allocation bookkeeping is slimmed to
+the tiered cache paths, and the audit APIs (`mp_ptr_valid`,
+`mp_get_allocation_info`) validate slots structurally — slab-tier liveness is
+exact, while freed OS/TLSF blocks may still report as live until reused and
+source-location fields are reported as unknown. Debug/sanitizer builds keep the
+full bookkeeping and never enable the fast path.
 
 CMake maps Release to level 2 and Debug/ASan/TSan/UBSan/Coverage to level 3.
 Override with `-DCMEM_SAFETY_LEVEL=none|canary|maximal`. The Makefile uses

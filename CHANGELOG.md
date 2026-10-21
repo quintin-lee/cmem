@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Compile-Time Memory Safety Policy**: Added `CMEM_SAFETY_LEVEL` (0-3), `CMEM_DEFAULT_SAFETY_FLAGS`, and `mp_default_pool_flags()` for compile-time safety defaults.
+- **Fast-Path Default in Release**: Release/auto (NDEBUG) safety profiles now include `MP_FLAG_FAST_PATH` in `CMEM_DEFAULT_SAFETY_FLAGS`, pairing the canary with slimmed fast-path bookkeeping (~5x plain-path throughput for inline `mp_alloc_fast`/`mp_free_fast` users).
 - **Per-Thread TLSF Free-Block Cache**: Added thread-local cache (`tls_cache.tlsf_slots/counts`) for TLSF allocations, enabling lock-free hot-path allocations that bypass the TLSF global lock entirely.
 - **Per-CPU Lock-Free Freelist Optimizations**: Added per-class remote-free pending flags (`remote_free_pending_class[]`) to skip empty-class harvest; optimized `percpu_push`/`percpu_pop` paths; inlined `tlsf_mapping_search` helpers.
 - **Multi-Arena Bound-Arena Fast Path**: Added `tls_cache.bound_arena` TLS slot to cache per-thread arena binding, bypassing master-pool rwlock on subsequent allocations in child pools.
@@ -37,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Remote-free harvest race**: Acquired class lock in `remote_free_harvest_all` to prevent race with `percpu_refill`.
 
 ### Changed
-- **Default Pool Safety Flags**: Pools created with `MP_FLAG_DEFAULT` now receive canary/poison according to the build profile (Release: canary; Debug/sanitizers: canary + poison). `mp_create_from_buffer()` now honors `CMEM_CONF`. Opt out with `CMEM_SAFETY_LEVEL=none`; Release pays the documented ~3% canary overhead.
+- **Default Pool Safety Flags**: Pools created with `MP_FLAG_DEFAULT` now receive canary/poison according to the build profile (Release: canary + fast path; Debug/sanitizers: canary + poison). `mp_create_from_buffer()` now honors `CMEM_CONF`. Opt out with `CMEM_SAFETY_LEVEL=none`; Release pays the documented ~3% canary overhead.
+- **FAST_PATH audit APIs**: With the fast-path default, `mp_ptr_valid` and `mp_get_allocation_info` validate fast-path pools structurally (exact slab-tier liveness via page free lists; magic-based for OS/TLSF tiers) instead of walking the active list, and report source-location fields as unknown.
 - **Slab class lock cache-line alignment**: Aligned `slab_class_t.lock` to its own cache line (`alignas(64)`) to eliminate false sharing under high contention.
 - **Non-thread-safe pool stats**: Replaced atomic `CMEM_ATOMIC_FETCH_ADD/SUB` with plain writes for `slab_allocated_bytes`, `active_bytes`, `active_allocations`, `total_free_ops`, and `total_alloc_ops` when `MP_FLAG_THREAD_SAFE` is not set, reducing atomic overhead on the hot path.
 - **TLSF in-place expand**: Inlined `tlsf_try_inplace_expand` to eliminate call overhead in `mp_realloc`.

@@ -709,7 +709,7 @@ make tag --dry-run --bump patch
 | Arena 重置 (500 allocs x 1000 rounds) | 12.4 ms | 0.8 ms | **~15x** |
 | 多线程 (8 threads x 100K allocs) | 高争用 | 近线性扩展 | **~8x** |
 
-> **生产调优**：Release 构建默认启用 canary（`MP_FLAG_DEBUG_CANARY`），poison 保持关闭。
+> **生产调优**：Release 构建默认启用 canary 与 `MP_FLAG_FAST_PATH`（`CMEM_DEFAULT_SAFETY_FLAGS`），poison 保持关闭。fast path 内存池的审计接口采用结构化校验。
 > 可通过 `-DCMEM_SAFETY_LEVEL=none`（CMake）或 `SAFETY_LEVEL=none`（Make）关闭。
 
 ---

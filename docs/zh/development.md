@@ -167,10 +167,15 @@ CMake 默认启用动态库输出（`CMEM_BUILD_SHARED=ON`）。静态目标还�
 
 | 级别 | 名称 | 默认标志 | 适用配置 |
 |-------|------|---------------|---------|
-| 0 | auto | NDEBUG 构建启用 canary，其他构建启用 canary + poison | 头文件默认值 |
+| 0 | auto | NDEBUG 构建启用 canary + `MP_FLAG_FAST_PATH`，其他构建启用 canary + poison | 头文件默认值 |
 | 1 | none | 无 | 主动关闭 |
-| 2 | canary | `MP_FLAG_DEBUG_CANARY` | Release |
+| 2 | canary | `MP_FLAG_DEBUG_CANARY \| MP_FLAG_FAST_PATH` | Release |
 | 3 | maximal | `MP_FLAG_DEBUG_CANARY \| MP_FLAG_POISON_ON_FREE` | Debug/sanitizer |
+
+级别 2 同时启用 `MP_FLAG_FAST_PATH`：分配簿记精简为分级缓存路径，审计接口
+（`mp_ptr_valid`、`mp_get_allocation_info`）改为结构化校验——slab 层的存活判定
+是准确的，但已释放的 OS/TLSF 块在复用前仍可能报告为存活，且来源位置字段
+一律报告为未知。Debug/sanitizer 构建保留完整簿记，从不启用 fast path。
 
 CMake 将 Release 映射为级别 2，将 Debug/ASan/TSan/UBSan/Coverage 映射为级别 3。
 可通过 `-DCMEM_SAFETY_LEVEL=none|canary|maximal` 覆盖。Makefile 使用

@@ -227,7 +227,7 @@ Allocates a memory block of the specified number of bytes from the memory pool.
 static inline void* mp_alloc_fast(memory_pool_t* pool, size_t size);
 ```
 
-Ultra-fast inline small-object allocation macro/function for pools configured with `MP_FLAG_FAST_PATH`. Directly accesses `tls_cache` and uses an $O(1)$ size-to-class lookup array to bypass function call overhead.
+Ultra-fast inline small-object allocation macro/function for pools configured with `MP_FLAG_FAST_PATH`. Directly accesses `tls_cache` and uses an $O(1)$ size-to-class lookup array to bypass function call overhead. Note: since the fast-path default landed, Release builds enable `MP_FLAG_FAST_PATH` together with the canary for `MP_FLAG_DEFAULT` pools via `CMEM_DEFAULT_SAFETY_FLAGS`, but the low-level bookkeeping reduction applies only when you pair these inline fast calls with `mp_free_fast()`. Audit APIs (`mp_ptr_valid`, `mp_get_allocation_info`) on fast-path pools validate slots structurally instead of using the active list, and report unknown source-location fields.
 
 **Parameters:**
 - `pool`: Memory pool pointer

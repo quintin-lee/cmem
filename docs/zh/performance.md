@@ -113,7 +113,7 @@ mp_flags_t flags = MP_FLAG_THREAD_SAFE | MP_FLAG_HUGE_PAGES |
 | `MP_FLAG_THREAD_LOCAL_CACHE` | ~1KB/线程 | < 1% | 高频小对象 |
 | `MP_FLAG_FAST_PATH` | 无 | **+135% 性能提速** (230+ Mops/sec) | 极致低延迟/高吞吐小对象 |
 | `MP_FLAG_PERCPU_FREELIST` | ~16 slots/CPU/Class | < 2% | 高并发小对象 |
-| `MP_FLAG_DEBUG_CANARY` | 每块 +1B | ~3% | Release 默认启用（`CMEM_SAFETY_LEVEL=canary`）；可用 `CMEM_SAFETY_LEVEL=none` 关闭 |
+| `MP_FLAG_DEBUG_CANARY` | 每块 +1B | ~3% | Release 默认启用（`CMEM_SAFETY_LEVEL=canary`，同时与 `MP_FLAG_FAST_PATH` 一起服务于内联 `mp_alloc_fast`/`mp_free_fast` 用户）；可用 `CMEM_SAFETY_LEVEL=none` 关闭 |
 | `MP_FLAG_TRACK_LOCATIONS` | 每块 ~80B | ~5% | 泄漏分析 |
 | `MP_FLAG_POISON_ON_FREE` | 无 | < 1% | UAF 检测 |
 | `MP_FLAG_CACHE_ALIGNED` | 可能浪费 | < 1% | 高性能场景 |
