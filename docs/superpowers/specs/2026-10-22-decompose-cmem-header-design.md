@@ -83,16 +83,15 @@ Break the cycle so that:
 
 ### 4.2 `cmem.h` REMOVES
 
-**Verified against the actual file (L180–1803 body, doc-comment L1–179 excluded):** the
-set of *duplicated* subsystem-fn declarations that exist in BOTH `cmem.h` body
-and a subsystem header is **exactly five** — the rest of the subsystem fns
-(ring, typed-pool, frame, arena, snapshot, diag, pprof, dump) are declared
-*only* in their subsystem headers and have **no** duplicate in `cmem.h` body:
+**Verified against the actual file (L180–1803 body, doc-comment L1–179 excluded):** the set
+of *duplicated* subsystem-fn declarations that exist in BOTH `cmem.h` body and a
+subsystem header is **exactly four** — the latency fns. All other subsystem fns
+(ring, typed-pool, frame, arena, snapshot, diag, pprof, dump, `mp_get_stats`)
+are declared *only* in their subsystem headers and have **no** fn declaration in
+`cmem.h` body:
 
 | Duplicated declaration | `cmem.h` body line | Sole definition in |
 |------------------------|--------------------|--------------------|
-| `mp_get_stats` | L246 | `cmem_metrics.h` |
-| `mp_get_allocation_info` | L266 | `cmem_diag.h` (core introspection — see note) |
 | `mp_record_latency` | L1449 | `cmem_metrics.h` |
 | `mp_get_latency_p99` | L1457 | `cmem_metrics.h` |
 | `mp_get_latency_avg` | L1465 | `cmem_metrics.h` |
@@ -101,14 +100,22 @@ and a subsystem header is **exactly five** — the rest of the subsystem fns
 Plus the three duplicated opaque typedefs `cmem_ring_buffer_t` (L190),
 `mp_typed_pool_t` (L195), `cmem_frame_arena_t` (L200).
 
-> **Note on `mp_get_allocation_info`:** it is a *core introspection* function,
-> not metrics/diag-exclusive. It is declared in `cmem_diag.h` today, but it
-> belongs to core. **Decision:** keep `mp_get_allocation_info` **in `cmem.h`**
-> (do NOT remove it), and instead *add* it to `cmem_diag.h` is wrong — it is
-> already there. So: leave the L266 declaration in place as a core fn; treat
-> the L246 `mp_get_stats` + 4 latency fns as the removable duplicate set.
-> Concretely, **remove only** `mp_get_stats` (L246) and the 4 latency fns
-> (L1449–1472) from `cmem.h`; keep `mp_get_allocation_info`.
+> **Non-duplicates confirmed by grep (do NOT touch):**
+> - `mp_get_stats` — has **no** fn declaration in `cmem.h` body (the only text
+>   match at L246 is a doc-comment *mention* inside `mp_stats_t`). Declared
+>   solely in `cmem_metrics.h`.
+> - `mp_get_allocation_info` — declared in `cmem.h` at **L1362** (not L266;
+>   L266 is the `mp_allocation_info_t` struct doc comment). It is core
+>   introspection and is *also* declared in `cmem_diag.h`. **Decision:** keep
+>   the L1362 declaration in place (core fn); it is *not* a removable
+>   duplicate — its duplicate home is `cmem_diag.h`, and leaving both is
+>   harmless (identical signature) and preserves core introspection in `cmem.h`.
+> - `mp_enumerate_regions` (L1375), per-CPU freelist fns (L1487–1503), graceful
+>   degradation / error-recovery / thread-quota / encrypted-memory / ASan /
+>   online-expansion fns — all core (not in any subsystem header). Keep.
+
+> **Concretely, remove ONLY the four latency fns (L1449–1472) and the three
+> opaque typedefs (L190/195/200) from `cmem.h`.** Nothing else.
 
 ### 4.3 Subsystem Headers GAIN
 
@@ -153,12 +160,14 @@ tail.
 1. **Subsystem headers (8):** delete the `#include "cmem.h"` line; insert the
    forward declarations from §4.3. No fn-declaration changes.
 2. **`cmem.h`:**
-   - Remove the three duplicated opaque typedefs (L190/195/200).
-   - Remove the **five** duplicate fn declarations identified in §4.2:
-     `mp_get_stats` (L246) and the 4 latency fns (L1449–1472).
-     **Do NOT remove** `mp_get_allocation_info` (L266) — it is core.
-     All other subsystem fns (ring/typed/frame/arena/snapshot/diag/pprof/
-     dump) have **no** declaration in the `cmem.h` body and need no removal.
+    - Remove the three duplicated opaque typedefs (L190/195/200).
+    - Remove the **four** duplicate latency-fn declarations identified in §4.2:
+      `mp_record_latency` (L1449), `mp_get_latency_p99` (L1457),
+      `mp_get_latency_avg` (L1465), `mp_reset_latency_stats` (L1472).
+      **Do NOT remove** `mp_get_allocation_info` (L1362) — it is core.
+      **Do NOT remove** `mp_get_stats` — it has no fn decl in `cmem.h` body.
+      All other subsystem fns (ring/typed/frame/arena/snapshot/diag/pprof/
+      dump) have **no** declaration in the `cmem.h` body and need no removal.
    - Verify the tail `#include` block (L1804–1815) is ordered after all core
      type definitions (it is, today: types are all defined by L~1144).
 3. **Verify include direction:** `grep -l '#include "cmem.h"' include/cmem_*.h`
@@ -174,7 +183,7 @@ tail.
 | `cmake -B build_cmake -G Ninja && ctest --test-dir build_cmake` | green (run after `make clean` to avoid stale ASan binary) |
 | `make lib && make lib_shared` | static + shared built; `nm -D libcmem.so \| grep -c mp_ring_create` ≥ 1 |
 | Subsystem back-reference | `grep -l '#include "cmem.h"' include/cmem_{arena,frame,ring,snapshot,tlsf,typed_pool,diag,metrics}.h` → empty |
-| `cmem.h` line count | reduced by removing 3 typedefs + 5 fn decls (≈ L1449–1472 latency block + L246/L190/L195/L200); core fn set otherwise unchanged |
+| `cmem.h` line count | reduced by removing 3 typedefs + 4 latency fn decls (L1449–1472 block); core fn set otherwise unchanged |
 | Behavior | identical (header reordering only; no `.c` change) |
 
 ## 7. Risks
@@ -189,8 +198,9 @@ tail.
   the referenced core types. This is a deliberate scope boundary, not an
   oversight.
 - **`mp_get_allocation_info` is core, not diag-exclusive:** keep its
-  declaration in `cmem.h` (do not remove). Only `mp_get_stats` + the 4
-  latency fns are the removable duplicate set (§4.2 table).
+  declaration in `cmem.h` at L1362 (do not remove). Only the 4 latency fns
+  (L1449–1472) are the removable duplicate set (§4.2 table). `mp_get_stats`
+  has no fn decl in `cmem.h` body and is untouched.
 - **Stats struct visibility:** `mp_metrics`/`mp_diag` fns take
   `mp_stats_t*`/`mp_allocation_info_t*` — these remain fully-defined in
   `cmem.h` before the tail-include, so no forward decl is needed in the
