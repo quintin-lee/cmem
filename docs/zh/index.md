@@ -14,6 +14,7 @@
 | [testing.md](testing.md) | 测试指南 | QA、开发者 |
 | [performance.md](performance.md) | 性能调优指南 | 性能工程师、开发者 |
 | [security.md](security.md) | 安全特性文档 | 安全工程师、开发者 |
+| [fastpath-combo-audit-report.md](fastpath-combo-audit-report.md) | FAST_PATH × 边界标志组合审计报告 | 维护者 |
 
 ### 快速开始
 

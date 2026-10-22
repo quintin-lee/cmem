@@ -451,7 +451,7 @@ size_t initial_capacity = 64 * 1024 * 1024;  // 64MB
 | Production (high performance) | `MP_FLAG_THREAD_SAFE \| MP_FLAG_THREAD_LOCAL_CACHE` |
 | Development/debugging | `MP_FLAG_THREAD_SAFE \| MP_FLAG_DEBUG_CANARY \| MP_FLAG_TRACK_LOCATIONS` |
 | Security-sensitive | `MP_FLAG_THREAD_SAFE \| MP_FLAG_ENCRYPTED_MEMORY \| MP_FLAG_GUARD_PAGES` |
-| High concurrency | `MP_FLAG_THREAD_SAFE \| MP_FLAG_PERCPU_FREELIST` |
+| High concurrency | `MP_FLAG_THREAD_SAFE \| MP_FLAG_PERCPU_FREELIST` (process-private; not for `MP_FLAG_SHARED_MEMORY` pools) |
 | Large memory workload | `MP_FLAG_HUGE_PAGES \| MP_FLAG_HOT_COLD_SEPARATION` |
 
 ### 8.3 Auto-Compact Configuration

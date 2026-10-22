@@ -1172,7 +1172,7 @@ typedef enum {
     MP_FLAG_GUARD_PAGES        = (1 << 8),             // Page-level Guard Pages (PROT_NONE)
     MP_FLAG_SHARED_MEMORY      = (1 << 9),             // POSIX shared memory IPC mode
     MP_FLAG_HUGE_PAGES         = (1 << 10),            // Linux HugePages (2MB/1GB)
-    MP_FLAG_PERCPU_FREELIST    = (1 << 11),            // Per-CPU lock-free freelist
+    MP_FLAG_PERCPU_FREELIST    = (1 << 11),            // Per-CPU lock-free freelist (process-private table; do not combine with MP_FLAG_SHARED_MEMORY)
     MP_FLAG_HOT_COLD_SEPARATION = (1 << 12),           // Hot/Cold page separation (TLB optimization)
     MP_FLAG_ENCRYPTED_MEMORY   = (1 << 13),            // Encrypted memory (mlock + MADV_DONTDUMP)
     MP_FLAG_ASAN_INTEGRATION   = (1 << 14)             // AddressSanitizer integration layer

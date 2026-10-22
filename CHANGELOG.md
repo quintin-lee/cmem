@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Mixed-Pool-Stats Accounting Fix**: Introduced `MP_BLOCK_FLAG_COUNTED` block-flag so that stats are only decremented on block's normal allocation path via standard `mp_alloc`; inline fastlane allocations (`mp_alloc_fast`) clear the flag. `mp_free` now skips stats operations when the flag is set, ensuring that cross-API pool operations are no-op. `MP_MAGIC_HEAD`, `MP_CANARY_BYTE`, and `MP_POISON_BYTE` are now exported in `include/cmem.h`, making audit APIs (`mp_ptr_valid`, `mp_get_allocation_info`) able to identify blocks regardless of allocation lane; the public `cmem_slab_class_size` table lets `mp_alloc_fast` re-stamp full header fields from recycled slab slots whose bytes are clobbered by intrusive free-list links.
 - **Compile-Time Memory Safety Policy**: Added `CMEM_SAFETY_LEVEL` (0-3), `CMEM_DEFAULT_SAFETY_FLAGS`, and `mp_default_pool_flags()` for compile-time safety defaults.
 - **Fast-Path Default in Release**: Release/auto (NDEBUG) safety profiles now include `MP_FLAG_FAST_PATH` in `CMEM_DEFAULT_SAFETY_FLAGS`, pairing the canary with slimmed fast-path bookkeeping (~5x plain-path throughput for inline `mp_alloc_fast`/`mp_free_fast` users).
 - **Per-Thread TLSF Free-Block Cache**: Added thread-local cache (`tls_cache.tlsf_slots/counts`) for TLSF allocations, enabling lock-free hot-path allocations that bypass the TLSF global lock entirely.

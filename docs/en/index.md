@@ -14,6 +14,7 @@ Welcome to the cmem project documentation. This documentation center covers arch
 | [testing.md](testing.md) | Testing guide | QA, developers |
 | [performance.md](performance.md) | Performance tuning guide | Performance engineers, developers |
 | [security.md](security.md) | Security features document | Security engineers, developers |
+| [fastpath-combo-audit-report.md](fastpath-combo-audit-report.md) | FAST_PATH × boundary-flag combo audit report | Maintainers |
 
 ### Quick Start
 
