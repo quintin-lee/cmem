@@ -3671,11 +3671,11 @@ size_t mp_alloc_size(memory_pool_t *pool, void *ptr)
  *
  * FAST_PATH pools maintain no active list, so validity is decided by
  * evidence that survives without it: the magic gate (written on every
- * allocation since the header change), alloc-type consistency, and — for
- * slab slots — containment inside a real slab page whose free list does
- * NOT currently contain the slot (exact liveness for the slab tier).
- * Non-slab tiers are accepted on magic + raw_base only; freed OS/TLSF
- * blocks may therefore still report live until reused.
+ * allocation), alloc-type consistency, and for slab slots containment
+ * inside a real slab page whose free list does not currently contain the
+ * slot (exact liveness for the slab tier). Non-slab tiers are accepted on
+ * magic + raw_base only; freed OS/TLSF blocks may therefore still report
+ * live until reused.
  */
 static bool mp_fastpath_slot_live(memory_pool_t *pool, mp_block_header_t *header)
 {
