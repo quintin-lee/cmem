@@ -83,16 +83,32 @@ Break the cycle so that:
 
 ### 4.2 `cmem.h` REMOVES
 
-- The three duplicated opaque typedefs `cmem_ring_buffer_t` (L190),
-  `mp_typed_pool_t` (L195), `cmem_frame_arena_t` (L200) — owned by their
-  subsystem headers.
-- Subsystem-exclusive function declarations that are *only* meaningful to
-  one subsystem and already fully declared there:
-  ring/event-log fns, snapshot fns, diag fns, metrics fns, arena fns,
-  frame fns, typed-pool fns.
-  - **Only** remove a declaration if its *sole* definition is in a subsystem
-    header. Core introspection / alloc / free / batch / aligned signatures
-    stay even when a subsystem fn also takes a `memory_pool_t*`.
+**Verified against the actual file (L180–1803 body, doc-comment L1–179 excluded):** the
+set of *duplicated* subsystem-fn declarations that exist in BOTH `cmem.h` body
+and a subsystem header is **exactly five** — the rest of the subsystem fns
+(ring, typed-pool, frame, arena, snapshot, diag, pprof, dump) are declared
+*only* in their subsystem headers and have **no** duplicate in `cmem.h` body:
+
+| Duplicated declaration | `cmem.h` body line | Sole definition in |
+|------------------------|--------------------|--------------------|
+| `mp_get_stats` | L246 | `cmem_metrics.h` |
+| `mp_get_allocation_info` | L266 | `cmem_diag.h` (core introspection — see note) |
+| `mp_record_latency` | L1449 | `cmem_metrics.h` |
+| `mp_get_latency_p99` | L1457 | `cmem_metrics.h` |
+| `mp_get_latency_avg` | L1465 | `cmem_metrics.h` |
+| `mp_reset_latency_stats` | L1472 | `cmem_metrics.h` |
+
+Plus the three duplicated opaque typedefs `cmem_ring_buffer_t` (L190),
+`mp_typed_pool_t` (L195), `cmem_frame_arena_t` (L200).
+
+> **Note on `mp_get_allocation_info`:** it is a *core introspection* function,
+> not metrics/diag-exclusive. It is declared in `cmem_diag.h` today, but it
+> belongs to core. **Decision:** keep `mp_get_allocation_info` **in `cmem.h`**
+> (do NOT remove it), and instead *add* it to `cmem_diag.h` is wrong — it is
+> already there. So: leave the L266 declaration in place as a core fn; treat
+> the L246 `mp_get_stats` + 4 latency fns as the removable duplicate set.
+> Concretely, **remove only** `mp_get_stats` (L246) and the 4 latency fns
+> (L1449–1472) from `cmem.h`; keep `mp_get_allocation_info`.
 
 ### 4.3 Subsystem Headers GAIN
 
@@ -108,11 +124,22 @@ tail.
 | `cmem_ring.h` | `typedef struct cmem_ring_buffer cmem_ring_buffer_t;` `typedef struct mp_event_log mp_event_log_t;` `typedef struct memory_pool memory_pool_t;` |
 | `cmem_diag.h` | `typedef struct memory_pool memory_pool_t;` |
 | `cmem_metrics.h` | `typedef struct memory_pool memory_pool_t;` |
-| `cmem_arena.h` | `typedef struct memory_pool memory_pool_t;` `typedef unsigned int mp_flags_t;` `typedef void (*mp_watermark_callback_t)(...);` |
+| `cmem_arena.h` | `typedef struct memory_pool memory_pool_t;` **only.** Do **NOT** forward-decl `mp_flags_t` or `mp_watermark_callback_t` — `mp_flags_t` is an **enum** (`typedef enum { … } mp_flags_t;`, cmem.h L74–107) and `mp_watermark_callback_t` is a function-pointer typedef; C has no valid standalone forward-decl for either. These are visible only when tail-included by `cmem.h` (the documented entry point). |
 | `cmem_frame.h` | `typedef struct cmem_frame_arena cmem_frame_arena_t;` |
 | `cmem_typed_pool.h` | `typedef struct mp_typed_pool mp_typed_pool_t;` |
 | `cmem_snapshot.h` | `typedef struct memory_pool memory_pool_t;` |
 | `cmem_tlsf.h` | `typedef struct tlsf_pool tlsf_pool_t;` |
+
+> **Consequence (critical):** `cmem_arena.h` and `cmem_metrics.h` are **not
+> standalone-includable** after this refactor — their fn signatures use
+> `mp_flags_t` (enum, by value) / `mp_stats_t` / `mp_allocation_info_t`, which
+> have no safe standalone forward decl. This is acceptable and **documented**:
+> the single public entry point is `cmem.h`; the eight subsystem headers are
+> tail-included components. A TU that wants only e.g. `mp_ring_create` still
+> includes `cmem.h` (unchanged from today), but it no longer transitively
+> re-pulls `cmem.h` from `cmem_ring.h` — the cycle is broken. Standalone
+> inclusion of `cmem_arena.h`/`cmem_metrics.h`/`cmem_diag.h` is **not
+> supported** and must not be attempted.
 
 > **Compilation-order note:** forward declarations are only valid when the
 > subsystem header is used standalone. Because `cmem.h` always defines the
@@ -127,10 +154,13 @@ tail.
    forward declarations from §4.3. No fn-declaration changes.
 2. **`cmem.h`:**
    - Remove the three duplicated opaque typedefs (L190/195/200).
-   - Remove subsystem-exclusive fn declarations that have their sole
-     definition in a subsystem header (keep core alloc/free/introspection).
-   - Verify the tail `#include` block is ordered after all core type
-     definitions.
+   - Remove the **five** duplicate fn declarations identified in §4.2:
+     `mp_get_stats` (L246) and the 4 latency fns (L1449–1472).
+     **Do NOT remove** `mp_get_allocation_info` (L266) — it is core.
+     All other subsystem fns (ring/typed/frame/arena/snapshot/diag/pprof/
+     dump) have **no** declaration in the `cmem.h` body and need no removal.
+   - Verify the tail `#include` block (L1804–1815) is ordered after all core
+     type definitions (it is, today: types are all defined by L~1144).
 3. **Verify include direction:** `grep -l '#include "cmem.h"' include/cmem_*.h`
    must return *only* `cmem.h` itself (i.e. zero subsystem headers).
 4. **No `.c` / `cmem_internal.h` / CMakeLists edits** required.
@@ -144,24 +174,27 @@ tail.
 | `cmake -B build_cmake -G Ninja && ctest --test-dir build_cmake` | green (run after `make clean` to avoid stale ASan binary) |
 | `make lib && make lib_shared` | static + shared built; `nm -D libcmem.so \| grep -c mp_ring_create` ≥ 1 |
 | Subsystem back-reference | `grep -l '#include "cmem.h"' include/cmem_{arena,frame,ring,snapshot,tlsf,typed_pool,diag,metrics}.h` → empty |
-| `cmem.h` line count | reduced (3 typedefs + subsystem-exclusive fns removed), core fn set unchanged |
+| `cmem.h` line count | reduced by removing 3 typedefs + 5 fn decls (≈ L1449–1472 latency block + L246/L190/L195/L200); core fn set otherwise unchanged |
 | Behavior | identical (header reordering only; no `.c` change) |
 
 ## 7. Risks
 
-- **Forward-decl arity:** `mp_flags_t` is an `unsigned int` typedef; if any
-  subsystem fn signature embeds `mp_flags_t` by value (§4.3 arena row), the
-  forward decl must be `typedef unsigned int mp_flags_t;` — verify the real
-  underlying type at migration time. If it is actually an `enum`, use the
-  enum name instead.
-- **Stats struct visibility:** `mp_metrics` / `mp_diag` fns take
-  `mp_stats_t*` / `mp_allocation_info_t*` — these remain fully-defined in
-  `cmem.h` before the tail-include, so no forward decl is needed for them in
-  the standalone-subsystem case *only if* those headers are included via
-  `cmem.h`. If a user includes `cmem_metrics.h` standalone, they must have
-  already included `cmem.h`; document that the eight headers are
-  tail-included components, not standalone entry points (entry point =
-  `cmem.h`).
+- **Non-standalone subsystem headers (accepted, not a bug):** `cmem_arena.h`,
+  `cmem_metrics.h`, `cmem_diag.h` cannot be included standalone because they
+  reference `mp_flags_t` (an enum), `mp_stats_t`, `mp_allocation_info_t`.
+  These are fully defined in `cmem.h` before the tail-`#include` block, so
+  the tail-included form always compiles. Document clearly: **`cmem.h` is the
+  only supported entry point**; do not add these three to any downstream
+  "include only the one subsystem you need" migration without first moving
+  the referenced core types. This is a deliberate scope boundary, not an
+  oversight.
+- **`mp_get_allocation_info` is core, not diag-exclusive:** keep its
+  declaration in `cmem.h` (do not remove). Only `mp_get_stats` + the 4
+  latency fns are the removable duplicate set (§4.2 table).
+- **Stats struct visibility:** `mp_metrics`/`mp_diag` fns take
+  `mp_stats_t*`/`mp_allocation_info_t*` — these remain fully-defined in
+  `cmem.h` before the tail-include, so no forward decl is needed in the
+  tail-included case.
 
 ## 8. Testing Strategy
 
