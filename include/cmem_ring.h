@@ -6,7 +6,9 @@
 #ifndef CMEM_RING_H
 #define CMEM_RING_H
 
-#include "cmem.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {

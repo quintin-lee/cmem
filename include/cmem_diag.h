@@ -10,7 +10,7 @@
 #ifndef CMEM_DIAG_H
 #define CMEM_DIAG_H
 
-#include "cmem.h"
+typedef struct memory_pool memory_pool_t;
 
 #ifdef __cplusplus
 extern "C" {

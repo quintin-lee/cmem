@@ -6,7 +6,7 @@
 #ifndef CMEM_METRICS_H
 #define CMEM_METRICS_H
 
-#include "cmem.h"
+typedef struct memory_pool memory_pool_t;
 
 #ifdef __cplusplus
 extern "C" {

@@ -6,7 +6,7 @@
 #ifndef CMEM_TYPED_POOL_H
 #define CMEM_TYPED_POOL_H
 
-#include "cmem.h"
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {

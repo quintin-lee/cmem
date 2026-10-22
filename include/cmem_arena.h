@@ -6,7 +6,7 @@
 #ifndef CMEM_ARENA_H
 #define CMEM_ARENA_H
 
-#include "cmem.h"
+typedef struct memory_pool memory_pool_t;
 
 #ifdef __cplusplus
 extern "C" {

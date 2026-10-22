@@ -6,7 +6,10 @@
 #ifndef CMEM_SNAPSHOT_H
 #define CMEM_SNAPSHOT_H
 
-#include "cmem.h"
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct memory_pool memory_pool_t;
 
 #ifdef __cplusplus
 extern "C" {

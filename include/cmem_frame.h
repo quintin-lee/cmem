@@ -6,7 +6,7 @@
 #ifndef CMEM_FRAME_H
 #define CMEM_FRAME_H
 
-#include "cmem.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {

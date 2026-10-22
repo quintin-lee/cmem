@@ -6,8 +6,6 @@
 #ifndef CMEM_TLSF_H
 #define CMEM_TLSF_H
 
-#include "cmem.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
