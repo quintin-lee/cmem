@@ -37,10 +37,6 @@
 #include <unistd.h>
 #endif
 
-#define MP_MAGIC_HEAD 0x4D504F4F // "MPOO" in ASCII
-#define MP_CANARY_BYTE 0xDE
-#define MP_POISON_BYTE 0xDD
-
 /* TLSF Allocator Constants */
 #define TLSF_SL_SHIFT 4
 #define TLSF_SL_COUNT (1 << TLSF_SL_SHIFT) // 16 subdivisions per FL

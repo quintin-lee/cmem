@@ -769,6 +769,50 @@ static void test_fastpath_ptr_valid()
     TEST_PASS("test_fastpath_ptr_valid");
 }
 
+/* Mixed mp_alloc_fast + plain mp_free must produce headers the plain free
+ * path can consume: exact requested_size, written canary, balanced stats.
+ * Warm the TLS cache first so mp_alloc_fast serves from a recycled slot. */
+static void test_fastpath_mixed_api()
+{
+    printf("\n--- Test: fastpath mixed api ---\n");
+    memory_pool_t *pool =
+        mp_create(0, (mp_flags_t)(MP_FLAG_DEBUG_CANARY | MP_FLAG_FAST_PATH | MP_FLAG_THREAD_SAFE));
+    assert(pool != NULL);
+
+    for (int i = 0; i < 64; i++) {
+        void *warm = mp_alloc(pool, 130);
+        assert(warm != NULL);
+        mp_free(pool, warm);
+    }
+
+    void *mixed = mp_alloc_fast(pool, 150);
+    assert(mixed != NULL);
+
+    mp_allocation_info_t info;
+    memset(&info, 0xAA, sizeof(info));
+    assert(mp_get_allocation_info(pool, mixed, &info));
+    assert(info.requested_size == 150);
+
+    mp_free(pool, mixed);
+    assert(!mp_ptr_valid(pool, mixed));
+
+    /* Reverse pairing: plain alloc (counted) + mp_free_fast must fall back
+     * to the stats-aware free path so counters stay balanced. */
+    void *rev = mp_alloc(pool, 150);
+    assert(rev != NULL);
+    assert(mp_ptr_valid(pool, rev));
+    mp_free_fast(pool, rev);
+    assert(!mp_ptr_valid(pool, rev));
+
+    mp_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    (void)mp_get_stats(pool, &stats);
+    assert(stats.active_allocations == 0);
+
+    mp_destroy(pool);
+    TEST_PASS("test_fastpath_mixed_api");
+}
+
 #ifndef _WIN32
 static void test_safety_shared_pool()
 {
@@ -1752,6 +1796,7 @@ int main()
     test_safety_multi_arena_children();
     test_safety_static_buffer();
     test_fastpath_ptr_valid();
+    test_fastpath_mixed_api();
 #ifndef _WIN32
     test_safety_shared_pool();
 #endif

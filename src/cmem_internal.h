@@ -158,10 +158,8 @@ typedef struct {
  * Shared constants
  * -------------------------------------------------------------------------
  */
-#define MP_MAGIC_HEAD 0x4D504F4F       /* Magic value ("MPOO") stamped on block headers          */
-#define MP_CANARY_BYTE 0xDE            /* Fill byte for canary regions (buffer-overflow guard)  */
-#define MP_POISON_BYTE 0xDD            /* Fill byte for freed payloads (use-after-free guard)   */
 #define CMEM_FREED_MAGIC 0xDEADBEEFu   /* Magic stamped on a block header once it is freed      */
+#define MP_POISON_BYTE 0xDD            /* Fill byte for freed payloads (use-after-free guard)   */
 #define CMEM_SNAPSHOT_MAGIC 0x434D454D /* Magic bytes ("CMEM") in binary snapshot header  */
 /* Upper bound on allocation records accepted from a binary snapshot file.  Guards an
  * untrusted file from forcing an oversized calloc() and keeps validation realistic. */
@@ -513,7 +511,6 @@ struct cmem_frame_arena {
  * Shared data
  * -------------------------------------------------------------------------
  */
-extern const size_t kSlabSizes[SLAB_CLASS_COUNT];
 
 /* -------------------------------------------------------------------------
  * Inline helpers (available to all modules)

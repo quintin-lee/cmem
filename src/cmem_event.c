@@ -1335,8 +1335,8 @@ size_t mp_preferred_size(size_t size)
     }
     if (size <= SLAB_MAX_SIZE) {
         for (int i = 0; i < SLAB_CLASS_COUNT; i++) {
-            if (kSlabSizes[i] >= size) {
-                return kSlabSizes[i];
+            if (cmem_slab_class_size[i] >= size) {
+                return cmem_slab_class_size[i];
             }
         }
     }
@@ -2076,7 +2076,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                     mp_block_header_t *header = (mp_block_header_t *)pool->emergency_buf;
                     header->alloc_type = ALLOC_TYPE_EMERGENCY;
                     header->slab_class = 0;
-                    header->flags = 0;
+                    header->flags = MP_BLOCK_FLAG_COUNTED;
                     header->requested_size = size;
                     header->usable_size = pool->emergency_size - sizeof(mp_block_header_t);
                     header->raw_base = pool->emergency_buf;
@@ -2182,7 +2182,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             mp_block_header_t *header = (mp_block_header_t *)slot;
             header->alloc_type = ALLOC_TYPE_SLAB;
             header->slab_class = class_idx;
-            header->flags = 0;
+            header->flags = MP_BLOCK_FLAG_COUNTED;
             header->requested_size = size;
             header->usable_size = pool->slab_classes[class_idx].slot_size;
             header->raw_base = slot;
@@ -2245,7 +2245,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                 header->magic = MP_MAGIC_HEAD;
                 header->alloc_type = ALLOC_TYPE_TLSF;
                 header->slab_class = 0;
-                header->flags = 0;
+                header->flags = MP_BLOCK_FLAG_COUNTED;
                 header->requested_size = size;
                 header->usable_size =
                     total_needed - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
@@ -2285,7 +2285,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
                     header->magic = MP_MAGIC_HEAD;
                     header->alloc_type = ALLOC_TYPE_TLSF;
                     header->slab_class = 0;
-                    header->flags = MP_BLOCK_FLAG_TLSF_ARENA;
+                    header->flags = MP_BLOCK_FLAG_TLSF_ARENA | MP_BLOCK_FLAG_COUNTED;
                     header->requested_size = size;
                     header->usable_size =
                         total_needed - sizeof(tlsf_block_t) - sizeof(mp_block_header_t);
@@ -2326,7 +2326,7 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
             mp_block_header_t *header = (mp_block_header_t *)raw_mem;
             header->alloc_type = ALLOC_TYPE_OS;
             header->slab_class = 0;
-            header->flags = 0;
+            header->flags = MP_BLOCK_FLAG_COUNTED;
             header->requested_size = size;
             header->usable_size = size;
             header->raw_base = raw_mem;
@@ -2356,6 +2356,10 @@ void *mp_alloc_internal(memory_pool_t *pool, size_t size)
     if (ptr) {
         mp_block_header_t *header =
             (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
+        /* Every allocation leaving this path counts toward pool stats; mark
+         * the header even for fallback builders (cmem_tlsf, arena) whose
+         * own format sites do not set the bit. */
+        header->flags |= MP_BLOCK_FLAG_COUNTED;
 
         bool call_watermark = false;
         bool call_event = false;
@@ -2477,7 +2481,7 @@ batch_format_slab(memory_pool_t *pool, uint8_t class_idx, mp_slab_slot_t *slot, 
     mp_block_header_t *header = (mp_block_header_t *)slot;
     header->alloc_type = ALLOC_TYPE_SLAB;
     header->slab_class = class_idx;
-    header->flags = 0;
+    header->flags = MP_BLOCK_FLAG_COUNTED;
     header->requested_size = req_size;
     header->usable_size = pool->slab_classes[class_idx].slot_size;
     header->raw_base = slot;
@@ -2512,7 +2516,7 @@ static void *batch_format_emergency(memory_pool_t *pool, size_t req_size)
     mp_block_header_t *header = (mp_block_header_t *)pool->emergency_buf;
     header->alloc_type = ALLOC_TYPE_EMERGENCY;
     header->slab_class = 0;
-    header->flags = 0;
+    header->flags = MP_BLOCK_FLAG_COUNTED;
     header->requested_size = req_size;
     header->usable_size = pool->emergency_size - sizeof(mp_block_header_t);
     header->raw_base = pool->emergency_buf;
@@ -2551,7 +2555,7 @@ static void *batch_format_os(memory_pool_t *pool,
     mp_block_header_t *header = (mp_block_header_t *)raw_mem;
     header->alloc_type = ALLOC_TYPE_OS;
     header->slab_class = 0;
-    header->flags = 0;
+    header->flags = MP_BLOCK_FLAG_COUNTED;
     header->requested_size = req_size;
     header->usable_size = req_size;
     header->raw_base = raw_mem;
@@ -2881,6 +2885,10 @@ size_t mp_alloc_batch(memory_pool_t *pool, size_t size, void **out_ptrs, size_t 
         pool_lock(pool);
         for (size_t i = 0; i < produced; i++) {
             mp_block_header_t *orig_h = (mp_block_header_t *)((uint8_t *)out_ptrs[i] - header_sz);
+            /* The aggregation below counts every produced element toward
+             * pool stats; mark the headers (covers the raw tlsf_alloc tier
+             * that has no dedicated batch formatter). */
+            orig_h->flags |= MP_BLOCK_FLAG_COUNTED;
             if (!(pool->flags & MP_FLAG_FAST_PATH)) {
                 active_list_add(pool, orig_h);
             }
@@ -2983,19 +2991,26 @@ static void flush_slab_block(memory_pool_t *pool, mp_block_header_t **hdrs, size
     /* Phase B: aggregated stats. */
     if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
         for (size_t idx = 0; idx < block_count; idx++) {
-            mp_free_stats_update(pool, hdrs[idx]);
+            if (hdrs[idx]->flags & MP_BLOCK_FLAG_COUNTED) {
+                mp_free_stats_update(pool, hdrs[idx]);
+            }
         }
     } else if (pool->flags & MP_FLAG_FAST_PATH) {
         for (size_t idx = 0; idx < block_count; idx++) {
             mp_block_header_t *header = hdrs[idx];
-            CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
-            CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+            if (header->flags & MP_BLOCK_FLAG_COUNTED) {
+                CMEM_ATOMIC_FETCH_SUB(
+                    &pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
+                CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+            }
             CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
         }
     } else {
         pool_lock(pool);
         for (size_t idx = 0; idx < block_count; idx++) {
-            mp_free_stats_update(pool, hdrs[idx]);
+            if (hdrs[idx]->flags & MP_BLOCK_FLAG_COUNTED) {
+                mp_free_stats_update(pool, hdrs[idx]);
+            }
         }
         pool_unlock(pool);
     }
@@ -3053,7 +3068,7 @@ void mp_free_batch(memory_pool_t *pool, void **ptrs, size_t count)
         mp_block_header_t *header =
             (mp_block_header_t *)((uint8_t *)ptrs[idx] - sizeof(mp_block_header_t));
 
-        if (!(pool->flags & MP_FLAG_FAST_PATH) && header->magic != MP_MAGIC_HEAD) {
+        if (header->magic != MP_MAGIC_HEAD) {
             /* Corrupt header: let mp_free run its error/recovery path. */
             mp_free(pool, ptrs[idx]);
             ptrs[idx] = NULL;
@@ -3138,8 +3153,9 @@ void mp_free(memory_pool_t *pool, void *ptr)
 
     mp_block_header_t *header = (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
 
-    /* FAST_PATH pools don't stamp magic; skip corruption detection. */
-    if (!(pool->flags & MP_FLAG_FAST_PATH) && header->magic != MP_MAGIC_HEAD) {
+    /* Magic is stamped on every allocation path (fast lane included), so
+     * corruption detection stays enabled on FAST_PATH pools. */
+    if (header->magic != MP_MAGIC_HEAD) {
         if (pool) {
             (void)fprintf(
                 stderr, "[MEMORY_POOL ERROR] Corrupt header or invalid free on pointer %p!\n", ptr);
@@ -3185,21 +3201,31 @@ void mp_free(memory_pool_t *pool, void *ptr)
         mp_verify_free_canary(pool, ptr);
     }
 
+    /* Snapshot before any cache push: slot->next clobbers the header's
+     * low bytes, so gate checks must read these locals, not header. */
+    bool counted = (header->flags & MP_BLOCK_FLAG_COUNTED) != 0;
+    size_t req_size = header->requested_size;
+
     if (header->alloc_type == ALLOC_TYPE_SLAB) {
         tls_cache_validate_owner(pool);
         uint8_t class_idx = header->slab_class;
 
         if (tls_cache.counts[class_idx] < TLS_CACHE_MAX_SLOTS) {
             if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
-                mp_free_stats_update(pool, header);
+                if (counted) {
+                    mp_free_stats_update(pool, header);
+                }
             } else if (pool->flags & MP_FLAG_FAST_PATH) {
-                CMEM_ATOMIC_FETCH_SUB(
-                    &pool->active_bytes, header->requested_size, CMEM_ORDER_RELAXED);
-                CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+                if (counted) {
+                    CMEM_ATOMIC_FETCH_SUB(&pool->active_bytes, req_size, CMEM_ORDER_RELAXED);
+                    CMEM_ATOMIC_FETCH_SUB(&pool->active_allocations, 1, CMEM_ORDER_RELAXED);
+                }
                 CMEM_ATOMIC_FETCH_ADD(&pool->total_free_ops, 1, CMEM_ORDER_RELAXED);
             } else {
                 /* Update atomics lock-free; lock only for active-list mutation. */
-                mp_free_stats_no_lock(pool, header);
+                if (counted) {
+                    mp_free_stats_no_lock(pool, header);
+                }
                 if (!(pool->flags & MP_FLAG_FAST_PATH)) {
                     pool_lock(pool);
                     active_list_remove(pool, header);
@@ -3207,7 +3233,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
                 }
             }
             if (pool->event_cb) {
-                trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+                trigger_event(pool, MP_EVENT_FREE, ptr, req_size);
             }
 
             mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
@@ -3222,11 +3248,15 @@ void mp_free(memory_pool_t *pool, void *ptr)
             mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
             if (percpu_push(pool, cpu, class_idx, slot)) {
                 if (!(pool->flags & MP_FLAG_THREAD_SAFE)) {
-                    mp_free_stats_update(pool, header);
+                    if (counted) {
+                        mp_free_stats_update(pool, header);
+                    }
                 } else {
                     /* percpu_push is lock-free; update atomics first, then
                      * lock only for active-list removal. */
-                    mp_free_stats_no_lock(pool, header);
+                    if (counted) {
+                        mp_free_stats_no_lock(pool, header);
+                    }
                     if (!(pool->flags & MP_FLAG_FAST_PATH)) {
                         pool_lock(pool);
                         active_list_remove(pool, header);
@@ -3234,7 +3264,7 @@ void mp_free(memory_pool_t *pool, void *ptr)
                     }
                 }
                 if (pool->event_cb) {
-                    trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+                    trigger_event(pool, MP_EVENT_FREE, ptr, req_size);
                 }
                 return;
             }
@@ -3243,14 +3273,16 @@ void mp_free(memory_pool_t *pool, void *ptr)
         if (pool->flags & MP_FLAG_THREAD_SAFE) {
             /* remote_free_push is lock-free (CAS on atomic head).
              * Update atomics lock-free; lock only for active-list removal. */
-            mp_free_stats_no_lock(pool, header);
+            if (counted) {
+                mp_free_stats_no_lock(pool, header);
+            }
             if (!(pool->flags & MP_FLAG_FAST_PATH)) {
                 pool_lock(pool);
                 active_list_remove(pool, header);
                 pool_unlock(pool);
             }
             if (pool->event_cb) {
-                trigger_event(pool, MP_EVENT_FREE, ptr, header->requested_size);
+                trigger_event(pool, MP_EVENT_FREE, ptr, req_size);
             }
             mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
             remote_free_push(pool, class_idx, slot);
@@ -3261,12 +3293,14 @@ void mp_free(memory_pool_t *pool, void *ptr)
     pool_lock(pool);
 
     uint8_t alloc_type = header->alloc_type;
-    size_t req_size = header->requested_size;
+    req_size = header->requested_size; /* re-read: header is now locked-safe */
     void *raw_base = header->raw_base;
     bool call_watermark = false;
     bool call_event = false;
 
-    mp_free_stats_update(pool, header);
+    if (header->flags & MP_BLOCK_FLAG_COUNTED) {
+        mp_free_stats_update(pool, header);
+    }
     if (alloc_type == ALLOC_TYPE_OS) {
         CMEM_ATOMIC_FETCH_SUB(&pool->os_allocated_bytes, req_size, CMEM_ORDER_RELAXED);
         CMEM_ATOMIC_FETCH_SUB(&pool->total_pool_size,

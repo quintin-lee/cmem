@@ -21,7 +21,8 @@
 #define CMEM_SLAB_ALIGN_MASK 7u
 
 /** Fixed slot sizes served by the slab tier, one class per entry. */
-const size_t kSlabSizes[SLAB_CLASS_COUNT] = {8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
+const size_t cmem_slab_class_size[SLAB_CLASS_COUNT] = {
+    8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
 
 const uint8_t cmem_size_to_class[513] = {
     0,                                                             /* 0 bytes */
@@ -569,7 +570,7 @@ memory_pool_t *tls_cache_get_bound_arena(void)
 /**
  * @brief Initialise every slab size class for a pool.
  *
- * Each class records its slot size (from kSlabSizes or a custom table) and
+ * Each class records its slot size (from cmem_slab_class_size or a custom table) and
  * receives its own mutex together with empty partial/full page lists.
  *
  * @param pool Pool whose slab_classes[] will be initialised.
@@ -581,7 +582,7 @@ bool slab_init(memory_pool_t *pool)
         if (pool->use_custom_slab_sizes) {
             pool->slab_classes[i].slot_size = pool->custom_slab_sizes[i];
         } else {
-            pool->slab_classes[i].slot_size = kSlabSizes[i];
+            pool->slab_classes[i].slot_size = cmem_slab_class_size[i];
         }
         pthread_mutex_init(&pool->slab_classes[i].lock, NULL);
         pool->slab_classes[i].partial_pages = NULL;

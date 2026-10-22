@@ -1107,6 +1107,18 @@ typedef struct {
 
 /** Block belongs to a per-thread TLSF arena; subpool holds tlsf_arena_t*. */
 #define MP_BLOCK_FLAG_TLSF_ARENA 0x0001u
+/**
+ * Block was allocated through a path that updated the public allocation
+ * stats. Plain alloc paths set it; mp_alloc_fast clears it, and the free
+ * path decrements stats only when it is present, keeping counters balanced
+ * across every API pairing.
+ */
+#define MP_BLOCK_FLAG_COUNTED 0x0002u
+
+/** Magic value ("MPOO") stamped on live block headers; consumed by audit APIs. */
+#define MP_MAGIC_HEAD 0x4D504F4Fu
+/** Fill byte for canary regions (buffer-overflow guard). */
+#define MP_CANARY_BYTE 0xDEu
 
 typedef struct mp_block_header {
     uint32_t magic;
@@ -1128,6 +1140,7 @@ typedef struct mp_block_header {
 
 extern MP_THREAD_LOCAL thread_cache_t tls_cache;
 extern const uint8_t cmem_size_to_class[513];
+extern const size_t cmem_slab_class_size[CMEM_SLAB_CLASS_COUNT];
 
 /**
  * @brief Ultra-fast inline small-object allocator for MP_FLAG_FAST_PATH pools.
@@ -1144,10 +1157,26 @@ static inline void *mp_alloc_fast(memory_pool_t *pool, size_t size)
                 tls_cache.counts[class_idx]--;
 
                 mp_block_header_t *header = (mp_block_header_t *)slot;
+                /* Recycled slots carry a free-list link in header[0..8): every
+                 * auditable header field must be re-stamped before return. */
+                header->magic = MP_MAGIC_HEAD;
                 header->alloc_type = (uint8_t)ALLOC_TYPE_SLAB;
                 header->slab_class = class_idx;
+                header->flags = 0;
+                header->requested_size = size;
+                header->usable_size = cmem_slab_class_size[class_idx];
                 header->raw_base = slot;
                 header->subpool = pool;
+                if (__builtin_expect((flags & (MP_FLAG_DEBUG_CANARY | MP_FLAG_ZERO_ON_ALLOC)) != 0,
+                                     0)) {
+                    uint8_t *payload = (uint8_t *)header + sizeof(mp_block_header_t);
+                    if (flags & MP_FLAG_DEBUG_CANARY) {
+                        *(payload + size) = MP_CANARY_BYTE;
+                    }
+                    if (flags & MP_FLAG_ZERO_ON_ALLOC) {
+                        __builtin_memset(payload, 0, size);
+                    }
+                }
 
                 return (void *)((uint8_t *)header + sizeof(mp_block_header_t));
             }
@@ -1166,7 +1195,11 @@ static inline void mp_free_fast(memory_pool_t *pool, void *ptr)
         if (__builtin_expect((flags & MP_FLAG_FAST_PATH) != 0, 1)) {
             mp_block_header_t *header =
                 (mp_block_header_t *)((uint8_t *)ptr - sizeof(mp_block_header_t));
-            if (__builtin_expect(header->alloc_type == (uint8_t)ALLOC_TYPE_SLAB, 1)) {
+            /* Counted blocks carry a stats obligation; route them through
+             * the full free path instead of the stats-free cache push. */
+            if (__builtin_expect((header->alloc_type == (uint8_t)ALLOC_TYPE_SLAB) &&
+                                     ((header->flags & MP_BLOCK_FLAG_COUNTED) == 0),
+                                 1)) {
                 uint8_t class_idx = header->slab_class;
                 if (__builtin_expect(tls_cache.counts[class_idx] < 256, 1)) {
                     mp_slab_slot_t *slot = (mp_slab_slot_t *)header->raw_base;
