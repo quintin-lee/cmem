@@ -185,21 +185,6 @@ typedef enum {
 typedef struct memory_pool memory_pool_t;
 
 /**
- * @brief Opaque handle to a lock-free ring buffer allocator.
- */
-typedef struct cmem_ring_buffer cmem_ring_buffer_t;
-
-/**
- * @brief Opaque handle to a typed object pool allocator.
- */
-typedef struct mp_typed_pool mp_typed_pool_t;
-
-/**
- * @brief Opaque handle to a game/graphics frame arena allocator.
- */
-typedef struct cmem_frame_arena cmem_frame_arena_t;
-
-/**
  * @brief Event Callback function pointer for telemetry profiling.
  *
  * @param pool Pointer to the memory pool where the event occurred
@@ -1433,43 +1418,6 @@ void mp_set_auto_compact(memory_pool_t *pool,
  * @return true if compaction was performed, false otherwise
  */
 bool mp_auto_compact_check(memory_pool_t *pool);
-
-/* ========================================================================== */
-/*  Allocation Latency Statistics                                              */
-/* ========================================================================== */
-
-/**
- * @brief Records an allocation latency sample in nanoseconds.
- *
- * This is called internally by the allocation fast-path.
- *
- * @param pool Pointer to the memory pool
- * @param latency_ns Latency in nanoseconds
- */
-void mp_record_latency(memory_pool_t *pool, uint64_t latency_ns);
-
-/**
- * @brief Calculates the P99 allocation latency from the histogram.
- *
- * @param pool Pointer to the memory pool
- * @return P99 latency in nanoseconds, or 0 if no samples
- */
-uint64_t mp_get_latency_p99(memory_pool_t *pool);
-
-/**
- * @brief Returns the average allocation latency in nanoseconds.
- *
- * @param pool Pointer to the memory pool
- * @return Average latency in nanoseconds, or 0 if no samples
- */
-uint64_t mp_get_latency_avg(memory_pool_t *pool);
-
-/**
- * @brief Resets the allocation latency statistics histogram.
- *
- * @param pool Pointer to the memory pool
- */
-void mp_reset_latency_stats(memory_pool_t *pool);
 
 /* ========================================================================== */
 /*  Per-CPU Lock-Free Freelist                                                  */
