@@ -132,8 +132,10 @@ Delete `tls_arena_binding_t` / `tls_arena_map_t` / static `tls_arena_map`
 
 1. `make cmake-clean && make cmake-build && ctest --test-dir build_cmake` —
    baseline must stay green (3/3).
-2. `nm -D` symbol delta **must be empty** (the removed function was
-   internal; `tls_arena_map` was static).
+2. `nm -D` symbol delta **must be exactly one removal**:
+   `tls_cache_get_bound_arena` (verified exported from libcmem.so — the build
+   does not use `-fvisibility=hidden`; zero additions, zero other changes).
+   `tls_arena_map` was static and leaves no symbol trace.
 3. New tests in `tests/test_advanced.c` (next sequential number, registered
    in `main()`):
    - **Two-master cross binding**: create two multi-arena masters; bind and
