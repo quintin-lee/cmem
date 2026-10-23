@@ -35,7 +35,7 @@ ALL_TOOLS_SRC = $(wildcard tools/*/cmem-*.c)
 ALL_COMMON_TOOLS_SRC = $(wildcard tools/common/*.c)
 
 # 自动推导目标
-CORE_SRCS = $(filter src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_event.c src/cmem_compress.c, $(ALL_SRC))
+CORE_SRCS = $(filter src/cmem.c src/cmem_slab.c src/cmem_tlsf.c src/cmem_sys.c src/cmem_guard.c src/cmem_ring_event.c src/cmem_config.c src/cmem_lifecycle.c src/cmem_alloc.c src/cmem_multi_arena.c src/cmem_compress.c, $(ALL_SRC))
 DIAG_SRCS = src/cmem_diag.c
 ALL_SRCS = $(ALL_SRC)
 

@@ -694,7 +694,7 @@ extern size_t mp_export_prometheus_metrics(memory_pool_t *pool, char *out_buf, s
 extern size_t mp_export_pprof(memory_pool_t *pool, char *out_buf, size_t max_len);
 extern bool mp_check_leaks(memory_pool_t *pool);
 
-/* Events & callbacks (cmem_event.c) */
+/* Events & callbacks (allocation paths) */
 extern mp_event_log_t *mp_event_log_create(size_t capacity);
 extern void mp_event_log_destroy(mp_event_log_t *log);
 extern bool

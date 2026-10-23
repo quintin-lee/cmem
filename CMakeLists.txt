@@ -62,7 +62,12 @@ if(CLANG_FORMAT)
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_tlsf.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_sys.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_diag.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_event.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_guard.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_ring_event.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_config.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_lifecycle.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_alloc.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_multi_arena.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/cmem_compress.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.c
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_advanced.c
@@ -180,7 +185,12 @@ set(CMEM_CORE_SRCS
     src/cmem_slab.c
     src/cmem_tlsf.c
     src/cmem_sys.c
-    src/cmem_event.c
+    src/cmem_guard.c
+    src/cmem_ring_event.c
+    src/cmem_config.c
+    src/cmem_lifecycle.c
+    src/cmem_alloc.c
+    src/cmem_multi_arena.c
     src/cmem_compress.c
 )
 
@@ -198,7 +208,7 @@ if(CMEM_BUILD_SHARED)
     add_library(cmem_core_shared SHARED ${CMEM_CORE_SRCS})
     target_link_libraries(cmem_core_shared PRIVATE pthread ${RT_LIBRARY})
     # PRIVATE: the define must only affect cmem_core_shared's own compilation
-    # (compiling out mp_check_leaks() references in cmem_event.c). PUBLIC would
+    # (compiling out mp_check_leaks() references in the carved allocation sources). PUBLIC would
     # propagate it to cmem_diag_shared, which links this target but needs the
     # diagnostic types (mp_leak_severity_t, mp_leak_pattern_t) from cmem_diag.h.
     target_compile_definitions(cmem_core_shared PRIVATE CMEM_DISABLE_DIAGNOSTICS)

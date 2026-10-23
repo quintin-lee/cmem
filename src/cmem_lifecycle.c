@@ -1,6 +1,7 @@
 /**
  * @file cmem_lifecycle.c
- * @brief Pool create/destroy/reset, idle-page reclaim, callbacks, NUMA, and emergency reserve for cmem.
+ * @brief Pool create/destroy/reset, idle-page reclaim, callbacks, NUMA, and emergency reserve for
+ * cmem.
  */
 #include "cmem.h"
 #include "cmem_internal.h"

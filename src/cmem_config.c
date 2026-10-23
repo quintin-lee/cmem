@@ -1,6 +1,7 @@
 /**
  * @file cmem_config.c
- * @brief Environment flags, introspection, hot-reload, compaction, latency stats, and slab table for cmem.
+ * @brief Environment flags, introspection, hot-reload, compaction, latency stats, and slab table
+ * for cmem.
  */
 #include "cmem.h"
 #include "cmem_internal.h"

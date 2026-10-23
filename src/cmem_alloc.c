@@ -1,6 +1,7 @@
 /**
  * @file cmem_alloc.c
- * @brief Core alloc/free/realloc hot paths, batch operations, and allocation introspection for cmem.
+ * @brief Core alloc/free/realloc hot paths, batch operations, and allocation introspection for
+ * cmem.
  */
 #include "cmem.h"
 #include "cmem_internal.h"
@@ -2019,4 +2020,3 @@ void mp_frame_arena_destroy(cmem_frame_arena_t *farena)
     }
     free(farena);
 }
-
