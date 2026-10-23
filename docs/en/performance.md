@@ -482,13 +482,13 @@ if (p99 > 1000000) {  // > 1ms
 
 ```bash
 # 1. Establish performance baseline
-make bench > baseline.txt
+make CONFIG=make bench > baseline.txt
 
 # 2. Compare after each change
-make bench > after_change.txt
+make CONFIG=make bench > after_change.txt
 
 # 3. Use perf to analyze hotspots
-perf record -g ./build/benchmark
+perf record -g ./build-make/benchmark
 perf report
 ```
 

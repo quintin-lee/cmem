@@ -108,35 +108,39 @@ void* mp_alloc(memory_pool_t* pool, size_t size);
 ### 3.1 Makefile Targets
 
 ```bash
-make lib          # Compile static libraries build/libcmem.a and build/libcmem-<version>.a
-make lib_shared   # Compile shared library build/libcmem.so.<version> with SONAME
-make test         # Compile and run C unit tests (Debug + Sanitizers)
-make test_cpp     # Compile and run C++ tests
-make bench        # Compile and run performance benchmarks
-make examples     # Compile and run example programs
-make tools        # Build diagnostic tools (cmem-inspect, cmem-analyze)
-make clean        # Clean build artifacts
-make all          # Compile library + tests + benchmarks + examples + tools
+make cmake-build   # CMake configure + build into build_cmake/ (runs format & mermaid checks too)
+make cmake-test    # Build and run the whole CTest suite (unit + advanced + C++)
+make cmake-clean   # Remove build_cmake/ and the legacy build/ dirs
+
+# Makefile compat mode (CONFIG=make|debug|asan|tsan|ubsan; outputs to build-<CONFIG>/)
+make CONFIG=make lib          # Static archives build-make/libcmem.a + versioned copy
+make CONFIG=make test         # Compile and run C unit tests
+make CONFIG=make test_cpp     # Compile and run C++ tests
+make CONFIG=make bench        # Compile and run performance benchmarks
+make CONFIG=make examples     # Compile and run example programs
+make CONFIG=make tools        # Build diagnostic tools (cmem-inspect, cmem-analyze)
 ```
+
+> NOTE: there is NO `make clean` / `make lib_shared` target — shared libraries come from the default CMake build (`CMEM_BUILD_SHARED=ON`), and clean-up goes through `make cmake-clean`.
 
 ### 3.2 CMake Build
 
 ```bash
 # Debug build
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build_cmake
+ctest --test-dir build_cmake --output-on-failure
 
 # Release build with shared library (default)
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build_cmake
 
 # Release build static only
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
-cmake --build build
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build_cmake
 
 # Install
-cmake --install build --prefix /usr/local
+cmake --install build_cmake --prefix /usr/local
 ```
 
 CMake enables shared library output by default (`CMEM_BUILD_SHARED=ON`). The static target also copies a versioned archive, so the build directory contains both `libcmem.a` and `libcmem-<version>.a`.
@@ -241,23 +245,26 @@ int main() {
 
 ```bash
 # C unit tests
-make test
+make CONFIG=make test
 
 # C++ tests
-make test_cpp
+make CONFIG=make test_cpp
+
+# CMake flow (runs unit + advanced + C++ suites)
+ctest --test-dir build_cmake --output-on-failure
 
 # With AddressSanitizer
-make test
+make CONFIG=asan test
 
 # With Valgrind
-valgrind --leak-check=full ./build/unit_tests
+valgrind --leak-check=full ./build-debug/unit_tests
 ```
 
 ### 4.4 Test Coverage Check
 
 ```bash
 # Using gcov
-gcov src/cmem.c
+gcov build-debug/*.o
 
 # Using lcov
 lcov --capture --directory . --output-file coverage.info
@@ -323,7 +330,7 @@ Closes #123
 
 | Scope | Description |
 | :--- | :--- |
-| `core` | Core implementation (src/cmem.c) |
+| `core` | Core sources (src/cmem*.c) |
 | `api` | Header files (include/*.h) |
 | `test` | Test files |
 | `bench` | Benchmark tests |
@@ -531,7 +538,7 @@ make tools
 
 ```bash
 # Launch GDB
-gdb ./build/unit_tests
+gdb ./build-debug/unit_tests
 
 # Set breakpoint
 break mp_alloc
@@ -610,7 +617,7 @@ void* p = mp_alloc(pool, size);
 1. Fork the repository
 2. Create a feature branch
 3. Write code + tests
-4. Ensure `make test` passes
+4. Ensure `make cmake-test` passes
 5. Submit a Pull Request
 
 See [Contributing Guide](https://github.com/quintin-lee/cmem/blob/main/CONTRIBUTING.md) for details.

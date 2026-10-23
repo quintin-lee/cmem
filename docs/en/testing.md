@@ -63,33 +63,36 @@ tools/
 ### 3.1 C Unit Tests
 
 ```bash
-# Debug build + Sanitizers
-make test
+# Makefile compat mode (CONFIG=make|debug|asan|tsan|ubsan → outputs to build-<CONFIG>/)
+make CONFIG=asan test    # C unit tests with ASan + UBSan enabled
 
-# Manual compilation and run
+# CMake flow (runs unit + advanced + C++ suites)
+ctest --test-dir build_cmake --output-on-failure
+
+# Manual compilation and run (all sources)
 gcc -fsanitize=address,undefined -Wall -Wextra -g -O0 \
-    -std=c11 -D_GNU_SOURCE -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests -pthread -lrt
-./build/unit_tests
+    -std=c11 -D_GNU_SOURCE -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests -pthread -lrt
+./build-debug/unit_tests
 ```
 
 ### 3.2 C++ Tests
 
 ```bash
-make test_cpp
+make CONFIG=make test_cpp
 
-# Manual compilation
+# Manual compilation (the Makefile links the core sources only)
 g++ -std=c++17 -Wall -Wextra -g -O0 \
-    -I./include src/cmem.c tests/test_cpp.cpp \
-    -o build/cpp_tests -pthread -lrt
-./build/cpp_tests
+    -I./include src/*.c tests/test_cpp.cpp \
+    -o build-debug/cpp_tests -pthread -lrt
+./build-debug/cpp_tests
 ```
 
 ### 3.3 Performance Benchmarks
 
 ```bash
-make bench
-./build/benchmark
+make CONFIG=make bench
+./build-make/benchmark
 ```
 
 ---
@@ -233,7 +236,7 @@ int main() {
 
 ```bash
 # Using gcov
-gcov src/cmem.c
+gcov build-debug/*.o
 
 # Using lcov
 lcov --capture --directory . --output-file coverage.info
@@ -255,9 +258,9 @@ Detects memory errors:
 
 ```bash
 gcc -fsanitize=address -g -O1 -fno-omit-frame-pointer \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests_asan -pthread -lrt
-./build/unit_tests_asan
+    -std=c11 -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests_asan -pthread -lrt
+./build-debug/unit_tests_asan
 ```
 
 ### 6.2 UndefinedBehaviorSanitizer (UBSan)
@@ -269,9 +272,9 @@ Detects undefined behavior:
 
 ```bash
 gcc -fsanitize=undefined -g -O1 \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests_ubsan -pthread -lrt
-./build/unit_tests_ubsan
+    -std=c11 -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests_ubsan -pthread -lrt
+./build-debug/unit_tests_ubsan
 ```
 
 ### 6.3 Combined Usage
@@ -279,8 +282,8 @@ gcc -fsanitize=undefined -g -O1 \
 ```bash
 gcc -fsanitize=address,undefined -fno-sanitize-recover=all \
     -g -O1 -fno-omit-frame-pointer \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests_full -pthread -lrt
+    -std=c11 -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests_full -pthread -lrt
 ```
 
 ### 6.4 ASan Integration Test
@@ -380,41 +383,69 @@ int main() {
 The project should include `.github/workflows/ci.yml`:
 
 ```yaml
-name: CI
+name: cmem Continuous Integration
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: "gcc", cxx: "g++" }
+          - { cc: "clang", cxx: "clang++" }
+        build_type: ["Debug", "Release", "ASan", "TSan", "UBSan"]
+    env:
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y build-essential cmake ninja-build
-      - name: Build
-        run: make lib
-      - name: Test (ASan + UBSan)
-        run: make test
-      - name: C++ Test
-        run: make test_cpp
-      - name: TSan Test
-        run: make CONFIG=tsan test
-      - name: UBSan Test
-        run: make CONFIG=ubsan test
-      - name: Release Build
-        run: make CONFIG=release all
-      - name: Format Check
-        run: make format-check
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build valgrind gcc g++ clang
+      - name: Makefile build & unit tests
+        run: |
+          CONFIG=$(echo "${{ matrix.build_type }}" | tr '[:upper:]' '[:lower:]')
+          make clean
+          make CONFIG=$CONFIG all
+          make CONFIG=$CONFIG test
+          make CONFIG=$CONFIG test_cpp
+          make CONFIG=$CONFIG bench
+          make CONFIG=$CONFIG examples
+          timeout 30 make CONFIG=debug stress_test STRESS_DEFINES=-DSTRESS_DURATION_SEC=10
+      - name: Configure & build CMake
+        run: cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - run: cmake --build build_cmake
+      - name: Run CTest suite
+        run: ctest --test-dir build_cmake --output-on-failure
+      - name: Valgrind memory audit (Debug/gcc only)
+        if: matrix.build_type == 'Debug' && matrix.compiler.cc == 'gcc'
+        run: |
+          valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/unit_tests
+          valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/cpp_tests
+      - name: Clang-tidy gate
+        run: |
+          cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_CLANG_TIDY=clang-tidy
+          cmake --build build_cmake
+      - name: Fuzz smoke
+        run: make fuzz-build
+      - run: ./build_cmake/fuzz_alloc -max_total_time=600
 ```
 
 ### 8.2 Quality Gates
 
-- [ ] `make lib` compiles without warnings and produces versioned static archives
-- [ ] `make lib_shared` builds shared library with correct SONAME
+- [ ] `make cmake-build` compiles without warnings and produces versioned static archives
+- [ ] CMake shared library builds with correct SONAME (`CMEM_BUILD_SHARED=ON`, verify via `nm -D build_cmake/libcmem.so`)
 - [ ] CMake build reports no clang-tidy warnings (per `.clang-tidy` configuration)
-- [ ] `make test` passes all tests (ASan + UBSan)
+- [ ] `make CONFIG=asan test` passes all tests (ASan)
+- [ ] `make CONFIG=ubsan test` passes all tests (UBSan)
 - [ ] `make CONFIG=tsan test` passes with zero TSan warnings
-- [ ] `make test_cpp` passes
+- [ ] `make CONFIG=make test_cpp` passes
 - [ ] `make format-check` passes
 - [ ] CMake build succeeds for all build types (Debug, Release, ASan, TSan, UBSan)
 - [ ] Code conforms to standards

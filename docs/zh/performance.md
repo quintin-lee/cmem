@@ -470,13 +470,13 @@ if (p99 > 1000000) {  // > 1ms
 
 ```bash
 # 1. 建立性能基线
-make bench > baseline.txt
+make CONFIG=make bench > baseline.txt
 
 # 2. 每次变更后对比
-make bench > after_change.txt
+make CONFIG=make bench > after_change.txt
 
 # 3. 使用 perf 分析热点
-perf record -g ./build/benchmark
+perf record -g ./build-make/benchmark
 perf report
 ```
 

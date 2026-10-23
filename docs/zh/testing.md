@@ -63,33 +63,36 @@ tools/
 ### 3.1 C 单元测试
 
 ```bash
-# Debug 构建 + Sanitizers
-make test
+# Makefile 兼容模式（CONFIG=make|debug|asan|tsan|ubsan → 输出到 build-<CONFIG>/）
+make CONFIG=asan test    # 启用 ASan + UBSan 的 C 单元测试
 
-# 手动编译运行
+# CMake 流程（运行 单元 + 高级 + C++ 全部套件）
+ctest --test-dir build_cmake --output-on-failure
+
+# 手动编译运行（全部源文件）
 gcc -fsanitize=address,undefined -Wall -Wextra -g -O0 \
-    -std=c11 -D_GNU_SOURCE -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests -pthread -lrt
-./build/unit_tests
+    -std=c11 -D_GNU_SOURCE -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests -pthread -lrt
+./build-debug/unit_tests
 ```
 
 ### 3.2 C++ 测试
 
 ```bash
-make test_cpp
+make CONFIG=make test_cpp
 
-# 手动编译
+# 手动编译（Makefile 链接核心源文件）
 g++ -std=c++17 -Wall -Wextra -g -O0 \
-    -I./include src/cmem.c tests/test_cpp.cpp \
-    -o build/cpp_tests -pthread -lrt
-./build/cpp_tests
+    -I./include src/*.c tests/test_cpp.cpp \
+    -o build-debug/cpp_tests -pthread -lrt
+./build-debug/cpp_tests
 ```
 
 ### 3.3 性能基准
 
 ```bash
-make bench
-./build/benchmark
+make CONFIG=make bench
+./build-make/benchmark
 ```
 
 ---
@@ -233,7 +236,7 @@ int main() {
 
 ```bash
 # 使用 gcov
-gcov src/cmem.c
+gcov build-debug/*.o
 
 # 使用 lcov
 lcov --capture --directory . --output-file coverage.info
@@ -255,9 +258,9 @@ xdg-open coverage_html/index.html
 
 ```bash
 gcc -fsanitize=address -g -O1 -fno-omit-frame-pointer \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests_asan -pthread -lrt
-./build/unit_tests_asan
+    -std=c11 -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests_asan -pthread -lrt
+./build-debug/unit_tests_asan
 ```
 
 ### 6.2 UndefinedBehaviorSanitizer (UBSan)
@@ -269,9 +272,9 @@ gcc -fsanitize=address -g -O1 -fno-omit-frame-pointer \
 
 ```bash
 gcc -fsanitize=undefined -g -O1 \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests_ubsan -pthread -lrt
-./build/unit_tests_ubsan
+    -std=c11 -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests_ubsan -pthread -lrt
+./build-debug/unit_tests_ubsan
 ```
 
 ### 6.3 组合使用
@@ -279,8 +282,8 @@ gcc -fsanitize=undefined -g -O1 \
 ```bash
 gcc -fsanitize=address,undefined -fno-sanitize-recover=all \
     -g -O1 -fno-omit-frame-pointer \
-    -std=c11 -I./include src/cmem.c tests/test_main.c \
-    -o build/unit_tests_full -pthread -lrt
+    -std=c11 -I./include src/*.c tests/test_main.c \
+    -o build-debug/unit_tests_full -pthread -lrt
 ```
 
 ### 6.4 ASan 集成测试
@@ -338,7 +341,7 @@ TSan 使用线程级竞争检测运行所有 44+ 测试用例。
 ### 7.3 运行基准
 
 ```bash
-make bench
+make CONFIG=make bench
 ```
 
 ### 7.4 自定义基准
@@ -380,40 +383,69 @@ int main() {
 项目应包含 `.github/workflows/ci.yml`：
 
 ```yaml
-name: CI
+name: cmem Continuous Integration
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: "gcc", cxx: "g++" }
+          - { cc: "clang", cxx: "clang++" }
+        build_type: ["Debug", "Release", "ASan", "TSan", "UBSan"]
+    env:
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y build-essential cmake ninja-build
-      - name: Build
-        run: make lib
-      - name: Test (ASan + UBSan)
-        run: make test
-      - name: C++ Test
-        run: make test_cpp
-      - name: TSan Test
-        run: make CONFIG=tsan test
-      - name: UBSan Test
-        run: make CONFIG=ubsan test
-      - name: Release Build
-        run: make CONFIG=release all
-      - name: Format Check
-        run: make format-check
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build valgrind gcc g++ clang
+      - name: Makefile build & unit tests
+        run: |
+          CONFIG=$(echo "${{ matrix.build_type }}" | tr '[:upper:]' '[:lower:]')
+          make clean
+          make CONFIG=$CONFIG all
+          make CONFIG=$CONFIG test
+          make CONFIG=$CONFIG test_cpp
+          make CONFIG=$CONFIG bench
+          make CONFIG=$CONFIG examples
+          timeout 30 make CONFIG=debug stress_test STRESS_DEFINES=-DSTRESS_DURATION_SEC=10
+      - name: Configure & build CMake
+        run: cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - run: cmake --build build_cmake
+      - name: Run CTest suite
+        run: ctest --test-dir build_cmake --output-on-failure
+      - name: Valgrind memory audit (Debug/gcc only)
+        if: matrix.build_type == 'Debug' && matrix.compiler.cc == 'gcc'
+        run: |
+          valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/unit_tests
+          valgrind --leak-check=full --errors-for-leak-kinds=definite,possible --error-exitcode=1 ./build_cmake/cpp_tests
+      - name: Clang-tidy gate
+        run: |
+          cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_CLANG_TIDY=clang-tidy
+          cmake --build build_cmake
+      - name: Fuzz smoke
+        run: make fuzz-build
+      - run: ./build_cmake/fuzz_alloc -max_total_time=600
 ```
 
 ### 8.2 质量门禁
 
-- [ ] `make lib` 编译无警告，并生成带版本号的静态归档
-- [ ] `make lib_shared` 成功构建动态库且 SONAME 正确
-- [ ] `make test` 全量通过（ASan + UBSan）
+- [ ] `make cmake-build` 编译无警告，并生成带版本号的静态归档
+- [ ] CMake 动态库 SONAME 正确（`CMEM_BUILD_SHARED=ON`，通过 `nm -D build_cmake/libcmem.so` 校验）
+- [ ] CMake 构建无 clang-tidy 告警（按 `.clang-tidy` 配置）
+- [ ] `make CONFIG=asan test` 全量通过（ASan）
+- [ ] `make CONFIG=ubsan test` 全量通过（UBSan）
 - [ ] `make CONFIG=tsan test` 零 TSan 警告通过
-- [ ] `make test_cpp` 通过
+- [ ] `make CONFIG=make test_cpp` 通过
 - [ ] `make format-check` 通过
 - [ ] CMake 各构建类型（Debug、Release、ASan、TSan、UBSan）均编译成功
 - [ ] 代码符合规范

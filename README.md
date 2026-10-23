@@ -30,9 +30,9 @@ make install PREFIX=/usr/local
 Or use CMake:
 
 ```bash
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-cmake --install build --prefix /usr/local
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build_cmake
+cmake --install build_cmake --prefix /usr/local
 ```
 
 ### Basic Usage
@@ -639,44 +639,44 @@ int main() {
 ## 🚀 Build & Test
 
 ```bash
-# Configure and build with CMake (Release), then run the CTest suite
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
+# Configure and build with CMake (Release) into build_cmake/, then run the CTest suite
+make cmake-build      # format + mermaid checks + cmake -B build_cmake -G Ninja + build
+ctest --test-dir build_cmake --output-on-failure
 
-# Build and run C++17 PMR and STL allocator tests
-make test_cpp
+# or the combined one-target flow (build + tests)
+make cmake-test
+
+# Build and run C++17 PMR and STL allocator tests (Makefile compat mode)
+make CONFIG=make test_cpp
 
 # Build and run performance benchmarks
-make bench
+make CONFIG=make bench
 
 # Build and run all examples
-make examples
+make CONFIG=make examples
 
 # Build diagnostic CLI tools
-make tools
+make CONFIG=make tools
 
-# Build versioned static library
-make lib
+# Build versioned static library (Makefile compat mode)
+make CONFIG=make lib
 
-# Build versioned shared library
-make lib_shared
+# CMake build also produces the shared library libcmem.so (CMEM_BUILD_SHARED=ON by default)
 
-# CMake build (shared library enabled by default)
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+# CMake Debug build + tests
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build_cmake
+ctest --test-dir build_cmake --output-on-failure
 
 # CMake static-only build
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
-cmake --build build
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build_cmake
 
 # ThreadSanitizer build (detect data races)
-make clean
-CC=clang CFLAGS="-fsanitize=thread -g -O1" make test
+make CONFIG=tsan test
 
 # Docker reproducible build (Ubuntu 22.04)
-make docker-build
+docker build --rm -t cmem-build .
 ```
 
 ### Versioning & Tagging
@@ -711,8 +711,7 @@ The `tag.sh` script automatically:
 The project includes a `Dockerfile` for reproducible builds:
 
 ```bash
-make docker-build
-# or manually:
+# Reproducible build in a clean Ubuntu 22.04 environment
 docker build --rm -t cmem-build .
 docker run -it cmem-build /bin/bash
 ```
@@ -746,12 +745,34 @@ This builds and tests cmem in a clean Ubuntu 22.04 environment with all dependen
 ```
 cmem/
 ├── include/
-│   ├── cmem.h              # C11 public API
-│   ├── cmem.hpp            # C++11 RAII wrapper + STL allocator
+│   ├── cmem.h              # C11 public API (sole entry; includes subsystem headers)
+│   ├── cmem.hpp            # C++ RAII wrapper + allocator
 │   ├── cmem_pmr.hpp        # C++17 std::pmr::memory_resource adapter
-│   └── cmem_override.h     # Global malloc/free symbol interception
+│   ├── cmem_arena.h        # Frame/tree arena APIs
+│   ├── cmem_diag.h         # Diagnostics & leak analysis APIs
+│   ├── cmem_frame.h        # Game/graphics frame arena API
+│   ├── cmem_metrics.h      # Metrics/Prometheus export API
+│   ├── cmem_override.h     # Global malloc/free symbol interception
+│   ├── cmem_override_cleanup.h
+│   ├── cmem_ring.h         # Lock-free ring buffer allocator API
+│   ├── cmem_snapshot.h     # Binary snapshot/report export API
+│   ├── cmem_tlsf.h         # TLSF allocator public API
+│   ├── cmem_typed_pool.h   # Zero-overhead typed object pool API
+│   └── memory_pool.h / memory_pool.hpp  # Deprecated compat shims (only #include "cmem.h")
 ├── src/
-│   └── cmem.c              # Core implementation
+│   ├── cmem_internal.h     # Internal structs & cross-file declarations
+│   ├── cmem.c              # Pool core (create/destroy/expand/child pools)
+│   ├── cmem_alloc.c        # Alloc/free hot paths + batch + canary verify
+│   ├── cmem_compress.c     # Self-contained LZ4 codec + compressed storage
+│   ├── cmem_config.c       # Env config/introspection/hot-reload/slab table/latency
+│   ├── cmem_diag.c         # Leak checks/diagnostics
+│   ├── cmem_guard.c        # Error recovery/quotas + cgroup/ASan guards
+│   ├── cmem_lifecycle.c    # Create/destroy/reset/NUMA/emergency reserve
+│   ├── cmem_multi_arena.c  # Per-thread TLSF arenas
+│   ├── cmem_ring_event.c   # Ring buffer/event log/pprof
+│   ├── cmem_slab.c         # Slab allocator
+│   ├── cmem_sys.c          # OS layer (mmap)
+│   └── cmem_tlsf.c         # TLSF allocator
 ├── tools/
 │   ├── cmem-inspect/       # Real-time in-process diagnostic CLI
 │   ├── cmem-analyze/       # Offline binary snapshot analyzer

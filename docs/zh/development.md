@@ -108,35 +108,39 @@ void* mp_alloc(memory_pool_t* pool, size_t size);
 ### 3.1 Makefile 目标
 
 ```bash
-make lib          # 编译静态库 build/libcmem.a 并生成带版本号的 build/libcmem-<version>.a
-make lib_shared   # 编译动态库 build/libcmem.so.<version>，并设置 SONAME
-make test         # 编译并运行 C 单元测试（Debug + Sanitizers）
-make test_cpp     # 编译并运行 C++ 测试
-make bench        # 编译并运行性能基准测试
-make examples     # 编译并运行示例程序
-make tools        # 构建诊断工具（cmem-inspect、cmem-analyze）
-make clean        # 清理构建产物
-make all          # 编译库 + 测试 + Benchmark + 示例 + 工具
+make cmake-build   # CMake 配置并构建到 build_cmake/（同时执行格式与 Mermaid 检查）
+make cmake-test    # 构建并运行整套 CTest（单元 + 高级 + C++）
+make cmake-clean   # 移除 build_cmake/ 与遗留 build/ 目录
+
+# Makefile 兼容模式（CONFIG=make|debug|asan|tsan|ubsan；输出到 build-<CONFIG>/）
+make CONFIG=make lib          # 静态库 build-make/libcmem.a + 带版本号副本
+make CONFIG=make test         # 编译并运行 C 单元测试
+make CONFIG=make test_cpp     # 编译并运行 C++ 测试
+make CONFIG=make bench        # 编译并运行性能基准测试
+make CONFIG=make examples     # 编译并运行示例程序
+make CONFIG=make tools        # 构建诊断工具（cmem-inspect、cmem-analyze）
 ```
+
+> 注意：不存在 `make clean` / `make lib_shared` 目标 —— 动态库由默认 CMake 构建生成（`CMEM_BUILD_SHARED=ON`），清理统一走 `make cmake-clean`。
 
 ### 3.2 CMake 构建
 
 ```bash
 # Debug 构建
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build_cmake
+ctest --test-dir build_cmake --output-on-failure
 
 # Release 构建（默认同时生成动态库）
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build_cmake
 
 # 仅静态库构建
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
-cmake --build build
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build_cmake
 
 # 安装
-cmake --install build --prefix /usr/local
+cmake --install build_cmake --prefix /usr/local
 ```
 
 CMake 默认启用动态库输出（`CMEM_BUILD_SHARED=ON`）。静态目标还会复制一份带版本号的归档文件，因此构建目录中会同时存在 `libcmem.a` 和 `libcmem-<version>.a`。
@@ -239,23 +243,26 @@ int main() {
 
 ```bash
 # C 单元测试
-make test
+make CONFIG=make test
 
 # C++ 测试
-make test_cpp
+make CONFIG=make test_cpp
+
+# CMake 流程（运行 单元 + 高级 + C++ 全部套件）
+ctest --test-dir build_cmake --output-on-failure
 
 # 带 AddressSanitizer
-make test
+make CONFIG=asan test
 
 # 带 Valgrind
-valgrind --leak-check=full ./build/unit_tests
+valgrind --leak-check=full ./build-debug/unit_tests
 ```
 
 ### 4.4 测试覆盖检查
 
 ```bash
 # 使用 gcov
-gcov src/cmem.c
+gcov build-debug/*.o
 
 # 使用 lcov
 lcov --capture --directory . --output-file coverage.info
@@ -320,7 +327,7 @@ Closes #123
 
 | Scope | 说明 |
 | :--- | :--- |
-| `core` | 核心实现（src/cmem.c） |
+| `core` | 核心实现（src/cmem*.c） |
 | `api` | 头文件（include/*.h） |
 | `test` | 测试文件 |
 | `bench` | 基准测试 |
@@ -528,7 +535,7 @@ make tools
 
 ```bash
 # 启动 GDB
-gdb ./build/unit_tests
+gdb ./build-debug/unit_tests
 
 # 设置断点
 break mp_alloc
@@ -607,7 +614,7 @@ void* p = mp_alloc(pool, size);
 1. Fork 仓库
 2. 创建特性分支
 3. 编写代码 + 测试
-4. 确保 `make test` 通过
+4. 确保 `make cmake-test` 通过
 5. 提交 Pull Request
 
 详见 [贡献指南](https://github.com/quintin-lee/cmem/blob/main/CONTRIBUTING.md)。

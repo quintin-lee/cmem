@@ -26,9 +26,9 @@ make install PREFIX=/usr/local
 或使用 CMake：
 
 ```bash
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-cmake --install build --prefix /usr/local
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build_cmake
+cmake --install build_cmake --prefix /usr/local
 ```
 
 ### 基本用法
@@ -631,44 +631,44 @@ int main() {
 ## 🚀 构建与测试
 
 ```bash
-# 使用 CMake 配置并构建 (Release)，然后运行 CTest 测试套件
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
+# 使用 CMake 配置并构建 (Release) 到 build_cmake/，然后运行 CTest 测试套件
+make cmake-build      # 格式 + Mermaid 检查 + cmake -B build_cmake -G Ninja + 构建
+ctest --test-dir build_cmake --output-on-failure
 
-# 构建并运行 C++17 PMR 和 STL 分配器测试
-make test_cpp
+# 或使用合并目标（构建 + 测试）
+make cmake-test
+
+# 构建并运行 C++17 PMR 和 STL 分配器测试（Makefile 兼容模式）
+make CONFIG=make test_cpp
 
 # 构建并运行性能基准测试
-make bench
+make CONFIG=make bench
 
 # 构建并运行所有示例
-make examples
+make CONFIG=make examples
 
 # 构建诊断 CLI 工具
-make tools
+make CONFIG=make tools
 
-# 构建带版本号的静态库
-make lib
+# 构建带版本号的静态库（Makefile 兼容模式）
+make CONFIG=make lib
 
-# 构建带版本号的动态库
-make lib_shared
+# CMake 构建默认同时生成动态库 libcmem.so（CMEM_BUILD_SHARED=ON）
 
-# CMake 构建（默认启用动态库）
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+# CMake Debug 构建 + 测试
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build_cmake
+ctest --test-dir build_cmake --output-on-failure
 
 # CMake 仅静态库构建
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
-cmake --build build
+cmake -B build_cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMEM_BUILD_SHARED=OFF
+cmake --build build_cmake
 
 # ThreadSanitizer 构建（检测数据竞争）
-make clean
-CC=clang CFLAGS="-fsanitize=thread -g -O1" make test
+make CONFIG=tsan test
 
 # Docker 可复现构建（Ubuntu 22.04）
-make docker-build
+docker build --rm -t cmem-build .
 ```
 
 ### 版本管理与 Tag
@@ -719,12 +719,34 @@ make tag --dry-run --bump patch
 ```
 cmem/
 ├── include/
-│   ├── cmem.h              # C11 公共 API
-│   ├── cmem.hpp            # C++11 RAII 包装器 + STL 分配器
+│   ├── cmem.h              # C11 公共 API（唯一入口；包含各子系统头）
+│   ├── cmem.hpp            # C++ RAII 包装器 + 分配器
 │   ├── cmem_pmr.hpp        # C++17 std::pmr::memory_resource 适配器
-│   └── cmem_override.h     # 全局 malloc/free 符号拦截
+│   ├── cmem_arena.h        # 帧竞技场/树形 Arena API
+│   ├── cmem_diag.h         # 诊断与泄漏分析 API
+│   ├── cmem_frame.h        # 游戏/图形帧竞技场 API
+│   ├── cmem_metrics.h      # 指标/Prometheus 导出 API
+│   ├── cmem_override.h     # 全局 malloc/free 符号拦截
+│   ├── cmem_override_cleanup.h
+│   ├── cmem_ring.h         # 无锁环形缓冲分配器 API
+│   ├── cmem_snapshot.h     # 二进制快照/报告导出 API
+│   ├── cmem_tlsf.h         # TLSF 分配器公共 API
+│   ├── cmem_typed_pool.h   # 零开销类型化对象池 API
+│   └── memory_pool.h / memory_pool.hpp  # 已废弃兼容垫片（仅 #include "cmem.h"）
 ├── src/
-│   └── cmem.c              # 核心实现
+│   ├── cmem_internal.h     # 内部结构体与跨文件声明
+│   ├── cmem.c              # 池核心（create/destroy/expand/子池）
+│   ├── cmem_alloc.c        # alloc/free 热路径 + 批量 + canary 校验
+│   ├── cmem_compress.c     # 自包含 LZ4 编解码 + 压缩存储
+│   ├── cmem_config.c       # 环境配置/内省/热更新/slab 表/延迟统计
+│   ├── cmem_diag.c         # 泄漏检查/诊断
+│   ├── cmem_guard.c        # 错误恢复/配额 + cgroup/ASan 防护
+│   ├── cmem_lifecycle.c    # create/destroy/reset/NUMA/应急储备
+│   ├── cmem_multi_arena.c  # 每线程 TLSF 竞技场
+│   ├── cmem_ring_event.c   # 环形缓冲/事件日志/pprof
+│   ├── cmem_slab.c         # Slab 分配器
+│   ├── cmem_sys.c          # OS 层（mmap）
+│   └── cmem_tlsf.c         # TLSF 分配器
 ├── tools/
 │   ├── cmem-inspect/       # 实时进程内诊断 CLI
 │   ├── cmem-analyze/       # 离线二进制快照分析器
