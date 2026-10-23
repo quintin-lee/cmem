@@ -1074,11 +1074,20 @@ typedef struct tlsf_cache_entry {
 
 struct tlsf_arena; /* internal: per-thread TLSF arena descriptor */
 
+/** Unified per-thread child-pool binding (master → arena child). */
+#define CMEM_MAX_TLS_BOUND_POOLS 8
+typedef struct {
+    memory_pool_t *master_pool; /**< Key: the multi-arena master pool      */
+    memory_pool_t *bound_arena; /**< The child pool this thread uses       */
+    int arena_index;            /**< Child index in master->arenas[]       */
+} cmem_arena_binding_t;
+
 typedef struct {
     memory_pool_t *owner_pool;
     mp_slab_slot_t *slots[CMEM_SLAB_CLASS_COUNT];
     uint16_t counts[CMEM_SLAB_CLASS_COUNT];
-    memory_pool_t *bound_arena; /**< Multi-arena bound child (NULL = not bound) */
+    memory_pool_t *bound_arena; /**< Derived cache: == owner_pool when owner is a
+                                     multi-arena child; NOT authoritative */
     /* Per-size TLSF free-block caches. Each slot holds a linked list of
      * tlsf_cache_entry_t allocated from tlsf_entries[]. */
     tlsf_cache_entry_t *tlsf_slots[TLSF_CACHE_SIZES];
@@ -1088,6 +1097,10 @@ typedef struct {
 
     /* Per-thread TLSF arena (lock-free hot path for sizes 64B–4MB). */
     struct tlsf_arena *tlsf_arena; /**< This thread's TLSF arena (multi-arena child pools) */
+
+    /* Unified thread-local child-pool bindings (absorbs tls_arena_map). */
+    cmem_arena_binding_t arena_bindings[CMEM_MAX_TLS_BOUND_POOLS];
+    int arena_binding_count;
 } thread_cache_t;
 
 /** Block belongs to a per-thread TLSF arena; subpool holds tlsf_arena_t*. */

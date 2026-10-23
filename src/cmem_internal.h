@@ -620,7 +620,6 @@ extern size_t slab_alloc_batch(memory_pool_t *pool,
                                size_t max_count);
 extern void tls_cache_flush_pool(memory_pool_t *pool);
 extern void tls_cache_validate_owner(memory_pool_t *pool);
-extern memory_pool_t *tls_cache_get_bound_arena(void);
 
 /* Per-thread TLSF arena (multi-arena child pools) — src/cmem_slab.c */
 extern bool tlsf_arena_init(memory_pool_t *pool);

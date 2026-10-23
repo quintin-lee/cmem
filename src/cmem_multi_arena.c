@@ -8,27 +8,13 @@
 /* ========================================================================== */
 /*  Multi-Arena Thread Binding Architecture                                   */
 /* ========================================================================== */
-#define MAX_TLS_BOUND_POOLS 8
-
-typedef struct {
-    memory_pool_t *master_pool;
-    memory_pool_t *bound_arena;
-    int arena_index;
-} tls_arena_binding_t;
-
-typedef struct {
-    tls_arena_binding_t bindings[MAX_TLS_BOUND_POOLS];
-    int count;
-} tls_arena_map_t;
-
-static MP_THREAD_LOCAL tls_arena_map_t tls_arena_map = {{{NULL, NULL, 0}}, 0};
 
 /**
  * @brief Drop the calling thread's TLS references to @p pool.
  *
  * mp_destroy calls this BEFORE releasing pool memory: a later mp_create
  * can reuse the freed addresses, and stale tls_cache.bound_arena or
- * tls_arena_map entries would hand dangling arena pointers back to the
+ * arena_bindings entries would hand dangling arena pointers back to the
  * allocation fast path. Matching is by pointer identity; the recursive
  * child teardown in mp_destroy purges each child as well.
  */
@@ -38,11 +24,12 @@ void mp_purge_thread_arena_bindings(memory_pool_t *pool)
         tls_cache.bound_arena = NULL;
     }
 
-    for (int i = tls_arena_map.count - 1; i >= 0; i--) {
-        if (tls_arena_map.bindings[i].master_pool == pool ||
-            tls_arena_map.bindings[i].bound_arena == pool) {
-            tls_arena_map.bindings[i] = tls_arena_map.bindings[tls_arena_map.count - 1];
-            tls_arena_map.count--;
+    for (int i = tls_cache.arena_binding_count - 1; i >= 0; i--) {
+        if (tls_cache.arena_bindings[i].master_pool == pool ||
+            tls_cache.arena_bindings[i].bound_arena == pool) {
+            tls_cache.arena_bindings[i] =
+                tls_cache.arena_bindings[tls_cache.arena_binding_count - 1];
+            tls_cache.arena_binding_count--;
         }
     }
 }
@@ -53,9 +40,9 @@ memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool)
         return pool;
     }
 
-    for (int i = 0; i < tls_arena_map.count; i++) {
-        if (tls_arena_map.bindings[i].master_pool == pool) {
-            return tls_arena_map.bindings[i].bound_arena;
+    for (int i = 0; i < tls_cache.arena_binding_count; i++) {
+        if (tls_cache.arena_bindings[i].master_pool == pool) {
+            return tls_cache.arena_bindings[i].bound_arena;
         }
     }
 
@@ -74,11 +61,11 @@ memory_pool_t *mp_get_thread_bound_arena(memory_pool_t *pool)
 #endif
 
     memory_pool_t *bound_arena = pool->arenas[idx];
-    if (tls_arena_map.count < MAX_TLS_BOUND_POOLS) {
-        tls_arena_map.bindings[tls_arena_map.count].master_pool = pool;
-        tls_arena_map.bindings[tls_arena_map.count].bound_arena = bound_arena;
-        tls_arena_map.bindings[tls_arena_map.count].arena_index = idx;
-        tls_arena_map.count++;
+    if (tls_cache.arena_binding_count < CMEM_MAX_TLS_BOUND_POOLS) {
+        tls_cache.arena_bindings[tls_cache.arena_binding_count].master_pool = pool;
+        tls_cache.arena_bindings[tls_cache.arena_binding_count].bound_arena = bound_arena;
+        tls_cache.arena_bindings[tls_cache.arena_binding_count].arena_index = idx;
+        tls_cache.arena_binding_count++;
     }
     return bound_arena;
 }
@@ -147,19 +134,19 @@ bool mp_bind_thread_to_arena(memory_pool_t *pool, int arena_index)
     }
     memory_pool_t *bound_arena = pool->arenas[arena_index];
 
-    for (int i = 0; i < tls_arena_map.count; i++) {
-        if (tls_arena_map.bindings[i].master_pool == pool) {
-            tls_arena_map.bindings[i].bound_arena = bound_arena;
-            tls_arena_map.bindings[i].arena_index = arena_index;
+    for (int i = 0; i < tls_cache.arena_binding_count; i++) {
+        if (tls_cache.arena_bindings[i].master_pool == pool) {
+            tls_cache.arena_bindings[i].bound_arena = bound_arena;
+            tls_cache.arena_bindings[i].arena_index = arena_index;
             return true;
         }
     }
 
-    if (tls_arena_map.count < MAX_TLS_BOUND_POOLS) {
-        tls_arena_map.bindings[tls_arena_map.count].master_pool = pool;
-        tls_arena_map.bindings[tls_arena_map.count].bound_arena = bound_arena;
-        tls_arena_map.bindings[tls_arena_map.count].arena_index = arena_index;
-        tls_arena_map.count++;
+    if (tls_cache.arena_binding_count < CMEM_MAX_TLS_BOUND_POOLS) {
+        tls_cache.arena_bindings[tls_cache.arena_binding_count].master_pool = pool;
+        tls_cache.arena_bindings[tls_cache.arena_binding_count].bound_arena = bound_arena;
+        tls_cache.arena_bindings[tls_cache.arena_binding_count].arena_index = arena_index;
+        tls_cache.arena_binding_count++;
         return true;
     }
     return false;

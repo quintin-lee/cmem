@@ -535,9 +535,9 @@ void tls_cache_validate_owner(memory_pool_t *pool)
             tls_cache_flush_pool(tls_cache.owner_pool);
         }
         tls_cache.owner_pool = pool;
-        /* Auto-cache multi-arena binding: when entering a child arena for
-         * the first time, record the master pool so tls_cache_get_bound_arena()
-         * can bypass the master pool rwlock on subsequent calls. */
+        /* Derived cache: bound_arena mirrors owner_pool when the owner is a
+         * multi-arena child. Authoritative binding state lives in
+         * tls_cache.arena_bindings (see cmem_multi_arena.c). */
         if (pool->is_multi_arena_child && pool->master_pool) {
             tls_cache.bound_arena = pool;
         } else {
@@ -548,23 +548,6 @@ void tls_cache_validate_owner(memory_pool_t *pool)
             tls_cache.counts[i] = 0;
         }
     }
-}
-
-/**
- * @brief Return the multi-arena child pool bound to the current thread,
- * or NULL if the thread is not bound to any multi-arena.
- *
- * Checks the TLS-cached bound_arena first (fast path, no locks, no
- * atomic operations). Falls back to the tls_arena_map for safety on
- * the first call or when the cache is invalidated.
- */
-memory_pool_t *tls_cache_get_bound_arena(void)
-{
-    if (tls_cache.bound_arena != NULL) {
-        return tls_cache.bound_arena;
-    }
-    /* Fallback: use the existing binding table lookup. */
-    return mp_get_thread_bound_arena(tls_cache.owner_pool);
 }
 
 /**
