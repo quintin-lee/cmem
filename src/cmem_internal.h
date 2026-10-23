@@ -161,6 +161,8 @@ typedef struct {
 #define CMEM_FREED_MAGIC 0xDEADBEEFu   /* Magic stamped on a block header once it is freed      */
 #define MP_POISON_BYTE 0xDD            /* Fill byte for freed payloads (use-after-free guard)   */
 #define CMEM_SNAPSHOT_MAGIC 0x434D454D /* Magic bytes ("CMEM") in binary snapshot header  */
+/* Round-up mask for 8-byte alignment.  Shared by several carved translation units. */
+#define CMEM_ALIGN_MASK 7u
 /* Upper bound on allocation records accepted from a binary snapshot file.  Guards an
  * untrusted file from forcing an oversized calloc() and keeps validation realistic. */
 #define CMEM_MAX_SNAPSHOT_RECORDS (8ul * 1024ul * 1024ul)
