@@ -43,29 +43,31 @@ Decompose `src/cmem_event.c` into **six** responsibility-scoped `.c` files and *
 
 | New file | Cluster | `cmem_event.c` lines | Public fns moved |
 |----------|---------|----------------------|------------------|
-| `src/cmem_guard.c` | A | L33–409 | `mp_mark_pool_dirty`, `mp_clear_pool_dirty`, `mp_is_pool_dirty`, `mp_isolate_bad_block`, `mp_set_thread_quota`, `mp_set_circuit_breaker`, `mp_get_thread_allocated_bytes`, `mp_reset_thread_quota`, `mp_is_circuit_breaker_tripped`, `mp_abi_version`, `mp_set_cgroup_aware`, `mp_get_cgroup_mem_limit`, `mp_asan_is_enabled`, `mp_asan_report_error`, `mp_asan_check_memory`, `mp_set_asan_integration` |
-| `src/cmem_ring_event.c` | B+C | L410–817 | `mp_ring_free`, `mp_ring_destroy`, `mp_event_log_destroy`, `mp_event_log_record`, `mp_event_log_consume`, `mp_event_log_pending`, `mp_event_log_clear`, `mp_export_pprof`, `mp_typed_free`, `mp_typed_pool_destroy`, `mp_destroy_shared` |
-| `src/cmem_config.c` | D | L818–1452 | `mp_default_pool_flags`, `mp_parse_env_flags`, `mp_set_name`, `mp_get_child_count`, `mp_pressure`, `mp_freeable`, `mp_resident`, `mp_reparse_env_flags`, `mp_get_env_generation`, `mp_auto_compact_check`, `mp_check_arena_quota`, `mp_set_fallback_on_oom`, `mp_set_gc_callback`, `mp_set_eviction_callback`, `mp_record_latency`, `mp_get_latency_p99`, `mp_get_latency_avg`, `mp_reset_latency_stats`, `mp_reset_stats`, `mp_preferred_size`, `mp_preferred_size_for_pool`, `mp_set_slab_classes`, `mp_get_slab_class_count`, `mp_get_slab_classes` |
-| `src/cmem_lifecycle.c` | E | L1453–1958 | `mp_destroy`, `mp_reset`, `mp_set_idle_page_reclaim`, `mp_reclaim_idle_pages`, `mp_get_idle_page_count`, `mp_set_event_callback`, `mp_set_numa_node`, `mp_enable_emergency_reserve` |
-| `src/cmem_alloc.c` | F | L1959–3999 | `mp_alloc_batch`, `mp_free_batch`, `mp_free`, `mp_usable_size`, `mp_alloc_size`, `mp_enumerate_regions`, `mp_ptr_valid`, `mp_get_allocation_info`, `mp_frame_end`, `mp_frame_arena_destroy` |
-| `src/cmem_multi_arena.c` | G | L4000–4152 | `mp_purge_thread_arena_bindings`, `mp_enable_multi_arena`, `mp_bind_thread_to_arena`, `mp_get_arena_count` |
+| `src/cmem_guard.c` | A | L33–330 | `mp_mark_pool_dirty`, `mp_clear_pool_dirty`, `mp_is_pool_dirty`, `mp_isolate_bad_block`, `mp_set_thread_quota`, `mp_set_circuit_breaker`, `mp_get_thread_allocated_bytes`, `mp_reset_thread_quota`, `mp_is_circuit_breaker_tripped`, `mp_abi_version`, `mp_set_cgroup_aware`, `mp_get_cgroup_mem_limit`, `mp_asan_is_enabled`, `mp_asan_report_error`, `mp_asan_check_memory`, `mp_set_asan_integration` |
+| `src/cmem_ring_event.c` | B+C | L331–709 | `mp_ring_create` (L340), `mp_ring_alloc` (L389), `mp_ring_free` (L410), `mp_ring_destroy` (L424), `mp_event_log_create` (L447), `mp_event_log_destroy` (L468), `mp_event_log_record` (L488), `mp_event_log_consume` (L517), `mp_event_log_pending` (L538), `mp_event_log_clear` (L550), `mp_export_pprof` (L568), `mp_typed_pool_create` (L612), `mp_typed_alloc` (L660), `mp_typed_free` (L677), `mp_typed_pool_destroy` (L694) |
+| `src/cmem_config.c` | D | L818–1452 | `mp_default_pool_flags` (L818), `mp_parse_env_flags` (L831), `mp_set_name` (L928), `mp_get_parent` (L954), `mp_get_child_count` (L967), `mp_pressure` (L989), `mp_freeable` (L1019), `mp_resident` (L1047), `mp_reparse_env_flags` (L1064), `mp_get_env_generation` (L1086), `mp_auto_compact_check` (L1099), `mp_check_arena_quota` (L1136), `mp_set_fallback_on_oom` (L1152), `mp_set_gc_callback` (L1168), `mp_set_eviction_callback` (L1185), `mp_record_latency` (L1201), `mp_get_latency_p99` (L1230), `mp_get_latency_avg` (L1262), `mp_reset_latency_stats` (L1282), `mp_reset_stats` (L1301), `mp_preferred_size` (L1331), `mp_preferred_size_for_pool` (L1353), `mp_set_slab_classes` (L1379), `mp_get_slab_class_count` (L1413), `mp_get_slab_classes` (L1431) |
+| `src/cmem_lifecycle.c` | E | L1453–1958 **+ L710–816** | `mp_create` (L716, thin wrapper → `mp_create_custom`), `mp_create_shared` (L731, shm pool construction), `mp_destroy_shared` (L794), `mp_destroy` (L1453), `mp_reset` (L1569), `mp_set_idle_page_reclaim` (L1667), `mp_reclaim_idle_pages` (L1691), `mp_get_idle_page_count` (L1785), `mp_set_event_callback` (L1824), `mp_set_numa_node` (L1841), `mp_enable_emergency_reserve` (L1862). The L710–816 chunk (create family) is carved non-contiguously; `<fcntl.h>` + `CMEM_SHM_OPEN_MODE` travel with it (only user: `shm_open` in `mp_create_shared` L745). |
+| `src/cmem_alloc.c` | F | L1959–3999 | `mp_alloc_loc` (L2008), `mp_alloc_internal` (L2038), `mp_alloc` (L2442), `mp_alloc_batch` (L2610), `mp_free_batch` (L3054), `mp_calloc` (L3106), `mp_free` (L3148), `mp_realloc` (L3368), `mp_reallocarray` (L3507), `mp_strdup` (L3521), `mp_memdup` (L3533), `mp_asprintf` (L3545 — only `<stdarg.h>` user), `mp_aligned_alloc` (L3577), `mp_usable_size` (L3642), `mp_alloc_size` (L3657), `mp_enumerate_regions` (L3719), `mp_ptr_valid` (L3785), `mp_get_allocation_info` (L3820), `mp_frame_arena_create` (L3895), `mp_frame_alloc` (L3927), `mp_frame_end` (L3940), `mp_frame_arena_destroy` (L3959) |
+| `src/cmem_multi_arena.c` | G | L4000–4152 | `mp_purge_thread_arena_bindings` (L4000), `mp_get_thread_bound_arena` (L4015), `mp_enable_multi_arena` (L4051), `mp_bind_thread_to_arena` (L4108), `mp_get_thread_arena` (L4133), `mp_get_arena_count` (L4138), `mp_get_arena` (L4146) |
 
-**Prologue (L1–32):** each new file gets its own prologue: `#include "cmem.h"` + `#include "cmem_internal.h"` + the standard-library includes it needs (`<fcntl.h>` for the shared-mem fn, `<stdarg.h>` for `mp_export_pprof`, `<stdlib.h>`). The 7 `#define`s at L20–27 are distributed per §6.
+**Prologue (L1–32):** each new file gets its own prologue: `#include "cmem.h"` + `#include "cmem_internal.h"` + the standard-library includes it needs (`<fcntl.h>` → `cmem_lifecycle.c` for the shm fn, `<stdarg.h>` → `cmem_alloc.c` for `mp_asprintf`, `<stdlib.h>` everywhere `<malloc/free/free>` appear). The 7 `#define`s at L20–27 are distributed per §6.
 
-**Static functions:** move *with* their cluster (each static is used only by same-cluster fns, verified):
+**Static functions:** move *with* their cluster (each static is used only by same-cluster fns, verified against ALL 9 `^static` defs in the file):
 
 | Static | Home | Used by |
 |--------|------|---------|
-| `active_list_add` (L1920) / `active_list_remove` (L1935) | `cmem_lifecycle.c` | `mp_destroy` / `mp_reset` |
 | `mp_free_stats_update` (L1959) | `cmem_alloc.c` | `mp_free_batch` + `mp_free` |
 | `mp_free_stats_no_lock` (L1987) | `cmem_alloc.c` | `mp_free` |
+| `batch_format_slab` (L2478) | `cmem_alloc.c` | `mp_alloc_batch` (L2725/2748/2795) |
 | `batch_format_emergency` (L2513) / `batch_format_os` (L2548) / `batch_breaker_accrue` (L2592) | `cmem_alloc.c` | `mp_alloc_batch` |
 | `flush_slab_block` (L2973) | `cmem_alloc.c` | `mp_free_batch` |
 | `mp_verify_free_canary` (L3123) | `cmem_alloc.c` | `mp_free` |
 | `mp_fastpath_slot_live` (L3680) | `cmem_alloc.c` | `mp_ptr_valid` + `mp_get_allocation_info` |
-| `tls_arena_map` (pthread TLS, L3989) | `cmem_multi_arena.c` | cluster G fns |
+| `tls_arena_map` (pthread TLS, L3989) + `tls_arena_map_t` typedef (L3987) | `cmem_multi_arena.c` | cluster G fns |
 
-> Cross-cluster static usage was verified to be **zero** — no static is called from a different cluster. If a future grep contradicts this during implementation, stop and re-scope.
+**NOT statics (correction to earlier draft):** `active_list_add` (L1920) and `active_list_remove` (L1935) already have **external linkage** (no `static` keyword, defs at L1920/L1935) and are declared in `cmem_internal.h` L601–602 (`extern void active_list_add(...)` / `extern void active_list_remove(...)`). Callers: `active_list_add` → L2107/2374/2893 (cluster F); `active_list_remove` → L94 (cluster A!) + L1962/3231/3262/3281 (F). Because the extern declarations exist, their definitions may live in ANY split file — keep them **in `cmem_lifecycle.c`** (their current position within cluster E's range) with zero extra hoisting.
+
+> Cross-cluster **static** usage = zero (verified). Cross-cluster **extern** calls (`active_list_*`) are already supported by `cmem_internal.h` declarations — no action needed.
 
 ## 5. Build-System Edits (3 files)
 
@@ -83,7 +85,7 @@ Verify after each build: `nm -D build_cmake/libcmem.so` — the exported-symbol 
 |-----------|-------|--------------------------|----------|
 | `CMEM_ALIGN_MASK` | `7u` | L619, L889, L1343, L1368, L1613 — spans **3** files | **HOIST to `cmem_internal.h`** (precedent: `CMEM_FREED_MAGIC` @L161, `MP_PERCPU_MAX_BATCH` @L113 already live there). Remove from `cmem_event.c`. |
 | `CMEM_DECIMAL_BASE` | `10` | L214 | `cmem_config.c` (in-file) |
-| `CMEM_SHM_OPEN_MODE` | `0666` | L745 | `cmem_ring_event.c` (in-file) |
+| `CMEM_SHM_OPEN_MODE` | `0666` | L745 (`mp_create_shared`) | `cmem_lifecycle.c` (in-file; travels with the L710–816 create-family chunk) |
 | `CMEM_NSEC_PER_SEC_U64` | `1000000000ULL` | L502 | `cmem_ring_event.c` (in-file) |
 | `CMEM_LATENCY_HISTOGRAM_MAX_INDEX` | `31u` | L1213 | `cmem_config.c` (in-file) |
 | `CMEM_LATENCY_P99_NUMERATOR` | `99u` | L1239 | `cmem_config.c` (in-file) |
