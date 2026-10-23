@@ -1758,6 +1758,70 @@ static void test_tlsf_arena_randomized(void)
     TEST_PASS("TLSF arena randomized differential vs interval model");
 }
 
+static void test_two_master_binding_isolation(void)
+{
+    printf("\n--- Test: Two-master TLS binding isolation ---\n");
+    memory_pool_t *m1 = mp_create(4 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    memory_pool_t *m2 = mp_create(4 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(m1 != NULL && m2 != NULL);
+    assert(mp_get_arena_count(m1) > 0 && mp_get_arena_count(m2) > 0);
+
+    /* Explicit binds: each master gets a distinct child. */
+    assert(mp_bind_thread_to_arena(m1, 0));
+    assert(mp_bind_thread_to_arena(m2, mp_get_arena_count(m2) > 1 ? 1 : 0));
+
+    /* Alternate owners; bindings must survive owner switches. */
+    for (int round = 0; round < 8; round++) {
+        memory_pool_t *a1 = mp_get_thread_arena(m1);
+        memory_pool_t *a2 = mp_get_thread_arena(m2);
+        assert(a1 != NULL && a1 != m1);
+        assert(a2 != NULL && a2 != m2);
+        assert(a1 != a2);
+
+        void *p1 = mp_alloc(m1, 128);
+        void *p2 = mp_alloc(m2, 128);
+        assert(p1 != NULL && p2 != NULL);
+        memset(p1, 0x11, 128);
+        memset(p2, 0x22, 128);
+        mp_free(m1, p1);
+        mp_free(m2, p2);
+    }
+
+    assert(mp_check_leaks(m1) == true);
+    assert(mp_check_leaks(m2) == true);
+    mp_destroy(m1);
+    mp_destroy(m2);
+    TEST_PASS("test_two_master_binding_isolation");
+}
+
+static void test_purge_stale_binding_after_destroy(void)
+{
+    printf("\n--- Test: Purge stale TLS binding after master destroy ---\n");
+    memory_pool_t *m = mp_create(4 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(m != NULL);
+    void *p = mp_alloc(m, 128);
+    assert(p != NULL);
+    memset(p, 0x44, 128);
+    mp_free(m, p);
+    memory_pool_t *bound = mp_get_thread_arena(m);
+    assert(bound != NULL && bound != m);
+    mp_destroy(m);
+
+    /* Recreate: a fresh master must never inherit the destroyed pool's
+     * TLS binding (stale entries would hand back a dangling child). */
+    memory_pool_t *m2 = mp_create(4 * 1024 * 1024, MP_FLAG_MULTI_ARENA | MP_FLAG_THREAD_SAFE);
+    assert(m2 != NULL);
+    memory_pool_t *bound2 = mp_get_thread_arena(m2);
+    assert(bound2 != NULL && bound2 != m2);
+    void *p2 = mp_alloc(m2, 128);
+    assert(p2 != NULL);
+    memset(p2, 0x33, 128);
+    mp_free(m2, p2);
+    assert(mp_check_leaks(m2) == true);
+    mp_destroy(m2);
+    TEST_PASS("test_purge_stale_binding_after_destroy");
+}
+
 int main()
 {
     printf("\n================ RUNNING CMEM ADVANCED UNIT TESTS ================\n");
@@ -1829,6 +1893,8 @@ int main()
     test_tlsf_arena_thread_exit();
     test_tlsf_arena_pool_switch();
     test_tlsf_arena_randomized();
+    test_two_master_binding_isolation();
+    test_purge_stale_binding_after_destroy();
 
     printf("\nALL CMEM ADVANCED UNIT TESTS PASSED SUCCESSFULLY!\n");
     return 0;
